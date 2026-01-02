@@ -210,7 +210,7 @@ show_menu() {
     echo -e "${GREEN}8. 常用命令${NC}"
     echo -e "${GREEN}9. 更新脚本${NC}"
     echo -e "${GREEN}10. 更新控制面板${NC}"
-    echo -e "${GREEN}11. 查看运行日志 (Debug)${NC}"
+    echo -e "${GREEN}11. 卸载并清理${NC}"
     echo -e "${GREEN}0. 退出${NC}"
     echo -e "${CYAN}=======================================${NC}"
 }
