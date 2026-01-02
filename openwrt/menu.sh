@@ -5,6 +5,31 @@
 # 版本: 2.1.0
 #################################################
 
+# ================== 日志系统开始 ==================
+LOG_FILE="/var/log/sbshell.log"
+
+# 日志写入函数
+# 用法: write_log "级别" "消息内容"
+# 示例: write_log "INFO" "开始下载脚本..."
+# 示例: write_log "ERROR" "下载失败，网络超时"
+write_log() {
+    local level="$1"
+    local message="$2"
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    
+    # 写入日志文件
+    echo "[$timestamp] [$level] $message" >> "$LOG_FILE"
+    
+    # 如果是 ERROR，同时在屏幕红色输出
+    if [ "$level" == "ERROR" ]; then
+        echo -e "\033[0;31m[ERROR] $message\033[0m"
+    elif [ "$level" == "INFO" ]; then
+        # INFO 级别可选是否输出到屏幕，这里仅输出到文件，保持界面清爽
+        :
+    fi
+}
+# ================== 日志系统结束 ==================
+
 # 定义颜色
 CYAN='\033[0;36m'
 GREEN='\033[0;32m'
@@ -49,29 +74,32 @@ SCRIPTS=(
 # 下载并设置单个脚本，带重试和日志记录逻辑
 download_script() {
     local SCRIPT="$1"
-    local RETRIES=5
+    local RETRIES=3
     local RETRY_DELAY=3
 
+    write_log "INFO" "开始下载脚本: $SCRIPT URL: $BASE_URL/$SCRIPT"
+
     for ((i=1; i<=RETRIES; i++)); do
-        # 改进点1: 使用 -f 参数，遇到HTTP错误(如404)直接失败，不写入文件
-        # 改进点2: 使用 -L 参数，允许重定向
-        if curl -f -s -L -o "$SCRIPT_DIR/$SCRIPT" "$BASE_URL/$SCRIPT"; then
-            # 改进点3: 简单校验文件大小，防止空文件
+        # 使用 -w 获取 HTTP 状态码，-o 输出文件
+        HTTP_CODE=$(curl -sL -w "%{http_code}" -o "$SCRIPT_DIR/$SCRIPT" "$BASE_URL/$SCRIPT")
+        CURL_EXIT=$?
+
+        if [ "$CURL_EXIT" -eq 0 ] && [ "$HTTP_CODE" -eq 200 ]; then
+            # 再次检查文件是否为空
             if [ -s "$SCRIPT_DIR/$SCRIPT" ]; then
                 chmod +x "$SCRIPT_DIR/$SCRIPT"
+                write_log "INFO" "下载成功: $SCRIPT"
                 return 0
             else
-                echo -e "${YELLOW}警告: $SCRIPT 下载成功但文件为空。${NC}"
+                write_log "ERROR" "下载 $SCRIPT 成功但文件为空 (0KB)"
             fi
         else
-            echo -e "${YELLOW}下载 $SCRIPT 失败 (尝试 $i/${RETRIES})...${NC}"
+            write_log "WARN" "下载 $SCRIPT 失败 (尝试 $i/$RETRIES). Curl代码: $CURL_EXIT, HTTP状态: $HTTP_CODE"
             sleep "$RETRY_DELAY"
         fi
     done
 
-    echo -e "${RED}严重错误: 无法下载 $SCRIPT。请检查仓库地址或文件名是否正确。${NC}"
-    # 如果是核心脚本下载失败，建议删除空文件
-    rm -f "$SCRIPT_DIR/$SCRIPT"
+    write_log "ERROR" "最终下载失败: $SCRIPT. 请检查 URL 是否正确或网络是否通畅。"
     return 1
 }
 
@@ -182,6 +210,7 @@ show_menu() {
     echo -e "${GREEN}8. 常用命令${NC}"
     echo -e "${GREEN}9. 更新脚本${NC}"
     echo -e "${GREEN}10. 更新控制面板${NC}"
+    echo -e "${GREEN}11. 查看运行日志 (Debug)${NC}"
     echo -e "${GREEN}0. 退出${NC}"
     echo -e "${CYAN}=======================================${NC}"
 }
@@ -220,6 +249,17 @@ handle_choice() {
             ;;
         10)
             bash "$SCRIPT_DIR/update_ui.sh"
+            ;;
+        11)
+            echo -e "${CYAN}正在读取日志文件 ($LOG_FILE)...${NC}"
+            if [ -f "$LOG_FILE" ]; then
+                # 显示最后 50 行
+                tail -n 50 "$LOG_FILE"
+                echo -e "${YELLOW}--- 以上是最后 50 行日志 ---${NC}"
+            else
+                echo -e "${RED}暂无日志文件${NC}"
+            fi
+            read -rp "按回车返回菜单..."
             ;;
         0)
             exit 0

@@ -1,5 +1,32 @@
 #!/bin/bash
 
+# ================== 日志系统开始 ==================
+LOG_FILE="/var/log/sbshell.log"
+
+# 日志写入函数
+# 用法: write_log "级别" "消息内容"
+# 示例: write_log "INFO" "开始下载脚本..."
+# 示例: write_log "ERROR" "下载失败，网络超时"
+write_log() {
+    local level="$1"
+    local message="$2"
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    
+    # 写入日志文件
+    echo "[$timestamp] [$level] $message" >> "$LOG_FILE"
+    
+    # 如果是 ERROR，同时在屏幕红色输出
+    if [ "$level" == "ERROR" ]; then
+        echo -e "\033[0;31m[ERROR] $message\033[0m"
+    elif [ "$level" == "INFO" ]; then
+        # INFO 级别可选是否输出到屏幕，这里仅输出到文件，保持界面清爽
+        :
+    fi
+}
+# ================== 日志系统结束 ==================
+
+write_log "INFO" "开始执行 sing-box 安装脚本..."
+
 # 定义颜色
 CYAN='\033[0;36m'
 RED='\033[0;31m'
@@ -12,6 +39,9 @@ else
     opkg update >/dev/null 2>&1
     opkg install kmod-nft-tproxy ca-bundle ca-certificates >/dev/null 2>&1
     opkg install sing-box >/dev/null 2>&1
+
+    # 捕获错误输出到变量
+    INSTALL_LOG=$(opkg install kmod-nft-tproxy sing-box ca-bundle 2>&1)
 
     if command -v sing-box &> /dev/null; then
         echo -e "${CYAN}sing-box 安装成功${NC}"
@@ -80,6 +110,12 @@ restart() {
     start
 }
 EOF
+
+if [ $? -eq 0 ]; then
+    write_log "INFO" "启动文件写入成功"
+else
+    write_log "ERROR" "启动文件写入失败！权限不足？"
+fi
 
 # 3. 赋予权限并启用
 chmod +x /etc/init.d/sing-box
