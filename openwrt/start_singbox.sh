@@ -46,42 +46,54 @@ check_mode() {
 # 启动 sing-box 服务
 start_singbox() {
     echo -e "${CYAN}检测是否处于非代理环境...${NC}"
+    # 使用 -w %{http_code} 获取状态码
     STATUS_CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "https://www.google.com")
 
     if [ "$STATUS_CODE" -eq 200 ]; then
-        echo -e "${RED}当前网络处于代理环境, 启动 sing-box 需要直连!${NC}"
+        echo -e "${RED}当前网络处于代理环境, 启动 sing-box 建议直连!${NC}"
     else
         echo -e "${CYAN}当前网络环境非代理网络，可以启动 sing-box。${NC}"
     fi
 
-    # 1. 暴力清理旧进程，释放端口
-    # 只要之前的 sing-box 没死透，端口就会一直被占，导致新服务起不来
-    killall -9 sing-box 2>/dev/null
+    echo -e "${CYAN}正在清理旧进程并启动...${NC}"
     
-    # 等待 1 秒让端口释放
+    # 1. 暴力清理旧进程，防止端口占用
+    killall -9 sing-box 2>/dev/null
     sleep 1
     
-    # 启动 sing-box 服务
+    # 2. 启动服务
     /etc/init.d/sing-box enable
     /etc/init.d/sing-box start
 
-    sleep 3  # 等待 sing-box 启动
-    
+    echo -e "${CYAN}正在等待进程启动 (3秒)...${NC}"
+    sleep 3
 
-    # 4. 【核心修改】直接检查进程是否存在，而不是grep status
-    if pgrep -x "sing-box" > /dev/null; then
+    # 3. 获取 PID (一次性获取)
+    local PID
+    PID=$(pgrep -x "sing-box")
+
+    # 4. 判断逻辑
+    if [ -n "$PID" ]; then
+        # =========== 成功分支 ===========
         echo -e "${GREEN}★ sing-box 启动成功！★${NC}"
-        write_log "INFO" "启动成功，进程PID: $(pgrep -x sing-box)"
+        echo -e "${GREEN}进程 PID: ${PID}${NC}"
         
+        # 记录日志
+        write_log "INFO" "启动成功，进程PID: ${PID}"
+        
+        # 显示模式
         mode=$(check_mode)
         echo -e "${MAGENTA}当前运行模式: ${mode}${NC}"
     else
-        echo -e "${RED}启动失败！进程未运行。${NC}"
+        # =========== 失败分支 ===========
+        echo -e "${RED}启动失败！未检测到运行进程。${NC}"
         write_log "ERROR" "启动失败，进程未找到。"
         
-        # 5. 【核心修改】直接打印系统日志，不再让你自己去查
-        echo -e "${YELLOW}正在读取系统报错日志 (最后 10 行):${NC}"
-        logread | grep -E "sing-box|procd" | tail -n 10
+        # 只有在这里才会打印系统日志
+        echo -e "${YELLOW}================ 系统报错日志 (最后 15 行) ================${NC}"
+        # 过滤 sing-box 或 procd (守护进程) 的日志，能看到更全的报错
+        logread | grep -E "sing-box|procd|netifd" | tail -n 15
+        echo -e "${YELLOW}==========================================================${NC}"
     fi
 }
 
