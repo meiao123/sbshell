@@ -65,35 +65,61 @@ start_singbox() {
     /etc/init.d/sing-box enable
     /etc/init.d/sing-box start
 
-    echo -e "${CYAN}正在等待进程启动 (3秒)...${NC}"
-    sleep 3
+    echo -e "${CYAN}正在等待进程启动 (最大等待 10秒)...${NC}"
 
-    # 3. 获取 PID (一次性获取)
-    local PID
-    PID=$(pgrep -x "sing-box")
+    # ================== 改进后的检测逻辑 ==================
+    local RETRY=0
+    local MAX_RETRY=10
+    local PID=""
+    
+    # 1. 动态轮询：等待进程出现
+    while [ $RETRY -lt $MAX_RETRY ]; do
+        # 尝试获取 PID (兼容性写法)
+        PID=$(pgrep -f "sing-box" | grep -v "bash" | head -n 1)
+        
+        if [ -n "$PID" ]; then
+            break
+        fi
+        
+        echo -n "."
+        sleep 1
+        ((RETRY++))
+    done
+    echo "" # 换行
 
-    # 4. 判断逻辑
-    if [ -n "$PID" ]; then
-        # =========== 成功分支 ===========
-        echo -e "${GREEN}★ sing-box 启动成功！★${NC}"
+    # 2. 初步判断
+    if [ -z "$PID" ]; then
+        echo -e "${RED}启动超时！在 $MAX_RETRY 秒内未检测到进程。${NC}"
+        # 打印日志逻辑...
+        echo -e "${YELLOW}================ 系统报错日志 ================${NC}"
+        logread | grep -E "sing-box|procd|netifd" | tail -n 15
+        return 1
+    fi
+
+    # 3. 关键步骤：二次核验 (防止“假启动”)
+    # 很多时候进程起来了，但因为配置错误在 1-2 秒后崩溃
+    echo -e "${CYAN}检测到进程 (PID: $PID)，正在进行稳定性校验...${NC}"
+    sleep 3 
+
+    # 再次检查这个 PID 是否还活着
+    if [ -d "/proc/$PID" ]; then
+        # =========== 最终成功 ===========
+        echo -e "${GREEN}★ sing-box 启动成功且运行稳定！★${NC}"
         echo -e "${GREEN}进程 PID: ${PID}${NC}"
         
-        # 记录日志
         write_log "INFO" "启动成功，进程PID: ${PID}"
         
-        # 显示模式
         mode=$(check_mode)
         echo -e "${MAGENTA}当前运行模式: ${mode}${NC}"
     else
-        # =========== 失败分支 ===========
-        echo -e "${RED}启动失败！未检测到运行进程。${NC}"
-        write_log "ERROR" "启动失败，进程未找到。"
+        # =========== 启动后立即崩溃 ===========
+        echo -e "${RED}检测到服务启动后立即崩溃！${NC}"
+        echo -e "${RED}这通常是 配置文件错误 或 端口冲突 导致的。${NC}"
+        write_log "ERROR" "启动不稳定，进程启动后消失。"
         
-        # 只有在这里才会打印系统日志
-        echo -e "${YELLOW}================ 系统报错日志 (最后 15 行) ================${NC}"
-        # 过滤 sing-box 或 procd (守护进程) 的日志，能看到更全的报错
+        echo -e "${YELLOW}================ 系统报错日志 (崩溃原因) ================${NC}"
         logread | grep -E "sing-box|procd|netifd" | tail -n 15
-        echo -e "${YELLOW}==========================================================${NC}"
+        echo -e "${YELLOW}======================================================${NC}"
     fi
 }
 
