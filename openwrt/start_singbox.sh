@@ -54,20 +54,31 @@ start_singbox() {
         echo -e "${CYAN}当前网络环境非代理网络，可以启动 sing-box。${NC}"
     fi
 
+    # 1. 强制重置服务状态
+    /etc/init.d/sing-box disable 2>/dev/null
+    /etc/init.d/sing-box stop 2>/dev/null
+    
     # 启动 sing-box 服务
     /etc/init.d/sing-box enable
     /etc/init.d/sing-box start
 
-    sleep 2  # 等待 sing-box 启动
+    sleep 3  # 等待 sing-box 启动
     
 
-    if /etc/init.d/sing-box status | grep -q "running"; then
-        echo -e "${GREEN}sing-box 启动成功${NC}"
-
+    # 4. 【核心修改】直接检查进程是否存在，而不是grep status
+    if pgrep -x "sing-box" > /dev/null; then
+        echo -e "${GREEN}★ sing-box 启动成功！★${NC}"
+        write_log "INFO" "启动成功，进程PID: $(pgrep -x sing-box)"
+        
         mode=$(check_mode)
-        echo -e "${MAGENTA}当前启动模式: ${mode}${NC}"
+        echo -e "${MAGENTA}当前运行模式: ${mode}${NC}"
     else
-        echo -e "${RED}sing-box 启动失败，请检查日志${NC}"
+        echo -e "${RED}启动失败！进程未运行。${NC}"
+        write_log "ERROR" "启动失败，进程未找到。"
+        
+        # 5. 【核心修改】直接打印系统日志，不再让你自己去查
+        echo -e "${YELLOW}正在读取系统报错日志 (最后 10 行):${NC}"
+        logread | grep -E "sing-box|procd" | tail -n 10
     fi
 }
 
