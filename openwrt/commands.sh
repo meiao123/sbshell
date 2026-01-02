@@ -45,17 +45,22 @@ function check_config() {
 }
 
 function view_logs() {
-    echo -e "${YELLOW}日志生成中，请等待...${NC}"
-    echo -e "${RED}按 Ctrl + C 结束日志输出${NC}"
-    logread -f | grep sing-box
-    read -rp "按回车键返回二级菜单..."
+    echo -e "${CYAN}正在读取脚本日志 ($LOG_FILE)...${NC}"
+    echo -e "${YELLOW}---------------- 日志开始 (最后 50 行) ----------------${NC}"
+    if [ -f "$LOG_FILE" ]; then
+        tail -n 50 "$LOG_FILE"
+    else
+        echo -e "${RED}暂无日志文件 (可能还未产生日志)。${NC}"
+    fi
+    echo -e "${YELLOW}---------------- 日志结束 ----------------${NC}"
+    read -e -p "按回车继续..."
 }
 
 function show_submenu() {
     echo -e "${CYAN}=========== 二级菜单选项 ===========${NC}"
     echo -e "${MAGENTA}1. 查看防火墙规则${NC}"
     echo -e "${MAGENTA}2. 检查配置文件${NC}"
-    echo -e "${MAGENTA}3. 查看实时日志${NC}"
+    echo -e "${MAGENTA}3. 查看运行日志${NC}"
     echo -e "${MAGENTA}0. 返回主菜单${NC}"
     echo -e "${CYAN}===================================${NC}"
 }

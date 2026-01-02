@@ -251,15 +251,7 @@ handle_choice() {
             bash "$SCRIPT_DIR/update_ui.sh"
             ;;
         11)
-            echo -e "${CYAN}正在读取日志文件 ($LOG_FILE)...${NC}"
-            if [ -f "$LOG_FILE" ]; then
-                # 显示最后 50 行
-                tail -n 50 "$LOG_FILE"
-                echo -e "${YELLOW}--- 以上是最后 50 行日志 ---${NC}"
-            else
-                echo -e "${RED}暂无日志文件${NC}"
-            fi
-            read -rp "按回车返回菜单..."
+            bash "$SCRIPT_DIR/uninstall.sh"
             ;;
         0)
             exit 0
