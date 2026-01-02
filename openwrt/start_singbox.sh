@@ -54,9 +54,12 @@ start_singbox() {
         echo -e "${CYAN}当前网络环境非代理网络，可以启动 sing-box。${NC}"
     fi
 
-    # 1. 强制重置服务状态
-    /etc/init.d/sing-box disable 2>/dev/null
-    /etc/init.d/sing-box stop 2>/dev/null
+    # 1. 暴力清理旧进程，释放端口
+    # 只要之前的 sing-box 没死透，端口就会一直被占，导致新服务起不来
+    killall -9 sing-box 2>/dev/null
+    
+    # 等待 1 秒让端口释放
+    sleep 1
     
     # 启动 sing-box 服务
     /etc/init.d/sing-box enable
