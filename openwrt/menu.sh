@@ -216,7 +216,7 @@ show_menu() {
 }
 
 handle_choice() {
-    read -rp "请选择操作: " choice
+    read -er -p "请选择操作: " choice
     case $choice in
         1)
             bash "$SCRIPT_DIR/switch_mode.sh"
