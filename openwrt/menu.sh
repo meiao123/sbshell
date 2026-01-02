@@ -158,22 +158,46 @@ initialize() {
 
 # 自动引导设置
 auto_setup() {
+    # 1. 初始清理：如果服务正在运行，先停止，防止干扰
     if [ -f /etc/init.d/sing-box ]; then
-        /etc/init.d/sing-box stop
+        /etc/init.d/sing-box stop >/dev/null 2>&1
     fi
+
+    # 2. 准备目录和权限
     mkdir -p /etc/sing-box/
     [ -f /etc/sing-box/mode.conf ] || touch /etc/sing-box/mode.conf
     chmod 777 /etc/sing-box/mode.conf
+    
     bash "$SCRIPT_DIR/check_environment.sh"
-    # 同时检测“命令是否存在”以及“启动文件是否存在”
-    # 如果缺少任意一个，都重新运行安装脚本
+
+    # 3. 安装检测：如果缺少核心或缺少启动文件，则执行安装
     if ! command -v sing-box &> /dev/null || [ ! -f /etc/init.d/sing-box ]; then
         echo -e "${YELLOW}检测到 Sing-box 未安装或服务文件缺失，正在修复...${NC}"
         bash "$SCRIPT_DIR/install_singbox.sh"
+        
+        # 【防御性措施】安装脚本跑完后，强制停止一次服务
+        # 即使 install_singbox.sh 里有启动命令，这里也会把它按住
+        # 确保在没有配置文件时不运行
+        /etc/init.d/sing-box stop >/dev/null 2>&1
     fi
+
+    # 4. 模式选择与配置下载
     bash "$SCRIPT_DIR/switch_mode.sh"
     bash "$SCRIPT_DIR/manual_input.sh"
-    bash "$SCRIPT_DIR/start_singbox.sh"  
+
+    # 5. 【核心修复】文件同步缓冲
+    # 解决下载完配置文件后，系统尚未写入磁盘导致启动失败的问题
+    echo "正在同步系统配置..."
+    sync       # 强制把内存中的 config.json 写入闪存
+    sleep 2    # 给系统 2 秒钟喘息时间
+
+    # 6. 最终启动
+    # 此时环境干净、配置已写入，调用 start_singbox.sh (它内部最好有 killall 逻辑)
+    if [ -f /etc/sing-box/config.json ]; then
+        bash "$SCRIPT_DIR/start_singbox.sh"
+    else
+        echo -e "${RED}未检测到配置文件，跳过启动步骤。${NC}"
+    fi
 }
 
 # 检查是否需要初始化

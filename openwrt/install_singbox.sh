@@ -121,7 +121,4 @@ fi
 chmod +x /etc/init.d/sing-box
 /etc/init.d/sing-box enable
 
-# 4. 尝试启动
-/etc/init.d/sing-box restart
-
-echo -e "${CYAN}sing-box 安装与服务配置完成！${NC}"
+echo -e "${CYAN}sing-box 安装完成 (等待配置后启动)${NC}"
