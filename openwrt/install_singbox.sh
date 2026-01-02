@@ -1,5 +1,10 @@
 #!/bin/bash
 
+# 定义颜色
+CYAN='\033[0;36m'
+RED='\033[0;31m'
+NC='\033[0m' # 无颜色
+
 # ================== 日志系统开始 ==================
 LOG_FILE="/var/log/sbshell.log"
 
@@ -27,27 +32,94 @@ write_log() {
 
 write_log "INFO" "开始执行 sing-box 安装脚本..."
 
-# 定义颜色
-CYAN='\033[0;36m'
-RED='\033[0;31m'
-NC='\033[0m' # 无颜色
+# ----------------------------------------------------------------
+# 辅助函数：手动从 GitHub 下载安装 (B计划)
+# ----------------------------------------------------------------
+install_from_github() {
+    echo -e "${YELLOW}opkg 安装失败，尝试从 GitHub 手动下载最新版...${NC}"
+    write_log "INFO" "切换至手动安装模式..."
 
-if command -v sing-box &> /dev/null; then
-    echo -e "${CYAN}sing-box 已安装，跳过安装步骤${NC}"
-else
-    echo "正在更新包列表并安装 sing-box,请稍候..."
-    opkg update >/dev/null 2>&1
-    opkg install kmod-nft-tproxy ca-bundle ca-certificates >/dev/null 2>&1
-    opkg install sing-box >/dev/null 2>&1
+    # 1. 检测 CPU 架构
+    ARCH=$(uname -m)
+    case "$ARCH" in
+        x86_64)  DOWNLOAD_ARCH="amd64" ;;
+        aarch64) DOWNLOAD_ARCH="arm64" ;;
+        armv7l)  DOWNLOAD_ARCH="armv7" ;;
+        *)       
+            echo -e "${RED}不支持的架构: $ARCH${NC}"
+            write_log "ERROR" "架构不支持: $ARCH"
+            return 1 
+            ;;
+    esac
 
-    # 捕获错误输出到变量
-    INSTALL_LOG=$(opkg install kmod-nft-tproxy sing-box ca-bundle 2>&1)
+    # 2. 获取最新版本号 (如果获取失败则使用硬编码版本)
+    VERSION=$(curl -sL https://ghfast.top/https://api.github.com/repos/SagerNet/sing-box/releases/latest | grep '"tag_name":' | sed -E 's/.*"v([^"]+)".*/\1/')
+    if [ -z "$VERSION" ]; then
+        VERSION="1.12.1" # 备用版本
+    fi
+    
+    echo -e "${CYAN}检测到架构: ${DOWNLOAD_ARCH}, 目标版本: ${VERSION}${NC}"
 
-    if command -v sing-box &> /dev/null; then
-        echo -e "${CYAN}sing-box 安装成功${NC}"
+    # 3. 构造下载链接 (使用 ghfast 加速)
+    # 文件名示例: sing-box-1.10.1-linux-amd64.tar.gz
+    FILE_NAME="sing-box-${VERSION}-linux-${DOWNLOAD_ARCH}.tar.gz"
+    DOWNLOAD_URL="https://ghfast.top/https://github.com/SagerNet/sing-box/releases/download/v${VERSION}/${FILE_NAME}"
+
+    # 4. 下载
+    echo -e "${CYAN}正在下载: ${FILE_NAME}...${NC}"
+    curl -L -o "/tmp/${FILE_NAME}" "$DOWNLOAD_URL"
+    
+    if [ ! -s "/tmp/${FILE_NAME}" ]; then
+        echo -e "${RED}下载失败！文件为空。${NC}"
+        return 1
+    fi
+
+    # 5. 解压并安装
+    echo -e "${CYAN}正在解压安装...${NC}"
+    cd /tmp
+    tar -xzf "$FILE_NAME"
+    
+    # 提取核心文件 (解压出来的目录名通常也是 sing-box-版本-架构)
+    EXTRACTED_DIR="sing-box-${VERSION}-linux-${DOWNLOAD_ARCH}"
+    if [ -d "$EXTRACTED_DIR" ]; then
+        mv "$EXTRACTED_DIR/sing-box" /usr/bin/sing-box
+        chmod +x /usr/bin/sing-box
+        rm -rf "$FILE_NAME" "$EXTRACTED_DIR"
+        echo -e "${CYAN}手动安装成功！${NC}"
+        return 0
     else
-        echo -e "${RED}sing-box 安装失败，请检查日志或网络配置${NC}"
-        exit 1
+        echo -e "${RED}解压失败，找不到目录: $EXTRACTED_DIR${NC}"
+        return 1
+    fi
+}
+
+# ----------------------------------------------------------------
+# 主逻辑
+# ----------------------------------------------------------------
+
+echo -e "${CYAN}开始检查并安装 sing-box 环境...${NC}"
+write_log "INFO" "开始安装 sing-box..."
+
+# 1. 尝试使用 opkg 安装依赖 (内核模块必须用 opkg 装)
+opkg update >/dev/null 2>&1
+echo -e "${CYAN}正在安装依赖 (kmod-nft-tproxy, ca-bundle)...${NC}"
+opkg install kmod-nft-tproxy ca-bundle ca-certificates >/dev/null 2>&1
+
+# 2. 尝试安装 sing-box
+if command -v sing-box &> /dev/null; then
+    echo -e "${CYAN}sing-box 已存在，跳过安装。${NC}"
+else
+    echo -e "${CYAN}尝试通过 opkg 安装 sing-box...${NC}"
+    opkg install sing-box >/dev/null 2>&1
+    
+    # 如果 opkg 安装失败 (找不到命令)，则执行 B 计划
+    if ! command -v sing-box &> /dev/null; then
+        install_from_github
+        if [ $? -ne 0 ]; then
+            echo -e "${RED}严重错误：sing-box 安装彻底失败！${NC}"
+            write_log "ERROR" "opkg 和手动安装均失败。"
+            exit 1
+        fi
     fi
 fi
 
