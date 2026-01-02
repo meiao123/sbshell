@@ -136,7 +136,11 @@ auto_setup() {
     [ -f /etc/sing-box/mode.conf ] || touch /etc/sing-box/mode.conf
     chmod 777 /etc/sing-box/mode.conf
     bash "$SCRIPT_DIR/check_environment.sh"
-    command -v sing-box &> /dev/null || bash "$SCRIPT_DIR/install_singbox.sh" || bash "$SCRIPT_DIR/check_update.sh"
+    # 同时检测“命令是否存在”以及“启动文件是否存在”
+    # 如果缺少任意一个，都重新运行安装脚本
+    if ! command -v sing-box &> /dev/null || [ ! -f /etc/init.d/sing-box ]; then
+        bash "$SCRIPT_DIR/install_singbox.sh"
+    fi
     bash "$SCRIPT_DIR/switch_mode.sh"
     bash "$SCRIPT_DIR/manual_input.sh"
     bash "$SCRIPT_DIR/start_singbox.sh"  
