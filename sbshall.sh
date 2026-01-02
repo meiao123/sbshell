@@ -1,7 +1,7 @@
 #!/bin/bash
 # 定义主脚本的下载URL
-DEBIAN_MAIN_SCRIPT_URL="https://ghfast.top/https://raw.githubusercontent.com/qljsyph/sbshell/refs/heads/main/debian/menu.sh"
-OPENWRT_MAIN_SCRIPT_URL="https://gh-proxy.com/https://raw.githubusercontent.com/qljsyph/sbshell/refs/heads/main/openwrt/menu.sh"
+DEBIAN_MAIN_SCRIPT_URL="https://raw.githubusercontent.com/qljsyph/sbshell/refs/heads/main/debian/menu.sh"
+OPENWRT_MAIN_SCRIPT_URL="https://raw.githubusercontent.com/qljsyph/sbshell/refs/heads/main/openwrt/menu.sh"
  
 # 脚本下载目录
 SCRIPT_DIR="/etc/sing-box/scripts"
@@ -110,7 +110,7 @@ fi
 
 # 下载并执行主脚本
 if grep -qi 'openwrt' /etc/os-release; then
-    curl -s -o "$SCRIPT_DIR/menu.sh" "$MAIN_SCRIPT_URL"
+    curl -L -o "$SCRIPT_DIR/menu.sh" "$MAIN_SCRIPT_URL"
 else
     wget -q -O "$SCRIPT_DIR/menu.sh" "$MAIN_SCRIPT_URL"
 fi
@@ -118,8 +118,19 @@ fi
 echo -e "${GREEN}脚本下载中,请耐心等待...${NC}"
 echo -e "${YELLOW}注意:安装更新singbox尽量使用代理环境,运行singbox切记关闭代理!${NC}"
 
-if ! [ -f "$SCRIPT_DIR/menu.sh" ]; then
-    echo -e "${RED}下载主脚本失败,请检查网络连接。${NC}"
+# 1. 先检查文件是否存在且不为空
+if [ ! -s "$SCRIPT_DIR/menu.sh" ]; then
+    echo -e "${RED}下载失败: 文件为空。请检查网络或更换镜像源。${NC}"
+    rm -f "$SCRIPT_DIR/menu.sh"
+    exit 1
+fi
+
+# 2. 再检查文件内容是否正确 (比如检查是否包含 bash 关键字)
+# 如果下载成了一个 HTML 报错网页，这一步就会拦截住
+if ! grep -q "bash" "$SCRIPT_DIR/menu.sh"; then
+    echo -e "${RED}下载内容错误: 看起来像是一个网页而不是脚本。${NC}"
+    echo -e "${YELLOW}可能原因: 镜像源挂了，或者返回了 404/502 错误页面。${NC}"
+    rm -f "$SCRIPT_DIR/menu.sh"
     exit 1
 fi
 
