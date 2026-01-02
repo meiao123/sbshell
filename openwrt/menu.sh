@@ -66,6 +66,7 @@ SCRIPTS=(
     "switch_mode.sh"           # 切换代理模式
     "manage_autostart.sh"      # 设置自启动
     "check_config.sh"          # 检查配置文件
+    "uninstall.sh"             # 卸载并清理
     "update_scripts.sh"        # 更新脚本
     "update_ui.sh"             # 控制面板安装/更新/检查
     "menu.sh"                  # 主菜单
