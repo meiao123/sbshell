@@ -11,7 +11,7 @@ SCRIPT_DIR="/etc/sing-box/scripts"
 TEMP_DIR="/tmp/sing-box"
 
 # 脚本的URL基础路径
-BASE_URL="https://ghfast.top/https://raw.githubusercontent.com/qljsyph/sbshell/refs/heads/main/openwrt"
+BASE_URL="https://github.com/meiao123/sbshell/tree/4927a4c78901b1ba63fe15ae53a92fedd58a7346/openwrt"
 
 # 初始下载菜单脚本的URL
 MENU_SCRIPT_URL="$BASE_URL/menu.sh"
