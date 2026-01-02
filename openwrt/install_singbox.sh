@@ -133,6 +133,10 @@ cat << 'EOF' > /etc/init.d/sing-box
 START=99
 USE_PROCD=1
 
+# 【修复关键点1】声明 load_firewall 是一个合法的额外命令
+# 如果不加这行，调用 /etc/init.d/sing-box load_firewall 会报错 Syntax error
+EXTRA_COMMANDS="load_firewall"
+
 PROG=/usr/bin/sing-box
 CONF=/etc/sing-box/config.json
 
@@ -153,7 +157,7 @@ start_service() {
     
     # 简单的延时，确保进程起来后再加载防火墙规则
     # 注意：更优雅的方式是放到 firewall include 中，但为了兼容你的旧脚本逻辑，保留此处
-    ( sleep 3 && /etc/init.d/sing-box load_firewall ) &
+    ( sleep 3 && /etc/init.d/sing-box load_firewall >/dev/null 2>&1 ) &
 }
 
 # 自定义函数：加载防火墙规则
