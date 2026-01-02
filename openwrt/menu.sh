@@ -139,6 +139,7 @@ auto_setup() {
     # 同时检测“命令是否存在”以及“启动文件是否存在”
     # 如果缺少任意一个，都重新运行安装脚本
     if ! command -v sing-box &> /dev/null || [ ! -f /etc/init.d/sing-box ]; then
+        echo -e "${YELLOW}检测到 Sing-box 未安装或服务文件缺失，正在修复...${NC}"
         bash "$SCRIPT_DIR/install_singbox.sh"
     fi
     bash "$SCRIPT_DIR/switch_mode.sh"
