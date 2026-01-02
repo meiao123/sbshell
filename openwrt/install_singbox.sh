@@ -55,7 +55,7 @@ install_from_github() {
     # 2. 获取最新版本号 (如果获取失败则使用硬编码版本)
     VERSION=$(curl -sL https://ghfast.top/https://api.github.com/repos/SagerNet/sing-box/releases/latest | grep '"tag_name":' | sed -E 's/.*"v([^"]+)".*/\1/')
     if [ -z "$VERSION" ]; then
-        VERSION="1.12.1" # 备用版本
+        VERSION="1.12.14" # 备用版本
     fi
     
     echo -e "${CYAN}检测到架构: ${DOWNLOAD_ARCH}, 目标版本: ${VERSION}${NC}"
