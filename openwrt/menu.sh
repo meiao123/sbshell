@@ -22,7 +22,7 @@ if ! grep -qi 'openwrt' /etc/os-release; then
 fi
 
 # 脚本的URL基础路径
-BASE_URL="https://ghfast.top/https://raw.githubusercontent.com/qljsyph/sbshell/refs/heads/main/openwrt"
+BASE_URL="https://github.com/meiao123/sbshell/tree/4927a4c78901b1ba63fe15ae53a92fedd58a7346/openwrt"
                                
 # 脚本列表
 SCRIPTS=(
@@ -49,20 +49,29 @@ SCRIPTS=(
 # 下载并设置单个脚本，带重试和日志记录逻辑
 download_script() {
     local SCRIPT="$1"
-    local RETRIES=5  # 增加重试次数
-    local RETRY_DELAY=5
+    local RETRIES=5
+    local RETRY_DELAY=3
 
     for ((i=1; i<=RETRIES; i++)); do
-        if curl -s -o "$SCRIPT_DIR/$SCRIPT" "$BASE_URL/$SCRIPT"; then
-            chmod +x "$SCRIPT_DIR/$SCRIPT"
-            return 0
+        # 改进点1: 使用 -f 参数，遇到HTTP错误(如404)直接失败，不写入文件
+        # 改进点2: 使用 -L 参数，允许重定向
+        if curl -f -s -L -o "$SCRIPT_DIR/$SCRIPT" "$BASE_URL/$SCRIPT"; then
+            # 改进点3: 简单校验文件大小，防止空文件
+            if [ -s "$SCRIPT_DIR/$SCRIPT" ]; then
+                chmod +x "$SCRIPT_DIR/$SCRIPT"
+                return 0
+            else
+                echo -e "${YELLOW}警告: $SCRIPT 下载成功但文件为空。${NC}"
+            fi
         else
-            echo -e "${YELLOW}下载 $SCRIPT 失败，重试 $i/${RETRIES}...${NC}"
+            echo -e "${YELLOW}下载 $SCRIPT 失败 (尝试 $i/${RETRIES})...${NC}"
             sleep "$RETRY_DELAY"
         fi
     done
 
-    echo -e "${RED}下载 $SCRIPT 失败，请检查网络连接。${NC}"
+    echo -e "${RED}严重错误: 无法下载 $SCRIPT。请检查仓库地址或文件名是否正确。${NC}"
+    # 如果是核心脚本下载失败，建议删除空文件
+    rm -f "$SCRIPT_DIR/$SCRIPT"
     return 1
 }
 
