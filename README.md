@@ -16,10 +16,6 @@ Sbshell 是一款针对 官方sing-box 的辅助运行脚本，旨在让官方si
 - **面板更新**：支持clash系面板在线更新/切换。
 
 
-## 设备支持：
-
-目前支持系统为deiban/ubuntu/armbian以及openwrt！
-
 ## 一键脚本：(请自行安装curl和bash，如果缺少的话)
 ```
 bash <(curl -sL https://raw.githubusercontent.com/meiao123/sbshell/refs/heads/main/sbshall.sh)
