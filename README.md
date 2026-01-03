@@ -29,32 +29,6 @@ bash <(curl -sL https://raw.githubusercontent.com/meiao123/sbshell/refs/heads/ma
 - 防火墙仅支持nftables，不支持iptables。
 - 非openwrt并使用2.1.2之前版本的用户想要升级并且使用1.12.X版本内核建议卸载重装
 
-### 系统信息自动显示美化脚本： 
-```
-bash <(curl -sL https://gh-proxy.com/https://raw.githubusercontent.com/qljsyph/DPInfo-script/refs/heads/main/auto-sysinfo.sh)
-```
-  执行后每次进入ssh会自动显示很多必要信息！
-  仓库：  
-  https://github.com/qljsyph/DPInfo-script
-
-## 适配配置文件：
-
-### 发行版1.12:
-fakeiptrpoxy:
-https://raw.githubusercontent.com/qljsyph/sbshell/refs/heads/main/config_template/config_fakeiptrpoxy12.json
-
-fakeiptun:
-https://raw.githubusercontent.com/qljsyph/sbshell/refs/heads/main/config_template/config_fakeiptun12.json
-
-tproxy:
-https://raw.githubusercontent.com/qljsyph/sbshell/refs/heads/main/config_template/config_trpoxy12.json
-
-### 发行版1.11：  
-tproxy：  
-https://gh-proxy.com/https://raw.githubusercontent.com/qljsyph/sbshell/refs/heads/main/config_template/config_tproxy.json  
-
-tun：  
-https://gh-proxy.com/https://raw.githubusercontent.com/qljsyph/sbshell/refs/heads/main/config_template/config_tun.json  
 
 ## 其他问题：
 
