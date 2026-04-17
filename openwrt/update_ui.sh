@@ -173,7 +173,7 @@ EOF
         echo -e "${GREEN}定时更新任务已设置,每月1号执行一次${NC}"
     fi
 
-    systemctl restart cron
+    /etc/init.d/cron restart
 }
 
 update_ui() {

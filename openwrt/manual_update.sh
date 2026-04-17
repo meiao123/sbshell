@@ -136,7 +136,7 @@ fi
 # 重启sing-box并检查启动状态
 /etc/init.d/sing-box start
 
-if /etc/init.d/sing-box status | grep -q "running"; then
+if pidof sing-box > /dev/null; then
     echo -e "${GREEN}sing-box 启动成功${NC}"
 else
     echo -e "${RED}sing-box 启动失败${NC}"

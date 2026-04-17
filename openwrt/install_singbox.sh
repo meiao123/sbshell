@@ -29,6 +29,11 @@ fi
 
 cat << 'EOF' >> /etc/init.d/sing-box
 
+#!/bin/sh /etc/rc.common
+
+START=99
+USE_PROCD=1
+
 start_service() {
     procd_open_instance
     procd_set_param command /usr/bin/sing-box run -c /etc/sing-box/config.json

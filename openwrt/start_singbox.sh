@@ -33,7 +33,7 @@ start_singbox() {
     sleep 2  # 等待 sing-box 启动
     
 
-    if /etc/init.d/sing-box status | grep -q "running"; then
+    if pidof sing-box > /dev/null; then
         echo -e "${GREEN}sing-box 启动成功${NC}"
 
         mode=$(check_mode)
@@ -45,9 +45,12 @@ start_singbox() {
 
 # 提示用户确认是否启动
 read -rp "是否启动 sing-box?(y/n): " confirm_start
-if [[ "$confirm_start" =~ ^[Yy]$ ]]; then
-    start_singbox
-else
-    echo -e "${CYAN}已取消启动 sing-box。${NC}"
-    exit 0
-fi
+case "$confirm_start" in
+    [Yy]* )
+        start_singbox
+        ;;
+    * )
+        echo -e "${CYAN}已取消启动 sing-box。${NC}"
+        exit 0
+        ;;
+esac

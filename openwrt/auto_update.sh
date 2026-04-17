@@ -83,7 +83,7 @@ while true; do
         # 取消自动更新任务
         if crontab -l 2>/dev/null | grep -q '/etc/sing-box/update-singbox.sh'; then
             crontab -l 2>/dev/null | grep -v '/etc/sing-box/update-singbox.sh' | crontab -
-            /etc.init.d/cron restart
+            /etc/init.d/cron restart
             echo -e "${CYAN}自动更新任务已取消。${NC}"
         else
             echo -e "${CYAN}没有找到自动更新任务。${NC}"
