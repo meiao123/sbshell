@@ -27,8 +27,8 @@ if [ -f /etc/init.d/sing-box ]; then
     sed -i '/stop_service()/,/}/d' /etc/init.d/sing-box
 fi
 
-cat << 'EOF' >> /etc/init.d/sing-box
-
+# 生成完整且标准的 OpenWrt 服务启动脚本
+cat << 'EOF' > /etc/init.d/sing-box
 #!/bin/sh /etc/rc.common
 
 START=99
@@ -55,7 +55,7 @@ start_service() {
 }
 
 stop_service() {
-    procd_kill "$NAME" 2>/dev/null
+    return 0
 }
 EOF
 
