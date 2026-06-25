@@ -62,6 +62,5 @@ EOF
 chmod +x /etc/init.d/sing-box
 
 /etc/init.d/sing-box enable
-/etc/init.d/sing-box start
 
 echo -e "${CYAN}sing-box 服务已启用并启动${NC}"
