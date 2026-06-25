@@ -135,6 +135,7 @@ fi
 
 # 重启sing-box并检查启动状态
 /etc/init.d/sing-box start
+sleep 2
 
 if pidof sing-box > /dev/null; then
     echo -e "${GREEN}sing-box 启动成功${NC}"
