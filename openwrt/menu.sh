@@ -2,7 +2,7 @@
 
 #################################################
 # 描述: OpenWRT 官方sing-box 全自动脚本
-# 版本: 2.1.0
+# 版本: 2.2.0
 #################################################
 
 # 定义颜色
@@ -127,7 +127,8 @@ auto_setup() {
     [ -f /etc/sing-box/mode.conf ] || touch /etc/sing-box/mode.conf
     chmod 777 /etc/sing-box/mode.conf
     bash "$SCRIPT_DIR/check_environment.sh"
-    command -v sing-box &> /dev/null || bash "$SCRIPT_DIR/install_singbox.sh" || bash "$SCRIPT_DIR/check_update.sh"
+    bash "$SCRIPT_DIR/install_singbox.sh"
+    bash "$SCRIPT_DIR/check_update.sh"
     bash "$SCRIPT_DIR/switch_mode.sh"
     bash "$SCRIPT_DIR/manual_input.sh"
     bash "$SCRIPT_DIR/start_singbox.sh"  
