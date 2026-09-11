@@ -86,20 +86,6 @@ download_repo_file() {
     github_archive_download "$path" "$ref" "$output"
 }
 
-resolve_release_ref() {
-    local tmp='/tmp/sbshell-release-ref' declared=''
-    rm -f "$tmp"
-    if download_repo_file 'RELEASE' 'main' "$tmp"; then
-        declared=$(tr -d '\r\n' < "$tmp")
-    fi
-    rm -f "$tmp"
-    case "$declared" in
-        *[!0-9a-f]*) ;;
-        *) if [ "${#declared}" -eq 40 ]; then RELEASE_REF=$declared; fi ;;
-    esac
-    return 0
-}
-
 SCRIPT_DIR=/etc/sing-box/scripts
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
 

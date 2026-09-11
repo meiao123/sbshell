@@ -38,7 +38,7 @@ SCRIPT_DIR=/etc/sing-box/scripts
 INITIALIZED_FILE="$SCRIPT_DIR/.initialized"
 
 # 允许外部传入镜像源，默认提供 ghfast 加速
-export REPO_RAW="${REPO_RAW:-https://ghfast.top/https://raw.githubusercontent.com/meiao123/sbshell}"
+export REPO_RAW="${REPO_RAW:-https://raw.githubusercontent.com/meiao123/sbshell}"
 
 github_api_download() {
     local path="$1" ref="$2" output="$3"
@@ -57,7 +57,7 @@ github_archive_download() {
     archive=$(mktemp /tmp/sbshell-archive.XXXXXX) || return 1
     if ! curl --fail --silent --location --proto '=https' --tlsv1.2 \
         --connect-timeout 10 --max-time 120 \
-        "https://ghfast.top/https://github.com/meiao123/sbshell/archive/$ref.tar.gz" -o "$archive" 2>/dev/null; then
+        "https://github.com/meiao123/sbshell/archive/$ref.tar.gz" -o "$archive" 2>/dev/null; then
         rm -f "$archive"
         return 1
     fi
@@ -91,22 +91,6 @@ download_repo_file() {
     rm -f "$output"
     # 第三层：全量压缩包解压提取
     github_archive_download "$path" "$ref" "$output"
-}
-
-resolve_release_ref() {
-    local tmp='/tmp/sbshell-release-ref' declared=''
-    rm -f "$tmp"
-    if download_repo_file 'RELEASE' 'main' "$tmp"; then
-        declared=$(tr -d '\r\n' < "$tmp")
-    fi
-    rm -f "$tmp"
-    case "$declared" in
-        *[!0-9a-f]*) ;;
-        *) if [ "${#declared}" -eq 40 ]; then
-               BASE_REF=$declared
-           fi ;;
-    esac
-    return 0
 }
 
 SCRIPTS=(check_environment.sh install_singbox.sh manual_input.sh manual_update.sh auto_update.sh configure_tproxy.sh configure_tun.sh start_singbox.sh stop_singbox.sh clean_nft.sh set_defaults.sh commands.sh switch_mode.sh manage_autostart.sh check_config.sh update_scripts.sh update_ui.sh menu.sh)
