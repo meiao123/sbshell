@@ -61,10 +61,12 @@ while true; do
     case "$menu_choice" in
         1)
             while true; do
-                read -rp "请输入更新间隔小时数 (1-23小时,默认为12小时): " interval
+                # cron 的 */N 只在 N 整除 24 时才是“每 N 小时”：*/7 会在 21 点后直接跳到 0 点
+                # （间隔 3 小时），*/23 则是一天 23 小时 + 1 小时。因此只接受 24 的因数。
+                read -rp "请输入更新间隔小时数 (1/2/3/4/6/8/12，默认为12): " interval
                 interval=${interval:-12}
-                [[ "$interval" =~ ^([1-9]|1[0-9]|2[0-3])$ ]] && break
-                echo -e "${RED}请输入 1-23。${NC}"
+                case "$interval" in 1|2|3|4|6|8|12) break ;; esac
+                echo -e "${RED}请输入 1/2/3/4/6/8/12。${NC}"
             done
             printf 'SHELL=/bin/sh\nPATH=/usr/sbin:/usr/bin:/sbin:/bin\n0 */%s * * * root %s\n' "$interval" "$UPDATE_SCRIPT" > "$CRON_FILE"
             chown root:root "$CRON_FILE"; chmod 0644 "$CRON_FILE"

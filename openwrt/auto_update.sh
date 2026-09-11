@@ -69,9 +69,10 @@ while true; do
     read -rp '请选择(1/2): ' c
     case "$c" in
         1)
-            read -rp '间隔小时(1-23,默认12): ' h
+            # cron 的 */N 只在 N 整除 24 时才是“每 N 小时”，因此只接受 24 的因数。
+            read -rp '间隔小时(1/2/3/4/6/8/12,默认12): ' h
             h=${h:-12}
-            case "$h" in 1|2|3|4|5|6|7|8|9|1[0-9]|2[0-3]) ;; *) echo -e "${RED}请输入 1-23。${NC}"; continue;; esac
+            case "$h" in 1|2|3|4|6|8|12) ;; *) echo -e "${RED}请输入 1/2/3/4/6/8/12。${NC}"; continue;; esac
             touch "$CRON_FILE"
             sed -i "/[[:space:]]$CRON_MARK\$/d" "$CRON_FILE"
             printf '0 */%s * * * %s %s\n' "$h" "$UPDATE_SCRIPT" "$CRON_MARK" >> "$CRON_FILE"

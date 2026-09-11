@@ -46,11 +46,21 @@ User=sing-box
 StateDirectory=sing-box
 EOF
 
-sudo systemd-analyze verify /etc/systemd/system/sing-box.service.d/10-sbshell.conf || {
-    echo -e "${RED}systemd drop-in 校验失败。${NC}" >&2
-    exit 1
-}
+# 校验 systemd 单元：应校验父 unit（sing-box.service）而不是 drop-in 文件本身，
+# 旧写法在部分 systemd 版本上会以 "Failed to prepare filename ..." 直接失败并中止安装。
+if command -v systemd-analyze >/dev/null 2>&1; then
+    sudo systemd-analyze verify sing-box.service >/dev/null 2>&1 || {
+        echo -e "${YELLOW}systemd 单元校验有告警，drop-in 已写入，继续安装。${NC}" >&2
+    }
+fi
 sudo systemctl daemon-reload
+
+# 模板配置的 cache_file 指向 /etc/sing-box/cache.db，而服务以 sing-box 用户运行、
+# /etc/sing-box 属主是 root:root 0755：不预创建这个文件，缓存永远写不进去（日志报错、
+# fakeip/选择器状态不持久）。这里预创建并交给 sing-box 用户。
+if [ ! -e /etc/sing-box/cache.db ]; then
+    sudo install -o sing-box -g sing-box -m 0600 /dev/null /etc/sing-box/cache.db
+fi
 if ! sudo systemctl restart sing-box; then
     echo -e "${RED}sing-box 服务启动失败，请检查 journalctl -u sing-box。${NC}" >&2
     exit 1

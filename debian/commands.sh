@@ -21,8 +21,18 @@ setup_singbox_permissions() {
 User=sing-box
 StateDirectory=sing-box
 EOF
-    systemd-analyze verify /etc/systemd/system/sing-box.service.d/10-sbshell.conf
+    # 校验父 unit 而不是 drop-in 文件本身（旧写法在部分 systemd 版本上会直接失败）。
+    if command -v systemd-analyze >/dev/null 2>&1; then
+        systemd-analyze verify sing-box.service >/dev/null 2>&1 || {
+            echo -e "${YELLOW}systemd 单元校验有告警，继续。${NC}" >&2
+        }
+    fi
     systemctl daemon-reload
+    # 与 install_singbox.sh 一致：预创建 cache.db 并交给 sing-box 用户，
+    # 否则 /etc/sing-box 不可写会导致缓存写入失败。
+    if id sing-box >/dev/null 2>&1 && [ ! -e /etc/sing-box/cache.db ]; then
+        install -o sing-box -g sing-box -m 0600 /dev/null /etc/sing-box/cache.db
+    fi
     echo -e "${GREEN:-\033[0;32m}sing-box 权限与服务配置已完成。${NC}"
     pause
 }
