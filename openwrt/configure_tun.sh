@@ -1,11 +1,21 @@
 #!/bin/bash
 set -Eeuo pipefail
 
+
+
 # --- busybox 兼容：ImmortalWrt/OpenWrt 的 busybox 常常没有 install applet ---
 # 真机实测（ImmortalWrt）：一键引导在第一步就中止
 #   /dev/fd/64: line 57: install: command not found
 # 本仓库大量依赖 GNU install 的 -d/-o/-g/-m，busybox 没有等价命令，因此这里在缺失时
 # 定义一个只覆盖本仓库用法的兜底实现；只要系统有真正的 install，这段完全不生效。
+#
+# 与调用方 `set -Eeuo pipefail` 的关系（踩过坑）：
+#   * chmod 失败必须让本次 install **返回非 0**（fail-closed：凭据文件绝不能悄悄留在 0644），
+#     并且要 `return 1` 而不是让 errexit 在函数内部直接终止整个脚本——否则调用方的
+#     `if ! install …; then restore; fi` 回滚逻辑根本没机会执行；
+#   * chown 失败不影响返回码（所有权不构成安全边界，且 vfat/extroot 等文件系统上会失败）。
+# 写法上一律用 `[ -z "$x" ] || { cmd … || …; }`：判空为真时整行返回 0，
+# 且 `cmd` 处于 `||` 列表首位时不受 errexit 影响，失败能被显式处理。
 if ! command -v install >/dev/null 2>&1; then
     install() {
         local d=0 m='' o='' g=''
@@ -21,15 +31,15 @@ if ! command -v install >/dev/null 2>&1; then
         done
         if [ "$d" -eq 1 ]; then
             mkdir -p "$@" || return 1
-            [ -n "$m" ] && chmod "$m" "$@" 2>/dev/null
+            [ -z "$m" ] || { chmod "$m" "$@" 2>/dev/null || return 1; }
         else
             # 本仓库只用 `install [-m M] [-o U] [-g G] SRC DST`
             [ $# -eq 2 ] || return 1
             cp -f "$1" "$2" || return 1
-            [ -n "$m" ] && chmod "$m" "$2" 2>/dev/null
+            [ -z "$m" ] || { chmod "$m" "$2" 2>/dev/null || return 1; }
             set -- "$2"
         fi
-        [ -n "$o" ] && chown "$o${g:+:$g}" "$@" 2>/dev/null
+        [ -z "$o" ] || { chown "$o${g:+:$g}" "$@" 2>/dev/null || true; }
         return 0
     }
 fi

@@ -99,4 +99,47 @@ if [ -f /etc/sing-box/config.json ]; then
     assert_eq "$(stat -c %a /etc/sing-box/config.json)" "600" "配置权限 0600"
 fi
 
+# 4) 兜底自身在 `set -Eeuo pipefail` 下的语义（真 bug：旧写法 `[ -n "$o" ] && chown …` 会让
+#    chown 失败经 errexit 放大成整个脚本中止，调用方的 restore/rollback 根本执行不到）。
+#    容器里以 root 运行，chown root:root 一定成功，所以用"不存在的属主"和"非法模式"来触发。
+awk '/^# --- busybox 兼容/{p=1} p{print} p&&/^fi$/{exit}' "$SCRIPTS/menu.sh" > /tmp/install-shim.sh
+if grep -q 'command -v install' /tmp/install-shim.sh; then
+    pass "从已安装的 openwrt/menu.sh 抽到兜底块"
+else
+    fail "无法从已安装脚本抽到兜底块"
+fi
+cat > /tmp/shim-semantics.sh <<'EOS'
+set -Eeuo pipefail
+. /tmp/install-shim.sh
+install -o nosuchuser_sbshell -g root -m 0600 /dev/null /tmp/shim-e1
+echo "survived-chown"
+printf 'x\n' > /tmp/shim-src
+if install -m notamode /tmp/shim-src /tmp/shim-e2; then
+    echo "mode-failure-missed"
+else
+    echo "mode-failure-detected"
+fi
+echo "survived-all"
+EOS
+rm -f /tmp/shim-e1 /tmp/shim-e2
+shim_out=$(PATH="$NOPATH" bash /tmp/shim-semantics.sh 2>&1); shim_rc=$?
+assert_rc "$shim_rc" 0 "兜底在 set -e 下正常结束（chown 失败被容忍）"
+case "$shim_out" in
+    *survived-chown*) pass "chown 失败没有把整个脚本带走" ;;
+    *) fail "chown 失败经 errexit 终止了脚本" ;;
+esac
+case "$shim_out" in
+    *mode-failure-detected*) pass "chmod 失败被显式识别（fail-closed，凭据文件不会留在 0644）" ;;
+    *) fail "chmod 失败未被识别" ;;
+esac
+case "$shim_out" in
+    *survived-all*) pass "失败后脚本继续执行（调用方回滚有机会运行）" ;;
+    *) fail "脚本被 errexit 终止，调用方回滚无法运行" ;;
+esac
+if [ -f /tmp/shim-e1 ]; then
+    assert_eq "$(stat -c %a /tmp/shim-e1)" "600" "容忍 chown 的文件仍写入正确权限"
+else
+    fail "容忍 chown 的文件没有落盘"
+fi
+
 suite_end

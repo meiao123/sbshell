@@ -142,12 +142,20 @@ busybox 没有 `install` applet，而本仓库在两个平台上都用 GNU `inst
 
 修复：OpenWrt 路径的每个脚本内联一个兜底 —— 仅当 `command -v install` 失败时定义
 `install()` 函数（用 `mkdir -p` + `chmod`、`cp -f` + `chmod`、`chown` 实现 `-d/-m/-o/-g`
-子集；函数末尾 `return 0`，使 `chown` 失败不会污染调用方的返回值）。系统上存在真正的
-`install` 时这段完全不生效，因此 Debian 路径零影响。覆盖：`sbshall.sh`（一键引导）与
+子集）。系统上存在真正的 `install` 时这段完全不生效，因此 Debian 路径零影响。覆盖：`sbshall.sh`（一键引导）与
 `openwrt/` 下 9 个脚本，外加 `openwrt/auto_update.sh` 用 heredoc 生成给 cron 的那一份
 （cron 里失败会静默不更新配置，比交互路径更隐蔽）。
 
 回归测试：`tests/suites/07_no_install.sh` 构造一个"PATH 里包含全部可执行文件、唯独没有
 `install`"的符号链接目录，然后断言 (a) 所有依赖 `install` 的 OpenWrt 脚本都自带兜底（含
 heredoc 生成的那份），(b) `set_defaults.sh` 在该环境下成功且 `defaults.conf` 为 0600、
-`/etc/sing-box` 为 0755，(c) 生成的 cron 更新脚本成功并把配置写成 0600。
+`/etc/sing-box` 为 0755，(c) 生成的 cron 更新脚本成功并把配置写成 0600，(d) 兜底自身在
+`set -Eeuo pipefail` 下的语义。
+
+兜底与 `set -Eeuo pipefail` 的关系（写这个兜底时自己踩到的坑）：权限行必须写成
+`[ -z "$m" ] || { chmod … || return 1; }`。若写成 `[ -n "$m" ] && chmod …`，chmod/chown
+失败时失败的是 AND 列表的**最后一个**命令，errexit 会直接终止整个脚本（函数末尾的
+`return 0` 根本执行不到），调用方的 `if ! install …; then restore; fi` 回滚也没机会运行。
+现在的语义是：chmod 失败 → 返回非 0（fail-closed，凭据文件绝不能悄悄留在 0644）；
+chown 失败 → 显式容忍（所有权不构成安全边界，且 vfat/extroot 等文件系统上必然失败）。
+测试用"不存在的属主"和"非法模式"分别触发这两条路径。
