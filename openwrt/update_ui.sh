@@ -142,10 +142,10 @@ install_ui() {
 check_ui() {
     if [ -f "$UI_DIR/index.html" ]; then
         echo -e "${GREEN}UI 面板已安装。${NC}"
-        return 0
+    else
+        echo -e "${RED}UI 面板未安装或不完整。${NC}" >&2
     fi
-    echo -e "${RED}UI 面板未安装或不完整。${NC}" >&2
-    return 1
+    return 0
 }
 setup_auto_update_ui() {
     local c schedule
@@ -251,7 +251,7 @@ touch "$CRON_FILE"; sed -i "/[[:space:]]$CRON_MARK\$/d" "$CRON_FILE"; printf '%s
 echo -e "${GREEN}UI 自动更新已设置。${NC}"
 }
 while true; do
-    echo '========='
+    echo '========'
     echo '1. 默认 UI'
     echo '2. zashboard'
     echo '3. metacubexd'
@@ -259,7 +259,7 @@ while true; do
     echo '5. 检查 UI'
     echo '6. 设置自动更新'
     echo '0. 退出'
-    echo '========='
+    echo '========'
     read -rp '请选择: ' choice
     case "$choice" in
         1) url=$(get_config_url || true); install_ui "${url:-$ZASHBOARD_URL}"; exit $?;;
