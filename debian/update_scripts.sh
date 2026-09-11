@@ -2,12 +2,10 @@
 set -Eeuo pipefail
 GREEN='\033[0;32m'; RED='\033[0;31m'; NC='\033[0m'
 SCRIPT_DIR=/etc/sing-box/scripts
-BASE_REF=7dfddbae21d224349bb4ba4ac2d81bd541d39b9d
-BASE_URL="https://raw.githubusercontent.com/meiao123/sbshell/$BASE_REF/debian"
+BASE_URL="https://raw.githubusercontent.com/meiao123/sbshell/main/debian"
 # 内置的发布提交（兜底）：提交无法包含自身 SHA，写死的引用必然指向"上一版"，只信它会出现
 # 「装好加固版后点一次更新就回退到修复前版本」的一跳回退（见 docs/security-hardening.md）。
 # 真正的发布提交按 main 上的 `RELEASE` 声明解析，只有解析失败才回退到这个常量。
-RELEASE_DECL_URL="https://raw.githubusercontent.com/meiao123/sbshell/refs/heads/main/RELEASE"
 resolve_release_ref() {
     local declared=''
     declared=$(curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
@@ -25,7 +23,6 @@ resolve_release_ref() {
 # （并且提权后的实例还会再建一份）。
 [ "$(id -u)" -eq 0 ] || exec sudo bash "$0" "$@"
 # 提权之后、真正下载之前解析发布提交。
-resolve_release_ref
 TMP_DIR=$(mktemp -d /tmp/sing-box-update.XXXXXX) || exit 1
 BACKUP_DIR=$(mktemp -d /tmp/sing-box-update-backup.XXXXXX) || { rm -rf "$TMP_DIR"; exit 1; }
 trap 'rm -rf "$TMP_DIR" "$BACKUP_DIR"' EXIT

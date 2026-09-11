@@ -36,7 +36,6 @@ CYAN='\033[0;36m'; GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[1;33m'; NC
 
 SCRIPT_DIR=/etc/sing-box/scripts
 INITIALIZED_FILE="$SCRIPT_DIR/.initialized"
-BASE_REF=7dfddbae21d224349bb4ba4ac2d81bd541d39b9d
 
 # 允许外部传入镜像源，默认提供 ghfast 加速
 export REPO_RAW="${REPO_RAW:-https://ghfast.top/https://raw.githubusercontent.com/meiao123/sbshell}"
@@ -140,8 +139,7 @@ uninstall_sbshell() {
 }
 
 update_scripts() {
-    resolve_release_ref
-    local tmp backup s rc=0
+        local tmp backup s rc=0
     local -a backed_up=()
     tmp=$(mktemp -d /tmp/sbshell-openwrt.XXXXXX) || return 1
     backup=$(mktemp -d /tmp/sbshell-openwrt-backup.XXXXXX) || { rm -rf "$tmp"; return 1; }
@@ -155,7 +153,7 @@ update_scripts() {
 
     # 关键修复：加入 openwrt/ 前缀
     for s in "${SCRIPTS[@]}"; do
-        if ! download_repo_file "openwrt/$s" "$BASE_REF" "$tmp/$s" || [ ! -s "$tmp/$s" ] || ! bash -n "$tmp/$s"; then
+        if ! download_repo_file "openwrt/$s" "main" "$tmp/$s" || [ ! -s "$tmp/$s" ] || ! bash -n "$tmp/$s"; then
             rc=1
             break
         fi

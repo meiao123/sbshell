@@ -29,10 +29,8 @@ if ! command -v install >/dev/null 2>&1; then
     }
 fi
 SCRIPT_DIR=/etc/sing-box/scripts
-BASE_REF=7dfddbae21d224349bb4ba4ac2d81bd541d39b9d
 REPO_RAW="https://raw.githubusercontent.com/meiao123/sbshell"
-BASE_URL="$REPO_RAW/$BASE_REF/openwrt"
-RELEASE_DECL_URL="$REPO_RAW/refs/heads/main/RELEASE"
+BASE_URL="$REPO_RAW/main/openwrt"
 github_api_download() {
     local path="$1" ref="$2" output="$3"
     curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
@@ -99,11 +97,10 @@ TMP_DIR=$(mktemp -d /tmp/sbshell-update.XXXXXX)
 BACKUP_DIR=$(mktemp -d /tmp/sbshell-update-backup.XXXXXX)
 trap 'rm -rf "$TMP_DIR" "$BACKUP_DIR"' EXIT
 [ "$(id -u)" -eq 0 ] || { echo '请以 root 运行。' >&2; exit 1; }
-resolve_release_ref
 install -d -m 0755 "$SCRIPT_DIR"
 SCRIPTS=(check_environment.sh install_singbox.sh manual_input.sh manual_update.sh auto_update.sh configure_tproxy.sh configure_tun.sh start_singbox.sh stop_singbox.sh clean_nft.sh set_defaults.sh commands.sh switch_mode.sh manage_autostart.sh check_config.sh update_scripts.sh update_ui.sh menu.sh)
 for script in "${SCRIPTS[@]}"; do
-    download_repo_file "$script" "$BASE_REF" "$TMP_DIR/$script"
+    download_repo_file "$script" "main" "$TMP_DIR/$script"
     [ -s "$TMP_DIR/$script" ] || exit 1
     bash -n "$TMP_DIR/$script"
     if head -n1 "$TMP_DIR/$script" | grep -q '^#!/bin/sh'; then sh -n "$TMP_DIR/$script"; fi

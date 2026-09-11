@@ -10,9 +10,7 @@ ROLE_FILE=/etc/sing-box/.role
 # 内置的发布提交（兜底）：提交无法包含自身 SHA，写死的引用必然指向"上一版"，只信它会出现
 # 「装好加固版后点一次更新就回退到修复前版本」的一跳回退（见 docs/security-hardening.md）。
 # 真正的发布提交按 main 上的 `RELEASE` 声明解析，只有解析失败才回退到这个常量。
-BASE_REF=7dfddbae21d224349bb4ba4ac2d81bd541d39b9d
-BASE_URL="https://raw.githubusercontent.com/meiao123/sbshell/$BASE_REF/debian"
-RELEASE_DECL_URL="https://raw.githubusercontent.com/meiao123/sbshell/refs/heads/main/RELEASE"
+BASE_URL="https://raw.githubusercontent.com/meiao123/sbshell/main/debian"
 resolve_release_ref() {
     local declared=''
     declared=$(curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
@@ -83,8 +81,7 @@ uninstall_sbshell() {
 }
 download_all_scripts() {
     # 下载前解析发布提交：只用内置常量会退回上一版（见 docs/security-hardening.md）。
-    resolve_release_ref
-    local tmpdir backupdir script item rc=0
+        local tmpdir backupdir script item rc=0
     # 两个 mktemp 都必须检查：本函数总在 `||` 上下文里被调用，errexit 失效，
     # 空变量会让 `"$tmpdir/$script"` 折叠成 /脚本名（写到文件系统根目录）。
     tmpdir=$(mktemp -d /tmp/sbshell-download.XXXXXX) || return 1

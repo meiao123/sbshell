@@ -29,8 +29,6 @@ if ! command -v install >/dev/null 2>&1; then
     }
 fi
 
-RELEASE_REF=7dfddbae21d224349bb4ba4ac2d81bd541d39b9d
-
 # 修复点 1：允许外部传入环境变量，并强制 export 传递给子进程 menu.sh
 export REPO_RAW="${REPO_RAW:-https://raw.githubusercontent.com/meiao123/sbshell}"
 
@@ -147,23 +145,22 @@ command -v curl >/dev/null 2>&1 || { echo -e "${RED}curl 安装失败。${NC}" >
 command -v bash >/dev/null 2>&1 || { echo -e "${RED}bash 安装失败。${NC}" >&2; exit 1; }
 command -v nft >/dev/null 2>&1 || { echo -e "${RED}nft 安装失败。${NC}" >&2; exit 1; }
 
-resolve_release_ref
 install -d -o root -g root -m 0755 "$SCRIPT_DIR"
 
 tmp=$(mktemp /tmp/sbshell-menu.XXXXXX)
 trap 'rm -f "$tmp"' EXIT
 
 if $is_openwrt; then
-    download_repo_file "openwrt/menu.sh" "$RELEASE_REF" "$tmp"
+    download_repo_file "openwrt/menu.sh" "main" "$tmp"
 else
-    download_repo_file "debian/menu.sh" "$RELEASE_REF" "$tmp"
+    download_repo_file "debian/menu.sh" "main" "$tmp"
 fi
 
 [ -s "$tmp" ] || { echo -e "${RED}主脚本下载失败或为空。${NC}" >&2; exit 1; }
 bash -n "$tmp"
 install -o root -g root -m 0755 "$tmp" "$SCRIPT_DIR/menu.sh"
 
-echo -e "${GREEN}主脚本下载并校验完成（审核发布引用: $RELEASE_REF）。${NC}"
+echo -e "${GREEN}主脚本下载并校验完成（代码引用: main）。${NC}"
 echo -e "${YELLOW}注意：脚本会修改系统网络、防火墙和 sing-box 配置，请确认已做好备份。${NC}"
 
 rm -f "$tmp"
