@@ -1,8 +1,9 @@
 #!/bin/bash
 set -Eeuo pipefail
 
-DEBIAN_MAIN_SCRIPT_URL=https://raw.githubusercontent.com/meiao123/sbshell/main/debian/menu.sh
-OPENWRT_MAIN_SCRIPT_URL=https://raw.githubusercontent.com/meiao123/sbshell/main/openwrt/menu.sh
+RELEASE_REF=security-release-2026-09-11
+DEBIAN_MAIN_SCRIPT_URL="https://raw.githubusercontent.com/meiao123/sbshell/$RELEASE_REF/debian/menu.sh"
+OPENWRT_MAIN_SCRIPT_URL="https://raw.githubusercontent.com/meiao123/sbshell/$RELEASE_REF/openwrt/menu.sh"
 SCRIPT_DIR=/etc/sing-box/scripts
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
 
@@ -47,6 +48,6 @@ fi
 bash -n "$tmp"
 install -o root -g root -m 0755 "$tmp" "$SCRIPT_DIR/menu.sh"
 
-echo -e "${GREEN}主脚本下载并校验完成。${NC}"
+echo -e "${GREEN}主脚本下载并校验完成（固定发布分支: $RELEASE_REF）。${NC}"
 echo -e "${YELLOW}注意：脚本会修改系统网络、防火墙和 sing-box 配置，请确认已做好备份。${NC}"
 exec bash "$SCRIPT_DIR/menu.sh" "$@"
