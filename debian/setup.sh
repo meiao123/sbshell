@@ -11,9 +11,7 @@ ACME_SIGNER='github@neilpang.com namespaces="git" ssh-ed25519 AAAAC3NzaC1lZDI1NT
 TMP_DIR=$(mktemp -d /tmp/sbshell-acme.XXXXXX)
 trap 'rm -rf "$TMP_DIR"' EXIT
 
-check_root() {
-    [ "$EUID" -eq 0 ] || { echo -e "${RED}错误：请使用 root 权限运行此脚本。${RESET}" >&2; exit 1; }
-}
+check_root() { [ "$EUID" -eq 0 ] || { echo -e "${RED}错误：请使用 root 权限运行此脚本。${RESET}" >&2; exit 1; }; }
 get_user_input() {
     read -r -p '请输入域名: ' DOMAIN
     [[ "$DOMAIN" =~ ^[a-zA-Z0-9.-]+$ ]] || { echo -e "${RED}域名格式不正确。${RESET}" >&2; exit 1; }
@@ -33,13 +31,9 @@ install_dependencies() {
     if [[ "$PKG_MANAGER" == apt ]]; then dependencies+=(cron ufw git openssh-client); else dependencies+=(cronie firewalld git openssh-clients); fi
     if [[ "$PKG_MANAGER" == apt ]]; then
         sudo apt-get update -qq
-        for package in "${dependencies[@]}"; do
-            dpkg -s "$package" >/dev/null 2>&1 || sudo apt-get install -y "$package" >/dev/null
-        done
+        for package in "${dependencies[@]}"; do dpkg -s "$package" >/dev/null 2>&1 || sudo apt-get install -y "$package" >/dev/null; done
     else
-        for package in "${dependencies[@]}"; do
-            rpm -q "$package" >/dev/null 2>&1 || sudo yum install -y "$package" >/dev/null
-        done
+        for package in "${dependencies[@]}"; do rpm -q "$package" >/dev/null 2>&1 || sudo yum install -y "$package" >/dev/null; done
     fi
 }
 configure_firewall() {
@@ -48,9 +42,7 @@ configure_firewall() {
     [[ "$ssh_port" =~ ^[0-9]+$ && "$ssh_port" -ge 1 && "$ssh_port" -le 65535 ]] || { echo -e "${RED}SSH 端口无效。${RESET}" >&2; exit 1; }
     if [[ "$OS_TYPE" == ubuntu || "$OS_TYPE" == debian ]]; then
         firewall_cmd=ufw; firewall_service_name=ufw
-        if sudo "$firewall_cmd" status | grep -q inactive; then
-            echo y | sudo "$firewall_cmd" enable >/dev/null 2>&1 || true
-        fi
+        if sudo "$firewall_cmd" status | grep -q inactive; then echo y | sudo "$firewall_cmd" enable >/dev/null 2>&1 || true; fi
         sudo "$firewall_cmd" allow "$ssh_port"/tcp >/dev/null
         sudo "$firewall_cmd" allow 80/tcp >/dev/null
         sudo "$firewall_cmd" allow 443/tcp >/dev/null
@@ -65,14 +57,7 @@ configure_firewall() {
 }
 download_acme() {
     local clone_dir="$TMP_DIR/acme.sh" allowed_signers="$TMP_DIR/allowed_signers"
-    if [ -x "$ACME_INSTALL_PATH/acme.sh" ]; then
-        export PATH="$ACME_INSTALL_PATH:$PATH"
-        ACME_CMD=$(command -v acme.sh || true)
-        if [ -n "$ACME_CMD" ]; then
-            return 0
-        fi
-    fi
-    rm -rf "$ACME_INSTALL_PATH"
+    rm -rf "$clone_dir" "$ACME_INSTALL_PATH"
     printf '%s\n' "$ACME_SIGNER" > "$allowed_signers"
     git clone --depth 1 --branch "$ACME_VERSION" "$ACME_REPO" "$clone_dir" >/dev/null 2>&1
     git -C "$clone_dir" config gpg.ssh.allowedSignersFile "$allowed_signers"
@@ -85,35 +70,20 @@ find_acme_cmd() {
     ACME_CMD=$(command -v acme.sh || true)
     [ -n "$ACME_CMD" ] || { echo -e "${RED}找不到 acme.sh。${RESET}" >&2; exit 1; }
 }
-update_acme() {
-    echo -e "${GREEN}使用固定签名版本 acme.sh $ACME_VERSION，不自动执行远程自更新。${RESET}"
-}
+update_acme() { echo -e "${GREEN}使用固定签名版本 acme.sh $ACME_VERSION，不自动执行远程自更新。${RESET}"; }
 issue_cert() {
     "$ACME_CMD" --issue --standalone -d "$DOMAIN" --server "$CA_SERVER" --force \
         --pre-hook 'systemctl stop nginx 2>/dev/null || systemctl stop apache2 2>/dev/null || true' \
-        --post-hook 'systemctl start nginx 2>/dev/null || systemctl start apache2 2>/dev/null || true' >/dev/null 2>&1 || {
-        echo -e "${RED}证书申请失败。${RESET}" >&2; exit 1;
-    }
+        --post-hook 'systemctl start nginx 2>/dev/null || systemctl start apache2 2>/dev/null || true' >/dev/null 2>&1 || { echo -e "${RED}证书申请失败。${RESET}" >&2; exit 1; }
 }
 install_cert() {
     CERT_KEY_DIR="/etc/ssl/$DOMAIN"
     sudo install -d -m 0755 "$CERT_KEY_DIR"
     sudo "$ACME_CMD" --installcert -d "$DOMAIN" --key-file "${CERT_KEY_DIR}/${DOMAIN}.key" --fullchain-file "${CERT_KEY_DIR}/${DOMAIN}.crt" --reloadcmd 'systemctl reload nginx 2>/dev/null || systemctl reload apache2 2>/dev/null || true' >/dev/null 2>&1 || { echo -e "${RED}证书安装失败。${RESET}" >&2; exit 1; }
-    sudo chmod 600 "${CERT_KEY_DIR}/${DOMAIN}.key"
-    sudo chown root:root "${CERT_KEY_DIR}/${DOMAIN}.key"
+    sudo chmod 600 "${CERT_KEY_DIR}/${DOMAIN}.key"; sudo chown root:root "${CERT_KEY_DIR}/${DOMAIN}.key"
 }
 
-check_root
-get_user_input
-detect_os
-install_dependencies
-configure_firewall
-download_acme
-find_acme_cmd
-update_acme
-issue_cert
-install_cert
+check_root; get_user_input; detect_os; install_dependencies; configure_firewall; download_acme; find_acme_cmd; update_acme; issue_cert; install_cert
 sudo "$ACME_CMD" --install-cronjob >/dev/null 2>&1 || echo -e "${YELLOW}自动续期任务配置失败，请手动检查。${RESET}" >&2
-
 echo -e "${GREEN}证书文件: ${BOLD}${CERT_KEY_DIR}/${DOMAIN}.crt${RESET}"
 echo -e "${GREEN}私钥文件: ${BOLD}${CERT_KEY_DIR}/${DOMAIN}.key${RESET}"
