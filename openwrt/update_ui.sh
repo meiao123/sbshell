@@ -14,7 +14,7 @@ command -v unzip >/dev/null 2>&1 || { opkg update; opkg install unzip; }
 valid_url() { [[ "$1" =~ ^https://[^[:space:]]+$ ]]; }
 get_config_url() { sed -n 's/.*"external_ui_download_url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' /etc/sing-box/config.json 2>/dev/null | head -n1; }
 archive_top() {
-    local extract="$1" candidate count=0 top=''
+    local zip="$1" extract="$2" candidate count=0 top=''
     while IFS= read -r candidate; do
         [ -z "$candidate" ] && continue
         case "$candidate" in
@@ -22,8 +22,8 @@ archive_top() {
         esac
         count=$((count + 1))
         [ "$count" -le 10000 ] || { echo 'UI 压缩包条目过多。' >&2; return 1; }
-    done < <(unzip -Z1 "$ZIP_FILE")
-    unzip -q -o "$ZIP_FILE" -d "$extract"
+    done < <(unzip -Z1 "$zip")
+    unzip -q -o "$zip" -d "$extract"
     find "$extract" -type l -delete
     [ "$(du -sk "$extract" | awk '{print $1}')" -le 204800 ] || { echo 'UI 解压后体积超过 200 MiB。' >&2; return 1; }
     [ "$(find "$extract" -type f | wc -l)" -le 10000 ] || { echo 'UI 文件数量超过限制。' >&2; return 1; }
@@ -39,16 +39,14 @@ archive_top() {
 install_ui() {
     local url="$1" tmp top backup
     while ! mkdir "$UI_LOCK_DIR" 2>/dev/null; do sleep 1; done
-    cleanup_ui_lock() { rmdir "$UI_LOCK_DIR" 2>/dev/null || true; }
-    trap cleanup_ui_lock RETURN
-    valid_url "$url" || { echo 'UI 地址必须使用 HTTPS。' >&2; return 1; }
+    valid_url "$url" || { rmdir "$UI_LOCK_DIR" 2>/dev/null || true; echo 'UI 地址必须使用 HTTPS。' >&2; return 1; }
     tmp=$(mktemp -d /tmp/sbshell-ui.XXXXXX)
-    trap 'rm -rf "$tmp"' RETURN
+    trap 'rm -rf "$tmp"; rmdir "$UI_LOCK_DIR" 2>/dev/null || true' EXIT
     mkdir -p "$tmp/extract" "$BACKUP_DIR"
     ZIP_FILE="$tmp/ui.zip"
     curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 120 --max-filesize 52428800 "$url" -o "$ZIP_FILE"
     [ "$(wc -c < "$ZIP_FILE")" -le 52428800 ] || { echo 'UI 压缩包超过 50 MiB。' >&2; return 1; }
-    top=$(archive_top "$tmp/extract") || return 1
+    top=$(archive_top "$ZIP_FILE" "$tmp/extract") || return 1
     backup=$(mktemp -d "$BACKUP_DIR/.ui-backup.XXXXXX")
     rm -rf "$backup"
     if [ -d "$UI_DIR" ]; then mv "$UI_DIR" "$backup"; else rmdir "$backup"; backup=''; fi
