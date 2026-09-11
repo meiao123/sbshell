@@ -91,4 +91,9 @@ assert_grep 'mv "\$UI_DIR" "\$failed_ui"' "$SBSHELL_SRC/openwrt/update_ui.sh" "U
 assert_grep 'update_scripts.sh' "$SBSHELL_SRC/openwrt/update_scripts.sh" "updater 能更新自身"
 assert_grep 'update_scripts.sh' "$SBSHELL_SRC/openwrt/menu.sh" "menu 保留自更新脚本"
 
+suite_begin "openwrt: UI initialization and menu separator"
+assert_grep "run update_ui.sh <<< '1'" "$SBSHELL_SRC/openwrt/menu.sh" "首次初始化自动安装默认 UI"
+assert_grep '===============================================' "$SBSHELL_SRC/openwrt/menu.sh" "管理菜单提示前显示分隔线"
+assert_no_grep 'rmdir "\$backup"' "$SBSHELL_SRC/openwrt/update_ui.sh" "首次安装 UI 时不再 rmdir 已删除的备份目录"
+
 suite_end
