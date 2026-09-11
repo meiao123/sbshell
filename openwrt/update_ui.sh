@@ -3,15 +3,15 @@ set -Eeuo pipefail
 [ "$(id -u)" -eq 0 ] || { echo '请以 root 运行。' >&2; exit 1; }
 UI_DIR=/etc/sing-box/ui
 BACKUP_DIR=/etc/sing-box/ui-backups
+CRON_FILE=/etc/crontabs/root
+CRON_MARK='# sbshell-ui-auto-update'
 ZASHBOARD_URL=https://github.com/Zephyruso/zashboard/archive/refs/heads/gh-pages.zip
 METACUBEXD_URL=https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip
 YACD_URL=https://github.com/MetaCubeX/Yacd-meta/archive/refs/heads/gh-pages.zip
-
 command -v curl >/dev/null 2>&1 || { opkg update; opkg install curl; }
 command -v unzip >/dev/null 2>&1 || { opkg update; opkg install unzip; }
 valid_url() { [[ "$1" =~ ^https://[^[:space:]]+$ ]]; }
 get_config_url() { sed -n 's/.*"external_ui_download_url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' /etc/sing-box/config.json 2>/dev/null | head -n1; }
-
 install_ui() {
     local url="$1" tmp top backup
     valid_url "$url" || { echo 'UI 地址必须使用 HTTPS。' >&2; return 1; }
@@ -24,14 +24,10 @@ install_ui() {
     [ -n "$top" ] && [ -f "$top/index.html" ] || { echo 'UI 压缩包结构无效。' >&2; return 1; }
     backup="$BACKUP_DIR/$(date +%Y%m%d%H%M%S).ui"
     [ ! -d "$UI_DIR" ] || mv "$UI_DIR" "$backup"
-    if ! mv "$top" "$UI_DIR"; then
-        [ ! -d "$backup" ] || mv "$backup" "$UI_DIR"
-        return 1
-    fi
+    if ! mv "$top" "$UI_DIR"; then [ ! -d "$backup" ] || mv "$backup" "$UI_DIR"; return 1; fi
     chown -R root:root "$UI_DIR"
     echo 'UI 安装完成。'
 }
-
 check_ui() { [ -f "$UI_DIR/index.html" ] && echo 'UI 面板已安装。' || echo 'UI 面板未安装或不完整。'; }
 setup_auto_update_ui() {
     local c schedule
@@ -60,11 +56,12 @@ if ! mv "$TOP" "$UI_DIR"; then [ ! -d "$BACKUP" ] || mv "$BACKUP" "$UI_DIR"; exi
 chown -R root:root "$UI_DIR"
 EOF
 chmod 0755 /etc/sing-box/update-ui.sh; chown root:root /etc/sing-box/update-ui.sh
-printf 'SHELL=/bin/sh\nPATH=/usr/sbin:/usr/bin:/sbin:/bin\n%s root /etc/sing-box/update-ui.sh\n' "$schedule" > /etc/cron.d/sbshell-ui
-chmod 0644 /etc/cron.d/sbshell-ui; chown root:root /etc/cron.d/sbshell-ui
+touch "$CRON_FILE"
+sed -i "/[[:space:]]$CRON_MARK\$/d" "$CRON_FILE"
+printf '%s /etc/sing-box/update-ui.sh %s\n' "$schedule" "$CRON_MARK" >> "$CRON_FILE"
+chmod 0600 "$CRON_FILE"; chown root:root "$CRON_FILE"
 /etc/init.d/cron restart >/dev/null 2>&1 || true
 }
-
 while true; do
     echo '1. 默认 UI'; echo '2. zashboard'; echo '3. metacubexd'; echo '4. yacd'; echo '5. 检查 UI'; echo '6. 设置自动更新'; echo '0. 退出'
     read -rp '请选择: ' choice
