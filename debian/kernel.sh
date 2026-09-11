@@ -4,6 +4,9 @@ GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[1;33m'; NC='\033[0m'
 [ "$(id -u)" -eq 0 ] || exec sudo bash "$0" "$@"
 command -v apt-get >/dev/null 2>&1 || { echo '仅支持 Debian/Ubuntu/Armbian。' >&2; exit 1; }
 command -v curl >/dev/null 2>&1 || { apt-get update; apt-get install -y curl; }
+. /etc/os-release
+CODENAME=${VERSION_CODENAME:-${UBUNTU_CODENAME:-}}
+[ -n "$CODENAME" ] || { echo '无法确定系统发行版代号，无法安全配置 XanMod 软件源。' >&2; exit 1; }
 apt-get update
 apt-get install -y gpg ca-certificates
 install -d -o root -g root -m 0755 /etc/apt/keyrings
@@ -14,7 +17,7 @@ curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 https://
 gpg --batch --dearmor --yes -o "$KEYRING" "$TMP_KEY"
 chmod 0644 "$KEYRING"; chown root:root "$KEYRING"
 REPO_LIST=/etc/apt/sources.list.d/xanmod-release.list
-REPO_ENTRY="deb [signed-by=$KEYRING] https://deb.xanmod.org releases main"
+REPO_ENTRY="deb [signed-by=$KEYRING] https://deb.xanmod.org $CODENAME main"
 printf '%s\n' "$REPO_ENTRY" > "$REPO_LIST"
 chmod 0644 "$REPO_LIST"; chown root:root "$REPO_LIST"
 apt-get update
@@ -31,12 +34,11 @@ elif has_flags lm cmov cx8 fpu fxsr mmx syscall sse2; then
 else
     echo -e "${RED}无法确定 CPU 指令集级别。${NC}" >&2; exit 1
 fi
-
 case "$level" in
     1) pkg=linux-xanmod-lts-x64v1 ;;
     2) pkg=linux-xanmod-lts-x64v2 ;;
     3) pkg=linux-xanmod-lts-x64v3 ;;
-    4) pkg=linux-xanmod-lts-x64v3; echo -e "${YELLOW}检测到 x86-64-v4；XanMod 当前没有 v4 LTS 包，按官方建议使用 v3。${NC}" ;;
+    4) pkg=linux-xanmod-lts-x64v3; echo -e "${YELLOW}检测到 x86-64-v4；XanMod 当前没有 v4 LTS 包，使用 v3。${NC}" ;;
 esac
 apt-get install -y "$pkg"
 echo -e "${GREEN}$pkg 安装完成。请确认默认启动项后再重启系统。${NC}"
