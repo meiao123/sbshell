@@ -113,7 +113,7 @@ install_package() {
     fi
     if $is_openwrt; then 
         opkg install "$package"
-    else 
+    else
         apt-get install -y "$package"
     fi
 }
@@ -145,6 +145,14 @@ fi
 [ -s "$tmp" ] || { echo -e "${RED}主脚本下载失败或为空。${NC}" >&2; exit 1; }
 bash -n "$tmp"
 install -o root -g root -m 0755 "$tmp" "$SCRIPT_DIR/menu.sh"
+
+if $is_openwrt; then
+    if [ -e /usr/bin/sb ] && [ ! -L /usr/bin/sb ]; then
+        echo -e "${RED}/usr/bin/sb 已存在且不是符号链接，拒绝覆盖。${NC}" >&2
+        exit 1
+    fi
+    ln -sfn "$SCRIPT_DIR/menu.sh" /usr/bin/sb
+fi
 
 echo -e "${GREEN}主脚本下载并校验完成（代码引用: main）。${NC}"
 echo -e "${YELLOW}注意：脚本会修改系统网络、防火墙和 sing-box 配置，请确认已做好备份。${NC}"
