@@ -86,6 +86,10 @@ assert_grep 'mv "\$UI_DIR" "\$failed_ui"' "$SBSHELL_SRC/openwrt/update_ui.sh" "U
 assert_grep 'update_scripts.sh' "$SBSHELL_SRC/openwrt/update_scripts.sh" "updater 能更新自身"
 assert_grep 'update_scripts.sh' "$SBSHELL_SRC/openwrt/menu.sh" "menu 保留自更新脚本"
 
+suite_begin "openwrt: manual update accepts HTTP backend URLs"
+assert_grep 'https?://' "$SBSHELL_SRC/openwrt/manual_update.sh" "manual_update 接受 HTTP/HTTPS 后端地址"
+assert_grep -- '--proto '\''=http,https'\''' "$SBSHELL_SRC/openwrt/manual_update.sh" "manual_update curl 允许 HTTP/HTTPS"
+
 suite_begin "openwrt: UI initialization and menu separator"
 assert_grep "run update_ui.sh <<< '1'" "$SBSHELL_SRC/openwrt/menu.sh" "首次初始化自动安装默认 UI"
 assert_grep '===============================================' "$SBSHELL_SRC/openwrt/menu.sh" "管理菜单提示前显示分隔线"
