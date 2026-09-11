@@ -1,6 +1,7 @@
 #!/bin/bash
 set -Eeuo pipefail
 
+# 兼容 Busybox 缺失 install 的环境
 if ! command -v install >/dev/null 2>&1; then
     install() {
         local d=0 m='' o='' g=''
@@ -29,24 +30,29 @@ if ! command -v install >/dev/null 2>&1; then
 fi
 
 RELEASE_REF=7dfddbae21d224349bb4ba4ac2d81bd541d39b9d
-REPO_RAW="https://ghfast.top/https://raw.githubusercontent.com/meiao123/sbshell"
-RELEASE_DECL_URL="$REPO_RAW/refs/heads/main/RELEASE"
+
+# 修复点 1：允许外部传入环境变量，并强制 export 传递给子进程 menu.sh
+export REPO_RAW="${REPO_RAW:-https://raw.githubusercontent.com/meiao123/sbshell}"
+
 github_api_download() {
     local path="$1" ref="$2" output="$3"
-    curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+    # 静默尝试，避免 403 频次限制错误污染前台终端
+    curl --fail --silent --location --proto '=https' --tlsv1.2 \
         --connect-timeout 10 --max-time 30 \
         -H 'Accept: application/vnd.github.raw+json' \
         -H 'X-GitHub-Api-Version: 2022-11-28' \
-        "https://ghfast.top/https://api.github.com/repos/meiao123/sbshell/contents/$path?ref=$ref" -o "$output" || return 1
+        "https://api.github.com/repos/meiao123/sbshell/contents/$path?ref=$ref" -o "$output" 2>/dev/null || return 1
     [ -s "$output" ] || { rm -f "$output"; return 1; }
 }
+
 github_archive_download() {
     local path="$1" ref="$2" output="$3" archive prefix entry
     command -v tar >/dev/null 2>&1 || return 1
+    # 严格遵循 Busybox 规则：模板末尾必须为 XXXXXX
     archive=$(mktemp /tmp/sbshell-archive.XXXXXX) || return 1
-    if ! curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+    if ! curl --fail --silent --location --proto '=https' --tlsv1.2 \
         --connect-timeout 10 --max-time 120 \
-        "https://ghfast.top/https://github.com/meiao123/sbshell/archive/$ref.tar.gz" -o "$archive"; then
+        "https://github.com/meiao123/sbshell/archive/$ref.tar.gz" -o "$archive" 2>/dev/null; then
         rm -f "$archive"
         return 1
     fi
@@ -64,19 +70,24 @@ github_archive_download() {
     rm -f "$archive"
     [ -s "$output" ] || { rm -f "$output"; return 1; }
 }
+
 download_repo_file() {
     local path="$1" ref="$2" output="$3"
-    if curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+    # 第一层：直连 Raw
+    if curl --fail --silent --location --proto '=https' --tlsv1.2 \
         --connect-timeout 10 --max-time 60 "$REPO_RAW/$ref/$path" -o "$output" 2>/dev/null && [ -s "$output" ]; then
         return 0
     fi
     rm -f "$output"
+    # 第二层：API 下载
     if github_api_download "$path" "$ref" "$output"; then
         return 0
     fi
     rm -f "$output"
+    # 第三层：全量压缩包中提取
     github_archive_download "$path" "$ref" "$output"
 }
+
 resolve_release_ref() {
     local tmp='/tmp/sbshell-release-ref' declared=''
     rm -f "$tmp"
@@ -90,6 +101,7 @@ resolve_release_ref() {
     esac
     return 0
 }
+
 SCRIPT_DIR=/etc/sing-box/scripts
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
 
@@ -107,38 +119,55 @@ else
     exit 1
 fi
 
+# 修复点 2：避免反复 opkg/apt update 拖垮路由器
+PKG_UPDATED=false
 install_package() {
     local package="$1"
-    if $is_openwrt; then opkg update && opkg install "$package"; else apt-get update && apt-get install -y "$package"; fi
+    if ! $PKG_UPDATED; then
+        if $is_openwrt; then opkg update; else apt-get update; fi
+        PKG_UPDATED=true
+    fi
+    if $is_openwrt; then 
+        opkg install "$package"
+    else 
+        apt-get install -y "$package"
+    fi
 }
+
 ensure_command() {
     local command="$1" package="$2"
     command -v "$command" >/dev/null 2>&1 || install_package "$package"
 }
+
 ensure_command curl curl
 ensure_command bash bash
 ensure_command nft nftables
+
 command -v curl >/dev/null 2>&1 || { echo -e "${RED}curl 安装失败。${NC}" >&2; exit 1; }
 command -v bash >/dev/null 2>&1 || { echo -e "${RED}bash 安装失败。${NC}" >&2; exit 1; }
 command -v nft >/dev/null 2>&1 || { echo -e "${RED}nft 安装失败。${NC}" >&2; exit 1; }
 
 resolve_release_ref
-DEBIAN_MAIN_SCRIPT_URL="$REPO_RAW/$RELEASE_REF/debian/menu.sh"
-OPENWRT_MAIN_SCRIPT_URL="$REPO_RAW/$RELEASE_REF/openwrt/menu.sh"
 install -d -o root -g root -m 0755 "$SCRIPT_DIR"
+
 tmp=$(mktemp /tmp/sbshell-menu.XXXXXX)
 trap 'rm -f "$tmp"' EXIT
+
 if $is_openwrt; then
     download_repo_file "openwrt/menu.sh" "$RELEASE_REF" "$tmp"
 else
     download_repo_file "debian/menu.sh" "$RELEASE_REF" "$tmp"
 fi
-[ -s "$tmp" ] || { echo -e "${RED}主脚本下载为空。${NC}" >&2; exit 1; }
+
+[ -s "$tmp" ] || { echo -e "${RED}主脚本下载失败或为空。${NC}" >&2; exit 1; }
 bash -n "$tmp"
 install -o root -g root -m 0755 "$tmp" "$SCRIPT_DIR/menu.sh"
 
 echo -e "${GREEN}主脚本下载并校验完成（审核发布引用: $RELEASE_REF）。${NC}"
 echo -e "${YELLOW}注意：脚本会修改系统网络、防火墙和 sing-box 配置，请确认已做好备份。${NC}"
+
 rm -f "$tmp"
 trap - EXIT
+
+# 此时环境变量 REPO_RAW 已经 export，menu.sh 可以直接读取
 exec bash "$SCRIPT_DIR/menu.sh" "$@"
