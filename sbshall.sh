@@ -1,21 +1,6 @@
 #!/bin/bash
 set -Eeuo pipefail
 
-
-
-# --- busybox 兼容：ImmortalWrt/OpenWrt 的 busybox 常常没有 install applet ---
-# 真机实测（ImmortalWrt）：一键引导在第一步就中止
-#   /dev/fd/64: line 57: install: command not found
-# 本仓库大量依赖 GNU install 的 -d/-o/-g/-m，busybox 没有等价命令，因此这里在缺失时
-# 定义一个只覆盖本仓库用法的兜底实现；只要系统有真正的 install，这段完全不生效。
-#
-# 与调用方 `set -Eeuo pipefail` 的关系（踩过坑）：
-#   * chmod 失败必须让本次 install **返回非 0**（fail-closed：凭据文件绝不能悄悄留在 0644），
-#     并且要 `return 1` 而不是让 errexit 在函数内部直接终止整个脚本——否则调用方的
-#     `if ! install …; then restore; fi` 回滚逻辑根本没机会执行；
-#   * chown 失败不影响返回码（所有权不构成安全边界，且 vfat/extroot 等文件系统上会失败）。
-# 写法上一律用 `[ -z "$x" ] || { cmd … || …; }`：判空为真时整行返回 0，
-# 且 `cmd` 处于 `||` 列表首位时不受 errexit 影响，失败能被显式处理。
 if ! command -v install >/dev/null 2>&1; then
     install() {
         local d=0 m='' o='' g=''
@@ -33,7 +18,6 @@ if ! command -v install >/dev/null 2>&1; then
             mkdir -p "$@" || return 1
             [ -z "$m" ] || { chmod "$m" "$@" 2>/dev/null || return 1; }
         else
-            # 本仓库只用 `install [-m M] [-o U] [-g G] SRC DST`
             [ $# -eq 2 ] || return 1
             cp -f "$1" "$2" || return 1
             [ -z "$m" ] || { chmod "$m" "$2" 2>/dev/null || return 1; }
@@ -44,29 +28,22 @@ if ! command -v install >/dev/null 2>&1; then
     }
 fi
 
-# 内置的发布提交（兜底）：提交无法包含自身 SHA，所以任何写死的引用都必然指向"上一版"，
-# 只信它会出现「装好加固版后点一次更新就回退到修复前版本」的一跳回退（见 docs/security-hardening.md）。
-# 因此下面按 main 上的 `RELEASE` 声明解析真正的发布提交，只有解析失败才用这个常量。
 RELEASE_REF=7dfddbae21d224349bb4ba4ac2d81bd541d39b9d
 REPO_RAW="https://raw.githubusercontent.com/meiao123/sbshell"
 RELEASE_DECL_URL="$REPO_RAW/refs/heads/main/RELEASE"
 github_api_download() {
-    local path="$1" ref="$2" output="$3" response encoded
-    command -v base64 >/dev/null 2>&1 || return 1
-    response=$(curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+    local path="$1" ref="$2" output="$3"
+    curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
         --connect-timeout 10 --max-time 30 \
-        "https://api.github.com/repos/meiao123/sbshell/contents/$path?ref=$ref") || return 1
-    encoded=$(printf '%s' "$response" | sed -n 's/.*"content"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1) || return 1
-    [ -n "$encoded" ] || return 1
-    encoded=${encoded//\\n/}
-    encoded=${encoded//\\r/}
-    printf '%s' "$encoded" | base64 -d > "$output" || { rm -f "$output"; return 1; }
-    [ -s "$output" ]
+        -H 'Accept: application/vnd.github.raw+json' \
+        -H 'X-GitHub-Api-Version: 2022-11-28' \
+        "https://api.github.com/repos/meiao123/sbshell/contents/$path?ref=$ref" -o "$output" || return 1
+    [ -s "$output" ] || { rm -f "$output"; return 1; }
 }
 download_repo_file() {
     local path="$1" ref="$2" output="$3"
     if curl --fail --silent --location --proto '=https' --tlsv1.2 \
-        --connect-timeout 10 --max-time 60 "$REPO_RAW/$ref/$path" -o "$output" && [ -s "$output" ]; then
+        --connect-timeout 10 --max-time 60 "$REPO_RAW/$ref/$path" -o "$output" 2>/dev/null && [ -s "$output" ]; then
         return 0
     fi
     rm -f "$output"
@@ -117,7 +94,6 @@ command -v curl >/dev/null 2>&1 || { echo -e "${RED}curl 安装失败。${NC}" >
 command -v bash >/dev/null 2>&1 || { echo -e "${RED}bash 安装失败。${NC}" >&2; exit 1; }
 command -v nft >/dev/null 2>&1 || { echo -e "${RED}nft 安装失败。${NC}" >&2; exit 1; }
 
-# curl 已就绪，现在解析发布提交（解析失败则保留内置的已加固提交）。
 resolve_release_ref
 DEBIAN_MAIN_SCRIPT_URL="$REPO_RAW/$RELEASE_REF/debian/menu.sh"
 OPENWRT_MAIN_SCRIPT_URL="$REPO_RAW/$RELEASE_REF/openwrt/menu.sh"
@@ -135,7 +111,6 @@ install -o root -g root -m 0755 "$tmp" "$SCRIPT_DIR/menu.sh"
 
 echo -e "${GREEN}主脚本下载并校验完成（审核发布引用: $RELEASE_REF）。${NC}"
 echo -e "${YELLOW}注意：脚本会修改系统网络、防火墙和 sing-box 配置，请确认已做好备份。${NC}"
-# exec 不会触发 EXIT trap，这里显式清理临时文件
 rm -f "$tmp"
 trap - EXIT
 exec bash "$SCRIPT_DIR/menu.sh" "$@"
