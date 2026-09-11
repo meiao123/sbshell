@@ -131,7 +131,9 @@ run_initialization() {
     touch "$INITIALIZED_FILE"
     chmod 0644 "$INITIALIZED_FILE"
 }
-setup_alias() { local bashrc=${HOME:-/root}/.bashrc; if ! grep -Fq 'alias sb=' "$bashrc" 2>/dev/null; then printf '\n# sing-box 快捷方式\nalias sb='"'bash /etc/sing-box/scripts/menu.sh'"'\n' >> "$bashrc"; fi; cat > /usr/local/bin/sb <<'EOF'
+# 统一写入 /root/.bashrc：脚本以 root 运行（sudo 可能保留调用者 HOME），
+# 而卸载路径只清理 /root/.bashrc，写 $HOME 会造成“装了但卸不掉”的别名残留。
+setup_alias() { local bashrc=/root/.bashrc; if ! grep -Fq 'alias sb=' "$bashrc" 2>/dev/null; then printf '\n# sing-box 快捷方式\nalias sb='"'bash /etc/sing-box/scripts/menu.sh'"'\n' >> "$bashrc"; fi; cat > /usr/local/bin/sb <<'EOF'
 #!/bin/bash
 exec sudo bash /etc/sing-box/scripts/menu.sh "$@"
 EOF

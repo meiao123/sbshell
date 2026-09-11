@@ -34,14 +34,20 @@ net.ipv4.tcp_timestamps = 1
 net.ipv4.tcp_sack = 1
 net.ipv4.ip_forward = 1
 EOF
-sysctl --system
+sysctl --system || echo "警告: 部分 sysctl 参数应用失败（内核不支持时属正常）。" >&2
 
 # Prefer BBR/fq only when supported; never fail the whole optimization on unsupported kernels.
-if modprobe tcp_bbr 2>/dev/null && grep -qw bbr /proc/sys/net/ipv4/tcp_allowed_congestion_control 2>/dev/null; then
-    sysctl -w net.ipv4.tcp_congestion_control=bbr >/dev/null
+modprobe tcp_bbr 2>/dev/null || true
+if grep -qw bbr /proc/sys/net/ipv4/tcp_allowed_congestion_control 2>/dev/null; then
+    sysctl -w net.ipv4.tcp_congestion_control=bbr >/dev/null 2>&1 || true
 fi
-if grep -qw fq /proc/sys/net/core/default_qdisc 2>/dev/null || [ -d /sys/module/sch_fq ]; then
-    sysctl -w net.core.default_qdisc=fq >/dev/null || true
+# 不要用 /proc/sys/net/core/default_qdisc 判断 fq 是否可用：该文件是“当前”队列算法的值，
+# 值为 fq_codel 时 `grep -w fq` 永远匹配不到；/sys/module/sch_fq 对内建模块也不一定存在。
+# 直接尝试写入并检查返回值。
+if sysctl -w net.core.default_qdisc=fq >/dev/null 2>&1; then
+    echo "已启用 fq 队列算法（对新创建的网卡生效）。"
+else
+    echo "提示: 内核不支持 fq 队列算法，已跳过。" >&2
 fi
 
 echo "网络参数优化完成。原始配置已备份到 $BACKUP_DIR。"

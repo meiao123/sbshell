@@ -4,6 +4,8 @@ set -Eeuo pipefail
 NUM_TESTS=5
 LOG_FILE=/var/log/sbshell-latency.log
 CONNECT_TIMEOUT=10
+MAX_TIME=30
+LOG_MAX_BYTES=5242880
 PREDEFINED_TARGETS=(
     "www.google.com"
     "www.youtube.com"
@@ -25,6 +27,18 @@ else
     chmod 0644 "$LOG_FILE"
 fi
 
+# 日志无上限增长会一直吃掉 /var/log，这里在超过上限时保留表头 + 最近 1999 行数据。
+rotate_log_if_needed() {
+    [ -f "$LOG_FILE" ] || return 0
+    [ "$(wc -c < "$LOG_FILE")" -gt "$LOG_MAX_BYTES" ] || return 0
+    local tmp
+    tmp=$(mktemp)
+    # 先取表头，再从「第 2 行起」取最后 1999 行，避免 tail 把表头又带回来造成重复。
+    { head -n1 "$LOG_FILE"; tail -n +2 "$LOG_FILE" | tail -n 1999; } > "$tmp" 2>/dev/null || true
+    cat "$tmp" > "$LOG_FILE"
+    rm -f "$tmp"
+}
+
 run_test() {
     local TARGET_URL="$1" output avg_time_ms=0
     case "$TARGET_URL" in http://*|https://*) ;; *) TARGET_URL="https://$TARGET_URL";; esac
@@ -37,7 +51,7 @@ run_test() {
             local CACHE_BUST_URL CURL_FORMAT response
             CACHE_BUST_URL="${TARGET_URL}?_t=$(date +%s%N)"
             CURL_FORMAT='%{time_connect},%{time_pretransfer},%{time_total}'
-            response=$(curl -fsS --connect-timeout "$CONNECT_TIMEOUT" -o /dev/null -w "$CURL_FORMAT" -H 'Cache-Control: no-cache' -H 'Pragma: no-cache' "$CACHE_BUST_URL" || true)
+            response=$(curl -fsS --connect-timeout "$CONNECT_TIMEOUT" --max-time "$MAX_TIME" -o /dev/null -w "$CURL_FORMAT" -H 'Cache-Control: no-cache' -H 'Pragma: no-cache' "$CACHE_BUST_URL" || true)
             if [ -z "$response" ]; then
                 printf "  第 %d/%d 次: %s❌ 测试失败 (无法连接或超时)%s\n" "$i" "$NUM_TESTS" "$COLOR_RED" "$COLOR_RESET"
                 continue
@@ -50,6 +64,7 @@ run_test() {
             run_time_ms=$(awk -v time="$run_time_s" 'BEGIN { printf "%.0f", time * 1000 }')
             printf "  第 %d/%d 次: 总延迟 = %s%s ms%s (连接: %s ms, TLS: %s ms)\n" "$i" "$NUM_TESTS" "$COLOR_BOLD" "$run_time_ms" "$COLOR_RESET" "$connect_time_ms" "$tls_time_ms"
             printf '%s,%s,%s,%s,%s,%s\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$TARGET_URL" "$i" "$connect_time_s" "$tls_time_s" "$run_time_s" >> "$LOG_FILE"
+            rotate_log_if_needed
             total_duration_ms=$((total_duration_ms + run_time_ms))
             [ "$run_time_ms" -lt "$min_time_ms" ] && min_time_ms=$run_time_ms
             [ "$run_time_ms" -gt "$max_time_ms" ] && max_time_ms=$run_time_ms
