@@ -43,46 +43,32 @@ configure_firewall() {
     if [[ "$OS_TYPE" == ubuntu || "$OS_TYPE" == debian ]]; then
         firewall_cmd=ufw; firewall_service_name=ufw
         if sudo "$firewall_cmd" status | grep -q inactive; then echo y | sudo "$firewall_cmd" enable >/dev/null 2>&1 || true; fi
-        sudo "$firewall_cmd" allow "$ssh_port"/tcp >/dev/null
-        sudo "$firewall_cmd" allow 80/tcp >/dev/null
-        sudo "$firewall_cmd" allow 443/tcp >/dev/null
+        sudo "$firewall_cmd" allow "$ssh_port"/tcp >/dev/null; sudo "$firewall_cmd" allow 80/tcp >/dev/null; sudo "$firewall_cmd" allow 443/tcp >/dev/null
     else
         firewall_cmd=firewall-cmd; firewall_service_name=firewalld
         sudo systemctl is-active --quiet "$firewall_service_name" || sudo systemctl start "$firewall_service_name"
-        sudo "$firewall_cmd" --zone=public --add-port="$ssh_port"/tcp --permanent >/dev/null
-        sudo "$firewall_cmd" --zone=public --add-port=80/tcp --permanent >/dev/null
-        sudo "$firewall_cmd" --zone=public --add-port=443/tcp --permanent >/dev/null
-        sudo "$firewall_cmd" --reload >/dev/null
+        sudo "$firewall_cmd" --zone=public --add-port="$ssh_port"/tcp --permanent >/dev/null; sudo "$firewall_cmd" --zone=public --add-port=80/tcp --permanent >/dev/null; sudo "$firewall_cmd" --zone=public --add-port=443/tcp --permanent >/dev/null; sudo "$firewall_cmd" --reload >/dev/null
     fi
 }
 download_acme() {
     local clone_dir="$TMP_DIR/acme.sh" allowed_signers="$TMP_DIR/allowed_signers"
-    rm -rf "$clone_dir" "$ACME_INSTALL_PATH"
     printf '%s\n' "$ACME_SIGNER" > "$allowed_signers"
     git clone --depth 1 --branch "$ACME_VERSION" "$ACME_REPO" "$clone_dir" >/dev/null 2>&1
     git -C "$clone_dir" config gpg.ssh.allowedSignersFile "$allowed_signers"
     git -C "$clone_dir" verify-tag "$ACME_VERSION" >/dev/null 2>&1 || { echo -e "${RED}acme.sh 签名验证失败。${RESET}" >&2; exit 1; }
     bash "$clone_dir/acme.sh" --install --home "$ACME_INSTALL_PATH" -m "$EMAIL" >/dev/null
-    echo -e "${GREEN}acme.sh $ACME_VERSION 已通过签名验证并安装。${RESET}"
+    echo -e "${GREEN}acme.sh $ACME_VERSION 已通过签名验证并刷新安装。${RESET}"
 }
-find_acme_cmd() {
-    export PATH="$ACME_INSTALL_PATH:$PATH"
-    ACME_CMD=$(command -v acme.sh || true)
-    [ -n "$ACME_CMD" ] || { echo -e "${RED}找不到 acme.sh。${RESET}" >&2; exit 1; }
-}
+find_acme_cmd() { export PATH="$ACME_INSTALL_PATH:$PATH"; ACME_CMD=$(command -v acme.sh || true); [ -n "$ACME_CMD" ] || { echo -e "${RED}找不到 acme.sh。${RESET}" >&2; exit 1; }; }
 update_acme() { echo -e "${GREEN}使用固定签名版本 acme.sh $ACME_VERSION，不自动执行远程自更新。${RESET}"; }
 issue_cert() {
-    "$ACME_CMD" --issue --standalone -d "$DOMAIN" --server "$CA_SERVER" --force \
-        --pre-hook 'systemctl stop nginx 2>/dev/null || systemctl stop apache2 2>/dev/null || true' \
-        --post-hook 'systemctl start nginx 2>/dev/null || systemctl start apache2 2>/dev/null || true' >/dev/null 2>&1 || { echo -e "${RED}证书申请失败。${RESET}" >&2; exit 1; }
+    "$ACME_CMD" --issue --standalone -d "$DOMAIN" --server "$CA_SERVER" --force --pre-hook 'systemctl stop nginx 2>/dev/null || systemctl stop apache2 2>/dev/null || true' --post-hook 'systemctl start nginx 2>/dev/null || systemctl start apache2 2>/dev/null || true' >/dev/null 2>&1 || { echo -e "${RED}证书申请失败。${RESET}" >&2; exit 1; }
 }
 install_cert() {
-    CERT_KEY_DIR="/etc/ssl/$DOMAIN"
-    sudo install -d -m 0755 "$CERT_KEY_DIR"
+    CERT_KEY_DIR="/etc/ssl/$DOMAIN"; sudo install -d -m 0755 "$CERT_KEY_DIR"
     sudo "$ACME_CMD" --installcert -d "$DOMAIN" --key-file "${CERT_KEY_DIR}/${DOMAIN}.key" --fullchain-file "${CERT_KEY_DIR}/${DOMAIN}.crt" --reloadcmd 'systemctl reload nginx 2>/dev/null || systemctl reload apache2 2>/dev/null || true' >/dev/null 2>&1 || { echo -e "${RED}证书安装失败。${RESET}" >&2; exit 1; }
     sudo chmod 600 "${CERT_KEY_DIR}/${DOMAIN}.key"; sudo chown root:root "${CERT_KEY_DIR}/${DOMAIN}.key"
 }
-
 check_root; get_user_input; detect_os; install_dependencies; configure_firewall; download_acme; find_acme_cmd; update_acme; issue_cert; install_cert
 sudo "$ACME_CMD" --install-cronjob >/dev/null 2>&1 || echo -e "${YELLOW}自动续期任务配置失败，请手动检查。${RESET}" >&2
 echo -e "${GREEN}证书文件: ${BOLD}${CERT_KEY_DIR}/${DOMAIN}.crt${RESET}"
