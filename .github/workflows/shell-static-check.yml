@@ -40,47 +40,19 @@ jobs:
             echo "jq empty $f"
             jq empty "$f"
           done
-      - name: Verify the pinned release ref exists
+      - name: Verify update source is main
         shell: bash
         run: |
           set -euo pipefail
-          # 2026-09-11 的事故：BASE_REF/RELEASE_REF 指向的分支被删除，
-          # 一键安装与脚本自更新全部 404，而离线行为测试无法发现。
-          #
-          # 只能用 raw URL（脚本真正消费的路径）来验证引用是否存在：
-          #   * `git ls-remote <repo> <sha>` 只匹配引用名，对 40 位提交 SHA 恒为 rc=2，
-          #     会把每一次合法的 SHA 固定都判成失败；
-          #   * `git fetch --depth=1 <sha>` 虽然判定正确（不可达时报
-          #     `upload-pack: not our ref`），但会把当前检出变成 shallow 仓库、截断历史，
-          #     是有副作用的检查，不适合放在 CI 的检出里。
-          # raw CDN 对刚推送的提交可能有秒级延迟，故重试 3 次。
-          upstream=meiao123/sbshell
-          # 只认 SHA 形状：脚本里还有运行时赋值（例如 `RELEASE_REF=$declared`），
-          # 用 `[^ ]+` 会把那个字面量当成"发布引用"去下载（实测踩过这个坑）。
-          refs=$(grep -hoE '(BASE_REF|RELEASE_REF)=[0-9a-f]{40}' sbshall.sh debian/menu.sh debian/update_scripts.sh openwrt/menu.sh openwrt/update_scripts.sh | cut -d= -f2 | sort -u)
-          for ref in $refs; do
-            echo "checking ref: $ref"
-            ok=0
-            for attempt in 1 2 3; do
-              if curl -fsS --max-time 20 -o /dev/null \
-                "https://raw.githubusercontent.com/$upstream/$ref/debian/menu.sh"; then
-                ok=1; break
-              fi
-              echo "attempt $attempt failed for $ref, retrying"
-              sleep 3
-            done
-            [ "$ok" -eq 1 ] || {
-              echo "::error::发布引用不存在: $ref（请固定到已推送到 $upstream 的提交 SHA）"; exit 1; }
-          done
-          # 发布声明文件：更新脚本按它解析"当前发布提交"，内容必须是单个可下载的不可变 SHA。
-          # 这里读**检出目录里**的 RELEASE（合并到 main 后就是运行时读的那一份）：引入该文件的
-          # PR 里 main 上还没有它，去 raw 读 main 必然 404。
-          echo "checking RELEASE declaration"
-          declared=$(tr -d '\r\n' < RELEASE)
-          printf '%s' "$declared" | grep -qE '^[0-9a-f]{40}$' || {
-            echo "::error::RELEASE 声明不是 40 位提交 SHA: '$declared'"; exit 1; }
-          curl -fsS --max-time 20 -o /dev/null "https://raw.githubusercontent.com/$upstream/$declared/debian/menu.sh" || {
-            echo "::error::RELEASE 指向的提交无法下载: $declared"; exit 1; }
+          files=(sbshall.sh debian/menu.sh debian/update_scripts.sh openwrt/menu.sh openwrt/update_scripts.sh)
+          ! grep -nE 'BASE_REF|RELEASE_REF|RELEASE_DECL_URL|resolve_release_ref' "${files[@]}"
+          ! grep -nE "download_repo_file ['\"]?RELEASE|['\"]RELEASE['\"]" "${files[@]}"
+          grep -q '"main"' sbshall.sh
+          grep -q 'main/openwrt/' openwrt/menu.sh
+          grep -q '"main"' openwrt/update_scripts.sh
+          grep -q 'main/debian' debian/menu.sh
+          grep -q 'main/debian' debian/update_scripts.sh
+          test ! -e RELEASE
       - name: Run ShellCheck (errors, blocking)
         uses: ludeeus/action-shellcheck@2.0.0
         with:
