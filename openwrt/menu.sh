@@ -46,14 +46,42 @@ github_api_download() {
         "https://api.github.com/repos/meiao123/sbshell/contents/$path?ref=$ref" -o "$output" || return 1
     [ -s "$output" ] || { rm -f "$output"; return 1; }
 }
+github_archive_download() {
+    local path="$1" ref="$2" output="$3" archive prefix entry
+    command -v tar >/dev/null 2>&1 || return 1
+    archive=$(mktemp /tmp/sbshell-archive.XXXXXX.tar.gz) || return 1
+    if ! curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+        --connect-timeout 10 --max-time 120 \
+        "https://github.com/meiao123/sbshell/archive/$ref.tar.gz" -o "$archive"; then
+        rm -f "$archive"
+        return 1
+    fi
+    [ -s "$archive" ] || { rm -f "$archive"; return 1; }
+    prefix=$(tar -tzf "$archive" 2>/dev/null | head -n1 | cut -d/ -f1)
+    [ -n "$prefix" ] || { rm -f "$archive"; return 1; }
+    entry="$prefix/$path"
+    case "$entry" in
+        *..*|/*) rm -f "$archive"; return 1 ;;
+    esac
+    tar -xOzf "$archive" "$entry" > "$output" 2>/dev/null || {
+        rm -f "$output" "$archive"
+        return 1
+    }
+    rm -f "$archive"
+    [ -s "$output" ] || { rm -f "$output"; return 1; }
+}
 download_repo_file() {
     local path="$1" ref="$2" output="$3"
-    if curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
-        --connect-timeout 10 --max-time 60 "https://raw.githubusercontent.com/meiao123/sbshell/$ref/$path" -o "$output" 2>/dev/null && [ -s "$output" ]; then
+    if curl --fail --silent --location --proto '=https' --tlsv1.2 \
+        --connect-timeout 10 --max-time 60 "$REPO_RAW/$ref/$path" -o "$output" 2>/dev/null && [ -s "$output" ]; then
         return 0
     fi
     rm -f "$output"
-    github_api_download "$path" "$ref" "$output"
+    if github_api_download "$path" "$ref" "$output"; then
+        return 0
+    fi
+    rm -f "$output"
+    github_archive_download "$path" "$ref" "$output"
 }
 resolve_release_ref() {
     local tmp='/tmp/sbshell-release-ref' declared=''
