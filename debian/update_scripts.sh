@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 GREEN='\033[0;32m'; RED='\033[0;31m'; NC='\033[0m'
 SCRIPT_DIR=/etc/sing-box/scripts
-BASE_REF=security-release-2026-09-11
+BASE_REF=6da7e9e2f35d716db8a832e54a85dc5b44e92ac6
 BASE_URL="https://raw.githubusercontent.com/meiao123/sbshell/$BASE_REF/debian"
 TMP_DIR=$(mktemp -d /tmp/sing-box-update.XXXXXX)
 BACKUP_DIR=$(mktemp -d /tmp/sing-box-update-backup.XXXXXX)
@@ -15,4 +15,4 @@ for script in "${SCRIPTS[@]}"; do download_verified "$script" || { echo -e "${RE
 for script in "${SCRIPTS[@]}"; do if [ -f "$SCRIPT_DIR/$script" ]; then cp -a "$SCRIPT_DIR/$script" "$BACKUP_DIR/$script"; fi; done
 restore() { local script; for script in "${SCRIPTS[@]}"; do if [ -f "$BACKUP_DIR/$script" ]; then install -o root -g root -m 0755 "$BACKUP_DIR/$script" "$SCRIPT_DIR/$script"; else rm -f "$SCRIPT_DIR/$script"; fi; done; }
 for script in "${SCRIPTS[@]}"; do if ! install -o root -g root -m 0755 "$TMP_DIR/$script" "$SCRIPT_DIR/$script"; then restore; exit 1; fi; done
-echo -e "${GREEN}全部管理脚本已完成固定发布分支下载、语法校验和事务式更新。${NC}"
+echo -e "${GREEN}全部管理脚本已完成固定发布提交下载、语法校验和事务式更新。${NC}"

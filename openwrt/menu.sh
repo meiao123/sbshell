@@ -4,7 +4,7 @@ CYAN='\033[0;36m'; GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[1;33m'; NC
 [ "$(id -u)" -eq 0 ] || exec sudo bash "$0" "$@"
 SCRIPT_DIR=/etc/sing-box/scripts
 INITIALIZED_FILE="$SCRIPT_DIR/.initialized"
-BASE_REF=security-release-2026-09-11
+BASE_REF=6da7e9e2f35d716db8a832e54a85dc5b44e92ac6
 BASE_URL="https://raw.githubusercontent.com/meiao123/sbshell/$BASE_REF/openwrt"
 SCRIPTS=(check_environment.sh install_singbox.sh manual_input.sh manual_update.sh auto_update.sh configure_tproxy.sh configure_tun.sh start_singbox.sh stop_singbox.sh clean_nft.sh set_defaults.sh commands.sh switch_mode.sh manage_autostart.sh check_config.sh update_scripts.sh update_ui.sh menu.sh)
 install -d -o root -g root -m 0755 "$SCRIPT_DIR"
