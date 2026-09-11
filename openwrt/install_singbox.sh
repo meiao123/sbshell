@@ -1,6 +1,7 @@
 #!/bin/sh
 set -eu
 command -v opkg >/dev/null 2>&1 || { echo '仅支持 OpenWrt。' >&2; exit 1; }
+mkdir -p /var/lock
 opkg update
 opkg install kmod-nft-tproxy sing-box
 # TUN 模式需要 /dev/net/tun（OpenWrt 上通常由 kmod-tun 提供）。部分目标把 tun 编进内核、
