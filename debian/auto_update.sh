@@ -23,11 +23,21 @@ TMP_DIR=$(mktemp -d /tmp/sbshell-auto.XXXXXX)
 trap 'rm -rf "$TMP_DIR"' EXIT
 read_value() { awk -F= -v k="$1" '$1 == k {sub(/^[^=]*=/, ""); print; exit}' "$2" 2>/dev/null || true; }
 valid_url() { [[ "$1" =~ ^https://[^[:space:]]+$ ]]; }
+valid_subscription() { local v="$1"; [ -z "$v" ] && return 0; case "$v" in *[[:space:]]*|*'&file='*|*'#'*) return 1;; esac; return 0; }
 BACKEND_URL=$(read_value BACKEND_URL "$MANUAL_FILE")
 SUBSCRIPTION_URL=$(read_value SUBSCRIPTION_URL "$MANUAL_FILE")
 TEMPLATE_URL=$(read_value TEMPLATE_URL "$MANUAL_FILE")
-valid_url "$BACKEND_URL" && [ -n "$SUBSCRIPTION_URL" ] && valid_url "$TEMPLATE_URL" || exit 1
-FULL_URL="${BACKEND_URL%/}/config/${SUBSCRIPTION_URL}&file=${TEMPLATE_URL}"
+# 与 manual_input.sh 一致：后端地址允许留空，此时直接使用配置文件地址。
+if [ -n "$BACKEND_URL" ]; then
+    valid_url "$BACKEND_URL" || exit 1
+    [ -n "$SUBSCRIPTION_URL" ] || exit 1
+    FULL_URL="${BACKEND_URL%/}/config/${SUBSCRIPTION_URL}&file=${TEMPLATE_URL}"
+else
+    FULL_URL="$TEMPLATE_URL"
+fi
+valid_subscription "$SUBSCRIPTION_URL" || exit 1
+valid_url "$TEMPLATE_URL" || exit 1
+valid_url "$FULL_URL" || exit 1
 TMP_CONFIG="$TMP_DIR/config.json"
 BACKUP="$TMP_DIR/config.json.backup"
 curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 60 "$FULL_URL" -o "$TMP_CONFIG"

@@ -19,6 +19,15 @@ get_default() {
     grep -m1 "^${key}=" "$DEFAULTS_FILE" 2>/dev/null | cut -d'=' -f2- || true
 }
 valid_url() { [[ "$1" =~ ^https://[^[:space:]]+$ ]]; }
+# 订阅地址不是 URL（是后端约定的查询串），但必须排除空白、'#' 以及会覆盖 file 参数的片段。
+valid_subscription() {
+    local value="$1"
+    [ -z "$value" ] && return 0
+    case "$value" in
+        *[[:space:]]*|*'&file='*|*'#'*) return 1 ;;
+    esac
+    return 0
+}
 
 acquire_lock() {
     while ! mkdir "$LOCK_DIR" 2>/dev/null; do
@@ -67,6 +76,7 @@ while true; do
 
     if [ -n "$BACKEND_URL" ] && ! valid_url "$BACKEND_URL"; then echo -e "${RED}后端地址必须是 HTTPS URL。${NC}"; continue; fi
     if [ -n "$TEMPLATE_URL" ] && ! valid_url "$TEMPLATE_URL"; then echo -e "${RED}配置文件地址必须是 HTTPS URL。${NC}"; continue; fi
+    if ! valid_subscription "$SUBSCRIPTION_URL"; then echo -e "${RED}订阅地址包含非法字符（空白、# 或 &file=）。${NC}"; continue; fi
     if [ -n "$BACKEND_URL" ] && [ -z "$SUBSCRIPTION_URL" ]; then echo -e "${RED}使用后端地址时订阅地址不能为空。${NC}"; continue; fi
 
     acquire_lock

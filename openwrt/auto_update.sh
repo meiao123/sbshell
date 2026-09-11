@@ -33,10 +33,24 @@ done
 acquire_lock
 read_value() { sed -n "s/^$1=//p" "$MANUAL_FILE" | head -n1; }
 B=$(read_value BACKEND_URL); S=$(read_value SUBSCRIPTION_URL); T=$(read_value TEMPLATE_URL)
-case "$B" in https://*) ;; *) echo '无效的后端 HTTPS 地址。' >&2; exit 1;; esac
+# 与 manual_input.sh 一致：后端地址允许留空，此时直接使用配置文件地址。
+case "$B" in
+    '')
+        U="$T"
+        ;;
+    https://*)
+        [ -n "$S" ] || { echo '使用后端地址时订阅地址不能为空。' >&2; exit 1; }
+        U="${B%/}/config/${S}&file=${T}"
+        ;;
+    *)
+        echo '无效的后端 HTTPS 地址。' >&2; exit 1
+        ;;
+esac
+case "$S" in
+    *[[:space:]]*|*'&file='*|*'#'*) echo '订阅地址包含非法字符。' >&2; exit 1 ;;
+esac
 case "$T" in https://*) ;; *) echo '无效的模板 HTTPS 地址。' >&2; exit 1;; esac
-[ -n "$S" ] || { echo '订阅地址不能为空。' >&2; exit 1; }
-U="${B%/}/config/${S}&file=${T}"
+case "$U" in https://*) ;; *) echo '生成的订阅 URL 无效。' >&2; exit 1;; esac
 curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 60 "$U" -o "$TMP/config.json"
 [ -s "$TMP/config.json" ] || { echo '下载的配置为空。' >&2; exit 1; }
 sing-box check -c "$TMP/config.json"

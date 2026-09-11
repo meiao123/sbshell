@@ -16,6 +16,15 @@ install -d -o root -g root -m 0755 /run/lock
 
 get_default() { local key="$1"; grep -m1 "^${key}=" "$DEFAULTS_FILE" 2>/dev/null | cut -d'=' -f2- || true; }
 valid_url() { [[ "$1" =~ ^https://[^[:space:]]+$ ]]; }
+# 订阅地址不是 URL（是后端约定的查询串），但必须排除空白、'#' 以及会覆盖 file 参数的片段。
+valid_subscription() {
+    local value="$1"
+    [ -z "$value" ] && return 0
+    case "$value" in
+        *[[:space:]]*|*'&file='*|*'#'*) return 1 ;;
+    esac
+    return 0
+}
 
 MODE=$(grep -oP '(?<=^MODE=).*' "$MODE_FILE" 2>/dev/null || true)
 while true; do
@@ -34,6 +43,7 @@ while true; do
     [[ "$confirm_choice" =~ ^[Yy]$ ]] || continue
     [ -z "$BACKEND_URL" ] || valid_url "$BACKEND_URL" || { echo -e "${RED}后端地址必须是 HTTPS URL。${NC}"; continue; }
     [ -z "$TEMPLATE_URL" ] || valid_url "$TEMPLATE_URL" || { echo -e "${RED}配置文件地址必须是 HTTPS URL。${NC}"; continue; }
+    valid_subscription "$SUBSCRIPTION_URL" || { echo -e "${RED}订阅地址包含非法字符（空白、# 或 &file=）。${NC}"; continue; }
     [ -z "$BACKEND_URL" ] || [ -n "$SUBSCRIPTION_URL" ] || { echo -e "${RED}使用后端地址时订阅地址不能为空。${NC}"; continue; }
 
     exec 9>"$LOCK_FILE"
