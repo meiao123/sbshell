@@ -1,7 +1,7 @@
 #!/bin/bash
 set -Eeuo pipefail
 SCRIPT_DIR=/etc/sing-box/scripts
-BASE_REF=11199c6934319dbe42d7c7fb38c6c91ce6f322ec
+BASE_REF=security-release-2026-09-11
 BASE_URL="https://raw.githubusercontent.com/meiao123/sbshell/$BASE_REF/openwrt"
 TMP_DIR=$(mktemp -d /tmp/sbshell-update.XXXXXX)
 BACKUP_DIR=$(mktemp -d /tmp/sbshell-update-backup.XXXXXX)
@@ -13,4 +13,4 @@ for script in "${SCRIPTS[@]}"; do curl --fail --silent --show-error --location -
 for script in "${SCRIPTS[@]}"; do [ -f "$SCRIPT_DIR/$script" ] && cp -a "$SCRIPT_DIR/$script" "$BACKUP_DIR/$script"; done
 restore() { local script; for script in "${SCRIPTS[@]}"; do if [ -f "$BACKUP_DIR/$script" ]; then install -o root -g root -m 0755 "$BACKUP_DIR/$script" "$SCRIPT_DIR/$script"; else rm -f "$SCRIPT_DIR/$script"; fi; done; }
 for script in "${SCRIPTS[@]}"; do if ! install -o root -g root -m 0755 "$TMP_DIR/$script" "$SCRIPT_DIR/$script"; then restore; exit 1; fi; done
-echo 'OpenWrt 管理脚本已完成固定版本下载、语法校验和事务式更新。'
+echo 'OpenWrt 管理脚本已完成固定发布分支下载、语法校验和事务式更新。'
