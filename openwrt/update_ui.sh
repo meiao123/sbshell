@@ -44,7 +44,7 @@ archive_top() {
     local zip="$1" extract="$2" candidate top=''
     validate_archive "$zip" || return 1
     unzip -q -o "$zip" -d "$extract"
-    find "$extract" -type l -delete
+    find "$extract" -type l -exec rm -f {} +
     [ "$(du -sk "$extract" | awk '{print $1}')" -le 204800 ] || { echo 'UI 解压后体积超过 200 MiB。' >&2; return 1; }
     [ "$(find "$extract" -type f | wc -l)" -le 10000 ] || { echo 'UI 文件数量超过限制。' >&2; return 1; }
     for candidate in "$extract"/*; do
@@ -65,9 +65,6 @@ install_ui() {
     acquire_ui_lock
     valid_url "$url" || { echo 'UI 地址必须使用 HTTPS。' >&2; return 1; }
     tmp=$(mktemp -d /tmp/sbshell-ui.XXXXXX)
-    # 显式清理，替代 `trap ... RETURN`（RETURN trap 会在父函数返回时再次触发，
-    # 此时 local 变量已销毁，set -u 下会中止整个脚本）。UI_LOCK_DIR 由
-    # acquire_ui_lock() 注册的 EXIT trap 负责释放。
     cleanup_ui_tmp() { [ -n "${tmp:-}" ] && rm -rf "$tmp"; return 0; }
     mkdir -p "$tmp/extract" "$BACKUP_DIR" || { cleanup_ui_tmp; return 1; }
     if ! curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 120 --max-filesize 52428800 "$url" -o "$tmp/ui.zip"; then
@@ -135,7 +132,7 @@ archive_top() {
   local zip="$1" extract="$2" candidate top=''
   validate_archive "$zip"
   unzip -q -o "$zip" -d "$extract"
-  find "$extract" -type l -delete
+  find "$extract" -type l -exec rm -f {} +
   [ "$(du -sk "$extract" | awk '{print $1}')" -le 204800 ] || exit 1
   [ "$(find "$extract" -type f | wc -l)" -le 10000 ] || exit 1
   for candidate in "$extract"/*; do
