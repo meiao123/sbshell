@@ -24,12 +24,55 @@ OLD_ROUTE=$(mktemp /tmp/sbshell-tun-route.XXXXXX)
 trap 'rm -f "$TMP" "$OLD_TUN_TABLE" "$OLD_TUN_STATE" "$OLD_TPROXY_TABLE" "$OLD_TPROXY_STATE" "$OLD_RULE" "$OLD_ROUTE"' EXIT
 mkdir -p "$NFT_DIR" /etc/sing-box
 
+# 先构建并校验规则，再做任何破坏性操作（旧版本先拆后验：`nft -c` 在拆除之后、
+# 且在唯一的恢复块之外，失败即留下半拆除状态且无恢复）。
+cat > "$TMP" <<'EOF'
+table inet sing-box-tun {
+    chain forward { type filter hook forward priority 0; policy accept; }
+}
+EOF
+nft -c -f "$TMP"
+
+SNAPSHOTTED=0
+APPLIED=0
+restore_prev() {
+    # 尚未开始改动（例如校验失败）时无需恢复；已成功应用时不回退。
+    [ "$SNAPSHOTTED" -eq 1 ] || return 0
+    [ "$APPLIED" -eq 0 ] || return 0
+    nft list table inet sing-box-tun >/dev/null 2>&1 && nft delete table inet sing-box-tun || true
+    if [ -s "$OLD_TUN_TABLE" ]; then
+        nft -f "$OLD_TUN_TABLE" 2>/dev/null || true
+        [ ! -s "$OLD_TUN_STATE" ] || install -o root -g root -m 0600 "$OLD_TUN_STATE" "$TUN_STATE_FILE"
+    else
+        rm -f "$TUN_STATE_FILE"
+    fi
+    [ ! -s "$OLD_TPROXY_TABLE" ] || nft -f "$OLD_TPROXY_TABLE" 2>/dev/null || true
+    # 策略规则/路由快照恢复（iproute2 用制表符分隔 pref 与规则体）。
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        pref=${line%%:*}
+        spec=${line#*:}
+        spec=${spec#"${spec%%[![:space:]]*}"}
+        case "$pref" in ''|*[!0-9]*) continue ;; esac
+        [ -n "$spec" ] || continue
+        ip -4 rule show | grep -Fq "$spec" || ip -4 rule add pref "$pref" $spec 2>/dev/null || true
+    done < "$OLD_RULE"
+    while IFS= read -r route; do
+        [ -n "$route" ] || continue
+        ip -4 route show table "$PROXY_ROUTE_TABLE" | grep -Fqx "$route" || ip -4 route add table "$PROXY_ROUTE_TABLE" $route 2>/dev/null || true
+    done < "$OLD_ROUTE"
+    if [ -s "$OLD_TPROXY_STATE" ]; then install -o root -g root -m 0600 "$OLD_TPROXY_STATE" "$TPROXY_STATE_FILE"; else rm -f "$TPROXY_STATE_FILE"; fi
+    return 0
+}
+trap 'restore_prev || true' ERR
+
 ip -4 rule show > "$OLD_RULE" 2>/dev/null || true
 ip -4 route show table "$PROXY_ROUTE_TABLE" > "$OLD_ROUTE" 2>/dev/null || true
 
 if nft list table inet sing-box-tun > "$OLD_TUN_TABLE" 2>/dev/null; then
     if [ -f "$TUN_STATE_FILE" ] && grep -q '^OWNER=sbshell$' "$TUN_STATE_FILE"; then
         cp "$TUN_STATE_FILE" "$OLD_TUN_STATE"
+        SNAPSHOTTED=1
         nft delete table inet sing-box-tun
     else
         echo '检测到非 Sbshell 管理的 inet sing-box-tun 表，拒绝覆盖。' >&2
@@ -49,6 +92,7 @@ if [ -f "$TPROXY_STATE_FILE" ] && grep -q '^OWNER=sbshell$' "$TPROXY_STATE_FILE"
 fi
 if nft list table inet sing-box > "$OLD_TPROXY_TABLE" 2>/dev/null; then
     if [ "$TPROXY_OWNED" -eq 1 ]; then
+        SNAPSHOTTED=1
         nft delete table inet sing-box
     else
         echo '检测到非 Sbshell 管理的 inet sing-box 表，拒绝覆盖。' >&2
@@ -68,7 +112,6 @@ if [ -s "$OLD_TPROXY_STATE" ]; then
     route_owned=0
     grep -q '^RULE_OWNED=1$' "$TPROXY_STATE_FILE" && rule_owned=1
     grep -q '^ROUTE_OWNED=1$' "$TPROXY_STATE_FILE" && route_owned=1
-    # Backward compatibility: old state files used *_CREATED as the ownership indicator.
     [ "$rule_owned" -eq 1 ] || { grep -q '^RULE_CREATED=1$' "$TPROXY_STATE_FILE" && rule_owned=1; }
     [ "$route_owned" -eq 1 ] || { grep -q '^ROUTE_CREATED=1$' "$TPROXY_STATE_FILE" && route_owned=1; }
     if [ "$rule_owned" -eq 1 ] && [ -n "$old_pref" ]; then
@@ -80,31 +123,8 @@ if [ -s "$OLD_TPROXY_STATE" ]; then
     rm -f "$TPROXY_STATE_FILE"
 fi
 
-cat > "$TMP" <<'EOF'
-table inet sing-box-tun {
-    chain forward { type filter hook forward priority 0; policy accept; }
-}
-EOF
-nft -c -f "$TMP"
 if ! nft -f "$TMP"; then
-    nft list table inet sing-box-tun >/dev/null 2>&1 && nft delete table inet sing-box-tun || true
-    [ ! -s "$OLD_TUN_TABLE" ] || nft -f "$OLD_TUN_TABLE" 2>/dev/null || true
-    [ ! -s "$OLD_TPROXY_TABLE" ] || nft -f "$OLD_TPROXY_TABLE" 2>/dev/null || true
-    while IFS= read -r line; do
-        [ -n "$line" ] || continue
-        pref=${line%%:*}
-        spec=${line#*:}
-        spec=${spec#"${spec%%[![:space:]]*}"}
-        case "$pref" in ''|*[!0-9]*) continue ;; esac
-        [ -n "$spec" ] || continue
-        ip -4 rule show | grep -Fq "$spec" || ip -4 rule add pref "$pref" $spec 2>/dev/null || true
-    done < "$OLD_RULE"
-    while IFS= read -r route; do
-        [ -n "$route" ] || continue
-        ip -4 route show table "$PROXY_ROUTE_TABLE" | grep -Fqx "$route" || ip -4 route add table "$PROXY_ROUTE_TABLE" $route 2>/dev/null || true
-    done < "$OLD_ROUTE"
-    if [ -s "$OLD_TUN_STATE" ]; then install -o root -g root -m 0600 "$OLD_TUN_STATE" "$TUN_STATE_FILE"; else rm -f "$TUN_STATE_FILE"; fi
-    if [ -s "$OLD_TPROXY_STATE" ]; then install -o root -g root -m 0600 "$OLD_TPROXY_STATE" "$TPROXY_STATE_FILE"; else rm -f "$TPROXY_STATE_FILE"; fi
+    restore_prev
     exit 1
 fi
 
@@ -117,4 +137,5 @@ INTERFACE=$INTERFACE
 EOF
 chown root:root "$TUN_STATE_FILE"
 chmod 0600 "$TUN_STATE_FILE"
+APPLIED=1
 echo 'TUN 模式防火墙规则已安全应用。'
