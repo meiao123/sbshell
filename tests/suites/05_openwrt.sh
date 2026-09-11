@@ -6,10 +6,125 @@ set -uo pipefail
 
 SCRIPTS=/etc/sing-box/scripts
 
-# ... existing suite content intentionally preserved ...
+suite_begin "openwrt: busybox grep has no -P, scripts must not rely on it (P1-3.6)"
+reset_stub_state
+reset_singbox_dir
+reset_openwrt_dirs
+reset_fixtures
+install_repo_scripts openwrt
+printf 'MODE=TProxy\n' > /etc/sing-box/mode.conf
+cat > /etc/sing-box/defaults.conf <<'EOF'
+TPROXY_TEMPLATE_URL=https://tpl.test/template.json
+TUN_TEMPLATE_URL=https://tpl.test/template.json
+EOF
+fixture_write template.json "$VALID_CLIENT_CONFIG"
+if grep -rn 'grep -oP' "$SBSHELL_SRC/openwrt" "$SBSHELL_SRC/debian" >/dev/null 2>&1; then fail "仍有脚本使用 grep -oP（busybox grep 不支持 PCRE）"; else pass "两平台脚本都没有使用 grep -oP"; fi
+output=$(printf '\n\n\ny\n' | ( export PATH="$SBSHELL_FAKEBIN_BUSYBOX:$PATH"; run_with_timeout bash "$SCRIPTS/manual_input.sh" ) 2>&1)
+rc=$?
+assert_rc "$rc" 0 "在 busybox grep 环境下 manual_input.sh 成功"
+assert_not_contains "$output" "未知的模式" "MODE 解析正确"
+assert_file /etc/sing-box/config.json "配置已写入"
 
-suite_begin "openwrt: autostart does not reapply firewall while sing-box is already running"
+suite_begin "openwrt: initialize() must not swallow a failing step (P1-3.7)"
+reset_stub_state
+reset_singbox_dir
+reset_openwrt_dirs
+reset_fixtures
+install_repo_scripts openwrt
+for f in "$SBSHELL_SRC"/openwrt/*.sh; do cp "$f" "$SBSHELL_FIXTURES/"; done
+output=$(printf '\n' | SBSHELL_OPKG_FAIL=1 run_with_timeout bash "$SCRIPTS/menu.sh" 2>&1)
+rc=$?
+assert_not_rc "$rc" 0 "安装失败时初始化以非 0 结束"
+init_path=$(sed -n 's/^INITIALIZED_FILE=//p' "$SBSHELL_SRC/openwrt/menu.sh" | head -n1)
+init_path=${init_path//\"/}
+init_path=${init_path//\$SCRIPT_DIR//etc/sing-box/scripts}
+[ -n "$init_path" ] || init_path=/etc/sing-box/scripts/.initialized
+if [ -f "$init_path" ]; then
+    fail "安装失败却写入了 $init_path（旧代码 errexit 在函数内被关闭）"
+else
+    pass "失败时没有写入 $init_path"
+fi
+
+suite_begin "openwrt: autostart installs a boot-time firewall init script (P0-4)"
+reset_stub_state
+reset_singbox_dir
+reset_openwrt_dirs
+install_repo_scripts openwrt
+printf 'MODE=TProxy\n' > /etc/sing-box/mode.conf
+printf '%s\n' "$VALID_CLIENT_CONFIG" > /etc/sing-box/config.json
+printf '1\n' | run_with_timeout bash "$SCRIPTS/manage_autostart.sh" >/tmp/autostart1.out 2>&1
+rc=$?
+assert_rc "$rc" 0 "启用自启动成功"
+assert_file /etc/init.d/sbshell-firewall "生成 /etc/init.d/sbshell-firewall"
+assert_grep 'apply_firewall' /etc/init.d/sbshell-firewall "开机脚本调用 apply_firewall"
+assert_grep 'START=40' /etc/init.d/sbshell-firewall "开机脚本先于 sing-box (START=40)"
+if [ -e /etc/rc.d/S40sbshell-firewall ]; then pass "已注册开机启动链接"; else fail "未注册开机启动链接"; fi
+if nft_table_exists sing-box; then pass "启用时已下发防火墙规则"; else fail "启用时未下发规则"; fi
+rm -f "$SBSHELL_STUB_STATE/nft/inet__sing-box"
+if nft_table_exists sing-box; then fail "模拟重启失败"; else pass "已模拟重启（规则丢失）"; fi
+/etc/init.d/sbshell-firewall start >/tmp/autostart2.out 2>&1
+assert_rc "$?" 0 "开机脚本执行成功"
+if nft_table_exists sing-box; then pass "开机后规则被重新下发"; else fail "开机后规则仍未恢复"; fi
+printf '2\n' | run_with_timeout bash "$SCRIPTS/manage_autostart.sh" >/tmp/autostart3.out 2>&1
+assert_rc "$?" 0 "禁用自启动成功"
+if [ -e /etc/rc.d/S40sbshell-firewall ]; then fail "开机启动链接未移除"; else pass "开机启动链接已移除"; fi
+
+suite_begin "openwrt: TUN mode needs the tun module (P2-13)"
+assert_grep 'kmod-tun' "$SBSHELL_SRC/openwrt/install_singbox.sh" "安装脚本尝试安装 kmod-tun"
+assert_grep 'kmod-tun.*|| true' "$SBSHELL_SRC/openwrt/install_singbox.sh" "kmod-tun 安装失败不阻断"
+
+suite_begin "openwrt: config privacy and self-update invariants"
+assert_grep 'install -o root -g root -m 0600.*\$CONFIG_FILE' "$SBSHELL_SRC/openwrt/manual_update.sh" "manual_update config 为 0600"
+assert_grep 'install -o root -g root -m 0600.*\$CONFIG_FILE' "$SBSHELL_SRC/openwrt/auto_update.sh" "auto_update config 为 0600"
+assert_grep 'chmod 0600.*tmp_config' "$SBSHELL_SRC/openwrt/manual_input.sh" "manual_input 临时 config 为 0600"
+assert_grep 'release_lock' "$SBSHELL_SRC/openwrt/manual_input.sh" "manual_input ownership-safe lock release"
+assert_grep 'release_lock' "$SBSHELL_SRC/openwrt/manual_update.sh" "manual_update ownership-safe lock release"
+assert_grep 'release_lock' "$SBSHELL_SRC/openwrt/auto_update.sh" "auto_update ownership-safe lock release"
+assert_grep 'release_ui_lock' "$SBSHELL_SRC/openwrt/update_ui.sh" "interactive UI updater ownership-safe lock release"
+assert_grep 'failed_ui=' "$SBSHELL_SRC/openwrt/update_ui.sh" "UI updater records failed deployment for rollback"
+assert_grep 'mv "\$UI_DIR" "\$failed_ui"' "$SBSHELL_SRC/openwrt/update_ui.sh" "UI updater removes failed deployment before restoring backup"
+assert_grep 'update_scripts.sh' "$SBSHELL_SRC/openwrt/update_scripts.sh" "updater 能更新自身"
+assert_grep 'update_scripts.sh' "$SBSHELL_SRC/openwrt/menu.sh" "menu 保留自更新脚本"
+
+suite_begin "openwrt: UI initialization and menu separator"
+assert_grep "run update_ui.sh <<< '1'" "$SBSHELL_SRC/openwrt/menu.sh" "首次初始化自动安装默认 UI"
+assert_grep '===============================================' "$SBSHELL_SRC/openwrt/menu.sh" "管理菜单提示前显示分隔线"
+assert_no_grep 'rmdir "\$backup"' "$SBSHELL_SRC/openwrt/update_ui.sh" "首次安装 UI 时不再 rmdir 已删除的备份目录"
+
+suite_begin "openwrt: uninstall menu behavior"
+assert_grep "^    echo '11\. 卸载Sbshell'$" "$SBSHELL_SRC/openwrt/menu.sh" "卸载 Sbshell 选项使用与其他选项相同的颜色"
+uninstall_block=$(sed -n '/^uninstall_sbshell()/,/^}/p' "$SBSHELL_SRC/openwrt/menu.sh")
+confirm_count=$(printf '%s\n' "$uninstall_block" | grep -c '^[[:space:]]*confirm_yes ' || true)
+assert_eq "$confirm_count" "1" "卸载 Sbshell 仅执行一次确认"
+assert_no_grep '第二次确认：' "$SBSHELL_SRC/openwrt/menu.sh" "卸载流程移除第二次确认提示"
+
+suite_begin "openwrt: startup, opkg lock and config download UX"
+assert_grep 'mkdir -p /var/lock' "$SBSHELL_SRC/openwrt/install_singbox.sh" "opkg 操作前确保锁目录存在"
+assert_grep 'run_opkg' "$SBSHELL_SRC/openwrt/install_singbox.sh" "opkg 调用统一过滤已知无害锁清理告警"
+assert_grep 'opkg_conf_deinit.*opkg.lock' "$SBSHELL_SRC/openwrt/install_singbox.sh" "仅过滤 opkg.lock 清理告警"
+assert_grep 'max-time 30' "$SBSHELL_SRC/openwrt/manual_input.sh" "配置下载超时为 30 秒"
+assert_grep 'curl_pid=' "$SBSHELL_SRC/openwrt/manual_input.sh" "配置下载使用后台进程记录 PID"
+assert_grep '配置文件下载中' "$SBSHELL_SRC/openwrt/manual_input.sh" "配置下载显示进度状态"
+assert_grep '配置文件下载超时' "$SBSHELL_SRC/openwrt/manual_input.sh" "配置下载超时显示明确告警"
+assert_grep 'ui_output=$(run update_ui.sh' "$SBSHELL_SRC/openwrt/menu.sh" "初始化 UI 安装期间暂存输出"
+assert_grep 'printf.*tail -n1' "$SBSHELL_SRC/openwrt/menu.sh" "初始化 UI 完成后只显示最终通知"
+assert_grep 'pidof sing-box' "$SBSHELL_SRC/openwrt/start_singbox.sh" "重复执行启动选项先检查 sing-box 状态"
+assert_grep 'sing-box 已在运行，无需重复启动' "$SBSHELL_SRC/openwrt/start_singbox.sh" "sing-box 已运行时不重复应用防火墙"
+assert_grep 'pidof sing-box' "$SBSHELL_SRC/openwrt/stop_singbox.sh" "停止前检查 sing-box 状态"
+assert_grep 'sing-box 未运行，无需重复停止' "$SBSHELL_SRC/openwrt/stop_singbox.sh" "已停止时不重复调用服务"
+
+suite_begin "openwrt: uninstall keeps cleanup moving when sing-box is a dependency"
+assert_grep 'opkg remove sing-box' "$SBSHELL_SRC/openwrt/menu.sh" "卸载使用 OpenWrt opkg remove"
+assert_grep '继续清理 Sbshell 文件' "$SBSHELL_SRC/openwrt/menu.sh" "sing-box 无法卸载时继续清理"
+assert_grep 'rm -rf /etc/sing-box' "$SBSHELL_SRC/openwrt/menu.sh" "卸载时删除 sing-box 配置与脚本目录"
+assert_grep 'sing-box 软件包当前无法卸载.*继续清理' "$SBSHELL_SRC/openwrt/menu.sh" "sing-box 卸载失败时只告警并继续"
+assert_no_grep 'opkg remove --purge sing-box' "$SBSHELL_SRC/openwrt/menu.sh" "不再调用 OpenWrt 不支持的 --purge"
+assert_grep '/etc/init.d/sing-box stop' "$SBSHELL_SRC/openwrt/menu.sh" "卸载前先请求停止 sing-box"
+assert_grep 'pidof sing-box' "$SBSHELL_SRC/openwrt/clean_nft.sh" "防火墙清理前检查 sing-box 进程状态"
+assert_grep 'sleep ' "$SBSHELL_SRC/openwrt/clean_nft.sh" "防火墙清理等待 sing-box 完全退出"
+
+suite_begin "openwrt: autostart while sing-box is already running"
 assert_grep 'pidof sing-box' "$SBSHELL_SRC/openwrt/manage_autostart.sh" "设置自启动前检查 sing-box 运行状态"
-assert_grep '已在运行.*跳过当前防火墙重载' "$SBSHELL_SRC/openwrt/manage_autostart.sh" "sing-box 运行时跳过重复防火墙应用"
+assert_grep '已在运行，跳过当前防火墙重载' "$SBSHELL_SRC/openwrt/manage_autostart.sh" "sing-box 运行时跳过重复防火墙应用"
 
 suite_end
