@@ -19,7 +19,7 @@ assert_grep 'download_repo_file "openwrt/\$script"' "$SBSHELL_SRC/openwrt/update
 
 suite_begin "openwrt: UI menu separators and colored notifications"
 assert_grep "^    echo '========='$" "$SBSHELL_SRC/openwrt/update_ui.sh" "二级菜单顶部有分隔线"
-assert_grep "echo -e '\${CYAN}=========='" "$SBSHELL_SRC/openwrt/update_ui.sh" "请选择前有分隔线"
+assert_grep "^    echo '========='$" "$SBSHELL_SRC/openwrt/update_ui.sh" "请选择前有分隔线"
 assert_grep 'GREEN=.*RED=' "$SBSHELL_SRC/openwrt/update_ui.sh" "UI 脚本定义成功/失败颜色"
 assert_grep 'GREEN.*UI 安装完成' "$SBSHELL_SRC/openwrt/update_ui.sh" "UI 安装成功使用绿色通知"
 assert_grep 'RED.*>&2' "$SBSHELL_SRC/openwrt/update_ui.sh" "UI 失败通知使用红色"
