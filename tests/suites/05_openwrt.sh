@@ -121,7 +121,7 @@ suite_begin "openwrt: uninstall keeps cleanup moving when sing-box is a dependen
 assert_grep 'opkg remove sing-box' "$SBSHELL_SRC/openwrt/menu.sh" "卸载使用 OpenWrt opkg remove"
 assert_grep '继续清理 Sbshell 文件' "$SBSHELL_SRC/openwrt/menu.sh" "sing-box 无法卸载时继续清理"
 assert_grep 'rm -rf /etc/sing-box' "$SBSHELL_SRC/openwrt/menu.sh" "卸载时删除 sing-box 配置与脚本目录"
-assert_grep '卸载失败.*继续' "$SBSHELL_SRC/openwrt/menu.sh" "sing-box 卸载失败时只告警并继续"
+assert_grep 'sing-box 软件包当前无法卸载.*继续清理' "$SBSHELL_SRC/openwrt/menu.sh" "sing-box 卸载失败时只告警并继续"
 assert_no_grep 'opkg remove --purge sing-box' "$SBSHELL_SRC/openwrt/menu.sh" "不再调用 OpenWrt 不支持的 --purge"
 
 suite_end
