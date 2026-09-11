@@ -19,7 +19,6 @@ get_default() {
     grep -m1 "^${key}=" "$DEFAULTS_FILE" 2>/dev/null | cut -d'=' -f2- || true
 }
 valid_url() { [[ "$1" =~ ^https://[^[:space:]]+$ ]]; }
-# 订阅地址不是 URL（是后端约定的查询串），但必须排除空白、'#' 以及会覆盖 file 参数的片段。
 valid_subscription() {
     local value="$1"
     [ -z "$value" ] && return 0
@@ -29,6 +28,11 @@ valid_subscription() {
     return 0
 }
 
+release_lock() {
+    [ -d "$LOCK_DIR" ] || return 0
+    owner=$(cat "$LOCK_DIR/pid" 2>/dev/null || true)
+    [ "$owner" = "$$" ] && rm -rf "$LOCK_DIR"
+}
 acquire_lock() {
     while ! mkdir "$LOCK_DIR" 2>/dev/null; do
         owner=$(cat "$LOCK_DIR/pid" 2>/dev/null || true)
@@ -45,10 +49,9 @@ acquire_lock() {
         sleep 1
 done
     printf '%s\n' "$$" > "$LOCK_DIR/pid"
-    trap 'cleanup; rm -rf "$LOCK_DIR"' EXIT INT TERM
+    trap 'cleanup; release_lock' EXIT INT TERM
 }
 
-# BusyBox grep 不支持 PCRE；OpenWrt 默认就是 BusyBox，用 sed 解析 MODE。
 MODE=$(sed -n 's/^MODE=//p' "$MODE_FILE" 2>/dev/null | head -n1)
 TMP_FILES=()
 cleanup() { local file; for file in ${TMP_FILES[@]+"${TMP_FILES[@]}"}; do rm -f "$file" 2>/dev/null || true; done; }
@@ -106,12 +109,12 @@ while true; do
 
     if [ -f "$CONFIG_FILE" ]; then install -o root -g root -m 0600 "$CONFIG_FILE" "$backup_config"; config_existed=1; fi
     chown root:root "$tmp_manual" "$tmp_config"
-    chmod 0600 "$tmp_manual"; chmod 0644 "$tmp_config"
+    chmod 0600 "$tmp_manual"; chmod 0600 "$tmp_config"
 
     mv -f "$tmp_manual" "$MANUAL_FILE"
     if ! mv -f "$tmp_config" "$CONFIG_FILE"; then
         if [ "$manual_existed" -eq 1 ]; then install -o root -g root -m 0600 "$backup_manual" "$MANUAL_FILE"; else rm -f "$MANUAL_FILE"; fi
-        if [ "$config_existed" -eq 1 ]; then install -o root -g root -m 0644 "$backup_config" "$CONFIG_FILE"; else rm -f "$CONFIG_FILE"; fi
+        if [ "$config_existed" -eq 1 ]; then install -o root -g root -m 0600 "$backup_config" "$CONFIG_FILE"; else rm -f "$CONFIG_FILE"; fi
         echo -e "${RED}配置文件提交失败，已回滚。${NC}" >&2
         exit 1
     fi
