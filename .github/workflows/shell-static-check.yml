@@ -95,4 +95,17 @@ jobs:
       - uses: actions/checkout@v5.1.0
       - name: Run containerised behavioural tests
         shell: bash
-        run: bash tests/run.sh
+        run: |
+          set -uo pipefail
+          bash tests/run.sh > /tmp/suite.log 2>&1
+          rc=$?
+          # Actions 的作业日志过长时只保留开头，失败断言会看不到；
+          # 这里把输出尾部同时以内联注解暴露（可用 API /annotations 精准读取）。
+          if [ "$rc" -ne 0 ]; then
+            tail -25 /tmp/suite.log | while IFS= read -r line; do
+              [ -n "$line" ] && echo "::error::$line"
+            done
+          else
+            tail -5 /tmp/suite.log
+          fi
+          exit "$rc"

@@ -245,6 +245,17 @@ declared=2222222222222222222222222222222222222222
 fixture_write RELEASE "$declared"
 for f in "$SBSHELL_SRC"/debian/*.sh; do cp "$f" "$SBSHELL_FIXTURES/"; done
 run_with_timeout bash "$SCRIPTS/update_scripts.sh" > /tmp/no-hop.out 2>&1
+rc=$?
+if [ "$rc" -ne 0 ]; then
+    fail "更新脚本执行失败（rc=$rc），无法判定发布解析行为"
+    echo "--- update_scripts.sh 输出（尾部）---"
+    tail -20 /tmp/no-hop.out
+    echo "--- curl.log ---"
+    cat "$SBSHELL_STUB_STATE/curl.log" 2>/dev/null || true
+    echo "--- 结束 ---"
+else
+    pass "更新脚本按 RELEASE 声明执行完成"
+fi
 assert_grep "$declared/debian/" "$SBSHELL_STUB_STATE/curl.log" "更新按 RELEASE 声明的提交下载"
 if grep -q '91865d43c91b5d22141d412c27d3c54624c4be95/debian/' "$SBSHELL_STUB_STATE/curl.log"; then
     fail "仍按内置常量下载（没有使用 RELEASE 声明）"
