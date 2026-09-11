@@ -35,16 +35,16 @@ CYAN='\033[0;36m'; GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[1;33m'; NC
 SCRIPT_DIR=/etc/sing-box/scripts
 INITIALIZED_FILE="$SCRIPT_DIR/.initialized"
 BASE_REF=7dfddbae21d224349bb4ba4ac2d81bd541d39b9d
-export REPO_RAW="https://raw.githubusercontent.com/meiao123/sbshell"
-BASE_URL="https://raw.githubusercontent.com/meiao123/sbshell/$BASE_REF/openwrt"
-RELEASE_DECL_URL="https://raw.githubusercontent.com/meiao123/sbshell/refs/heads/main/RELEASE"
+export REPO_RAW="https://ghfast.top/https://raw.githubusercontent.com/meiao123/sbshell"
+BASE_URL="https://ghfast.top/https://raw.githubusercontent.com/meiao123/sbshell/$BASE_REF/openwrt"
+RELEASE_DECL_URL="https://ghfast.top/https://raw.githubusercontent.com/meiao123/sbshell/refs/heads/main/RELEASE"
 github_api_download() {
     local path="$1" ref="$2" output="$3"
     curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
         --connect-timeout 10 --max-time 30 \
         -H 'Accept: application/vnd.github.raw+json' \
         -H 'X-GitHub-Api-Version: 2022-11-28' \
-        "https://api.github.com/repos/meiao123/sbshell/contents/$path?ref=$ref" -o "$output" || return 1
+        "https://ghfast.top/https://api.github.com/repos/meiao123/sbshell/contents/$path?ref=$ref" -o "$output" || return 1
     [ -s "$output" ] || { rm -f "$output"; return 1; }
 }
 github_archive_download() {
@@ -53,7 +53,7 @@ github_archive_download() {
     archive=$(mktemp /tmp/sbshell-archive.XXXXXX) || return 1
     if ! curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
         --connect-timeout 10 --max-time 120 \
-        "https://github.com/meiao123/sbshell/archive/$ref.tar.gz" -o "$archive"; then
+        "https://ghfast.top/https://github.com/meiao123/sbshell/archive/$ref.tar.gz" -o "$archive"; then
         rm -f "$archive"
         return 1
     fi
@@ -95,7 +95,7 @@ resolve_release_ref() {
         *[!0-9a-f]*) ;;
         *) if [ "${#declared}" -eq 40 ]; then
                BASE_REF=$declared
-               BASE_URL="https://raw.githubusercontent.com/meiao123/sbshell/$BASE_REF/openwrt"
+               BASE_URL="https://ghfast.top/https://raw.githubusercontent.com/meiao123/sbshell/$BASE_REF/openwrt"
            fi ;;
     esac
     return 0
