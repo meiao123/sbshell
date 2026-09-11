@@ -35,7 +35,7 @@ CYAN='\033[0;36m'; GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[1;33m'; NC
 SCRIPT_DIR=/etc/sing-box/scripts
 INITIALIZED_FILE="$SCRIPT_DIR/.initialized"
 BASE_REF=7dfddbae21d224349bb4ba4ac2d81bd541d39b9d
-REPO_RAW="https://raw.githubusercontent.com/meiao123/sbshell"
+export REPO_RAW="https://raw.githubusercontent.com/meiao123/sbshell"
 BASE_URL="https://raw.githubusercontent.com/meiao123/sbshell/$BASE_REF/openwrt"
 RELEASE_DECL_URL="https://raw.githubusercontent.com/meiao123/sbshell/refs/heads/main/RELEASE"
 github_api_download() {
