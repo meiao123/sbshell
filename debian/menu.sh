@@ -7,7 +7,7 @@ CYAN='\033[0;36m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; WH
 SCRIPT_DIR=/etc/sing-box/scripts
 INITIALIZED_FILE=/etc/sing-box/.initialized
 ROLE_FILE=/etc/sing-box/.role
-BASE_REF=security-release-2026-09-11
+BASE_REF=fdbceb9b2e69ee8e48ea3ba5efd054a267b6816f
 BASE_URL="https://raw.githubusercontent.com/meiao123/sbshell/$BASE_REF/debian"
 ROLE=''
 SCRIPTS=(

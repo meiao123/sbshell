@@ -1,7 +1,7 @@
 #!/bin/bash
 set -Eeuo pipefail
 SCRIPT_DIR=/etc/sing-box/scripts
-BASE_REF=security-release-2026-09-11
+BASE_REF=fdbceb9b2e69ee8e48ea3ba5efd054a267b6816f
 BASE_URL="https://raw.githubusercontent.com/meiao123/sbshell/$BASE_REF/openwrt"
 TMP_DIR=$(mktemp -d /tmp/sbshell-update.XXXXXX)
 BACKUP_DIR=$(mktemp -d /tmp/sbshell-update-backup.XXXXXX)

@@ -1,7 +1,7 @@
 #!/bin/bash
 set -Eeuo pipefail
 
-RELEASE_REF=security-release-2026-09-11
+RELEASE_REF=fdbceb9b2e69ee8e48ea3ba5efd054a267b6816f
 DEBIAN_MAIN_SCRIPT_URL="https://raw.githubusercontent.com/meiao123/sbshell/$RELEASE_REF/debian/menu.sh"
 OPENWRT_MAIN_SCRIPT_URL="https://raw.githubusercontent.com/meiao123/sbshell/$RELEASE_REF/openwrt/menu.sh"
 SCRIPT_DIR=/etc/sing-box/scripts

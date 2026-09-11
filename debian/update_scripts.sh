@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 GREEN='\033[0;32m'; RED='\033[0;31m'; NC='\033[0m'
 SCRIPT_DIR=/etc/sing-box/scripts
-BASE_REF=security-release-2026-09-11
+BASE_REF=fdbceb9b2e69ee8e48ea3ba5efd054a267b6816f
 BASE_URL="https://raw.githubusercontent.com/meiao123/sbshell/$BASE_REF/debian"
 TMP_DIR=$(mktemp -d /tmp/sing-box-update.XXXXXX)
 BACKUP_DIR=$(mktemp -d /tmp/sing-box-update-backup.XXXXXX)
