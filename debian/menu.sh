@@ -14,7 +14,7 @@ SCRIPTS=(
   menu.sh install_singbox.sh check_update.sh update_scripts.sh update_ui.sh manual_input.sh manual_update.sh auto_update.sh
   switch_mode.sh configure_tproxy.sh configure_tun.sh update_config.sh setup.sh ufw.sh start_singbox.sh stop_singbox.sh
   manage_autostart.sh check_config.sh check_environment.sh set_network.sh clean_nft.sh kernel.sh optimize.sh
-  delaytest.sh commands.sh gen_server_config.sh
+  delaytest.sh commands.sh gen_server_config.sh set_defaults.sh
 )
 
 require_cmd() { command -v "$1" >/dev/null 2>&1 || { echo -e "${RED}缺少依赖: $1${NC}" >&2; return 1; }; }
