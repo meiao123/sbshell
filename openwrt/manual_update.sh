@@ -50,6 +50,7 @@ NC='\033[0m'
 MANUAL_FILE=/etc/sing-box/manual.conf
 DEFAULTS_FILE=/etc/sing-box/defaults.conf
 CONFIG_FILE=/etc/sing-box/config.json
+BACKUP_FILE=/etc/sing-box/config.json.bak
 MODE_FILE=/etc/sing-box/mode.conf
 LOCK_DIR=/tmp/sbshell-config.lock
 LOCK_TIMEOUT=900
@@ -95,14 +96,11 @@ acquire_lock() {
         waited=0
         while ! mkdir "$LOCK_DIR" 2>/dev/null; do
             owner=$(cat "$LOCK_DIR/pid" 2>/dev/null || true)
-            # pid 必须是纯数字，否则视为无效
             case "$owner" in ''|*[!0-9]*) owner='' ;; esac
             now=$(date +%s)
             created=$(stat -c %Y "$LOCK_DIR" 2>/dev/null || echo 0)
             age=0
             [ "$created" -gt 0 ] && age=$((now - created))
-            # 过期即接管：不能只凭 owner 是否存活判断（pid 复用或伪造 pid 会让
-            # 过期分支永远到不了，配置更新会永久阻塞）
             if [ "$age" -ge "$LOCK_TIMEOUT" ]; then
                 rm -rf "$LOCK_DIR" 2>/dev/null || true
                 sleep 1
@@ -111,7 +109,7 @@ acquire_lock() {
             if [ -n "$owner" ] && kill -0 "$owner" 2>/dev/null; then
                 waited=$((waited + 1))
                 if [ "$waited" -ge "$LOCK_TIMEOUT" ]; then
-                    echo '等待配置锁超时（另一个进程持锁）。' >&2
+                    echo -e "${RED}等待配置锁超时（另一个进程持锁）。${NC}" >&2
                     return 1
                 fi
             fi
@@ -123,57 +121,81 @@ acquire_lock() {
     }
 MODE=$(read_value MODE "$MODE_FILE")
 
-PROMPT_FLAG=0
-case "${1:-}" in y|Y|yes|YES) PROMPT_FLAG=1 ;; esac
+confirm_yes() {
+    local prompt="$1" answer
+    while true; do
+        read -r -p "$prompt [y/n]: " answer || { echo -e "${RED}无法读取输入，操作已取消。${NC}" >&2; return 1; }
+        case "$answer" in
+            [Yy]) return 0;;
+            [Nn]) return 1;;
+            *) echo -e "${RED}请输入 y 或 n。${NC}";;
+        esac
+    done
+}
 
 prompt_user_input() {
-    local attempts=0
     while true; do
-        read -rp '后端地址(留空使用默认，后端地址可留空): ' BACKEND_URL || { echo '无法读取输入。' >&2; return 1; }
+        read -rp '后端地址(留空使用默认): ' BACKEND_URL || { echo -e "${RED}无法读取后端地址。${NC}" >&2; return 1; }
         BACKEND_URL=${BACKEND_URL:-$(read_value BACKEND_URL "$DEFAULTS_FILE")}
-        read -rp '订阅地址(留空使用默认): ' SUBSCRIPTION_URL || { echo '无法读取输入。' >&2; return 1; }
+        read -rp '订阅地址(留空使用默认): ' SUBSCRIPTION_URL || { echo -e "${RED}无法读取订阅地址。${NC}" >&2; return 1; }
         SUBSCRIPTION_URL=${SUBSCRIPTION_URL:-$(read_value SUBSCRIPTION_URL "$DEFAULTS_FILE")}
-        read -rp '配置文件地址(留空使用默认): ' TEMPLATE_URL || { echo '无法读取输入。' >&2; return 1; }
+        read -rp '配置文件地址(留空使用默认): ' TEMPLATE_URL || { echo -e "${RED}无法读取配置文件地址。${NC}" >&2; return 1; }
         if [ -z "$TEMPLATE_URL" ]; then
             case "$MODE" in
                 TProxy) TEMPLATE_URL=$(read_value TPROXY_TEMPLATE_URL "$DEFAULTS_FILE");;
                 TUN) TEMPLATE_URL=$(read_value TUN_TEMPLATE_URL "$DEFAULTS_FILE");;
-                *) echo '未知模式，无法从默认值读取配置文件地址。' >&2; return 1;;
+                *) echo -e "${RED}未知模式，无法从默认值读取配置文件地址。${NC}" >&2; return 1;;
             esac
         fi
-        if validate_endpoints; then return 0; fi
-        attempts=$((attempts + 1))
-        [ "$attempts" -lt 20 ] || { echo '输入错误次数过多，已取消。' >&2; return 1; }
+        validate_endpoints && return 0
     done
 }
 
-if [ "$PROMPT_FLAG" -eq 1 ]; then
-    prompt_user_input || exit 1
-    printf 'BACKEND_URL=%s\nSUBSCRIPTION_URL=%s\nTEMPLATE_URL=%s\n' "$BACKEND_URL" "$SUBSCRIPTION_URL" "$TEMPLATE_URL" > "$TMP_DIR/manual.conf"
-else
-    [ -f "$MANUAL_FILE" ] || { echo '未找到 manual.conf，请先配置。' >&2; exit 1; }
+if ! confirm_yes '是否重新设置配置文件地址？'; then
+    [ -f "$MANUAL_FILE" ] || { echo -e "${RED}未找到已记录的配置地址，请选择重新设置。${NC}" >&2; exit 1; }
     BACKEND_URL=$(read_value BACKEND_URL "$MANUAL_FILE")
     SUBSCRIPTION_URL=$(read_value SUBSCRIPTION_URL "$MANUAL_FILE")
     TEMPLATE_URL=$(read_value TEMPLATE_URL "$MANUAL_FILE")
     validate_endpoints || exit 1
+else
+    while true; do
+        prompt_user_input || exit 1
+        if confirm_yes '确认地址无误吗？'; then
+            break
+        fi
+    done
+    printf 'BACKEND_URL=%s\nSUBSCRIPTION_URL=%s\nTEMPLATE_URL=%s\n' "$BACKEND_URL" "$SUBSCRIPTION_URL" "$TEMPLATE_URL" > "$TMP_DIR/manual.conf"
 fi
 
 acquire_lock
-if [ -f "$MANUAL_FILE" ]; then cp -a "$MANUAL_FILE" "$TMP_DIR/manual.backup"; fi
-if [ -f "$CONFIG_FILE" ]; then cp -a "$CONFIG_FILE" "$TMP_DIR/config.backup"; fi
+if [ -f "$MANUAL_FILE" ]; then cp -a "$MANUAL_FILE" "$TMP_DIR/manual.backup" || { echo -e "${RED}备份地址配置失败。${NC}" >&2; exit 1; }; fi
+if [ -f "$CONFIG_FILE" ]; then cp -a "$CONFIG_FILE" "$BACKUP_FILE" || { echo -e "${RED}旧配置备份失败，已取消更新。${NC}" >&2; exit 1; }; fi
 
-curl --fail --silent --show-error --location --proto '=http,https' --tlsv1.2 --connect-timeout 10 --max-time 60 "$FULL_URL" -o "$TMP_DIR/config.json" || { echo '配置下载失败。' >&2; exit 1; }
-sing-box check -c "$TMP_DIR/config.json" || { echo '配置验证失败。' >&2; exit 1; }
+if ! curl --fail --silent --show-error --location --proto '=http,https' --tlsv1.2 --connect-timeout 10 --max-time 60 "$FULL_URL" -o "$TMP_DIR/config.json"; then
+    echo -e "${RED}新配置下载失败，已保留之前的 config.json。${NC}" >&2
+    exit 1
+fi
+if ! sing-box check -c "$TMP_DIR/config.json"; then
+    echo -e "${RED}新配置验证失败，已保留之前的 config.json。${NC}" >&2
+    exit 1
+fi
 
-if [ "$PROMPT_FLAG" -eq 1 ]; then install -o root -g root -m 0600 "$TMP_DIR/manual.conf" "$MANUAL_FILE"; fi
-install -o root -g root -m 0600 "$TMP_DIR/config.json" "$CONFIG_FILE"
+if [ "$TMP_DIR/manual.conf" != '' ] && [ -f "$TMP_DIR/manual.conf" ]; then
+    install -o root -g root -m 0600 "$TMP_DIR/manual.conf" "$MANUAL_FILE" || { echo -e "${RED}新地址保存失败，已保留之前的配置。${NC}" >&2; exit 1; }
+fi
+install -o root -g root -m 0600 "$TMP_DIR/config.json" "$CONFIG_FILE" || {
+    [ ! -f "$BACKUP_FILE" ] || install -o root -g root -m 0600 "$BACKUP_FILE" "$CONFIG_FILE"
+    [ ! -f "$TMP_DIR/manual.backup" ] || install -o root -g root -m 0600 "$TMP_DIR/manual.backup" "$MANUAL_FILE"
+    echo -e "${RED}新配置写入失败，已恢复旧配置。${NC}" >&2
+    exit 1
+}
 
 if ! /etc/init.d/sing-box restart || ! sleep 2 || ! pidof sing-box >/dev/null 2>&1; then
+    [ ! -f "$BACKUP_FILE" ] || install -o root -g root -m 0600 "$BACKUP_FILE" "$CONFIG_FILE"
     [ ! -f "$TMP_DIR/manual.backup" ] || install -o root -g root -m 0600 "$TMP_DIR/manual.backup" "$MANUAL_FILE"
-    [ ! -f "$TMP_DIR/config.backup" ] || install -o root -g root -m 0600 "$TMP_DIR/config.backup" "$CONFIG_FILE"
     /etc/init.d/sing-box restart || true
     echo -e "${RED}新配置启动失败，已恢复旧配置。${NC}" >&2
     exit 1
 fi
 
-echo -e "${GREEN}配置更新并启动成功。${NC}"
+echo -e "${GREEN}配置更新并启动成功。旧配置已备份到 $BACKUP_FILE。${NC}"
