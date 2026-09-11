@@ -1,115 +1,63 @@
 #!/bin/bash
-
-# 定义颜色
-GREEN='\033[0;32m'
-RED='\033[0;31m'
-NC='\033[0m' # 无颜色
-
-echo -e "${GREEN}设置开机自启动...${NC}"
-echo "请选择操作(1: 启用自启动, 2: 禁用自启动）"
-read -rp "(1/2): " autostart_choice
+set -Eeuo pipefail
+GREEN='\033[0;32m'; RED='\033[0;31m'; NC='\033[0m'
+SERVICE="/etc/systemd/system/nftables-singbox.service"
+SCRIPT_DIR="/etc/sing-box/scripts"
+[ "$(id -u)" -eq 0 ] || exec sudo bash "$0" "$@"
 
 apply_firewall() {
-    MODE=$(grep -oP '(?<=^MODE=).*' /etc/sing-box/mode.conf)
-    if [ "$MODE" = "TProxy" ]; then
-        echo "应用 TProxy 模式下的防火墙规则..."
-        bash /etc/sing-box/scripts/configure_tproxy.sh
-    elif [ "$MODE" = "TUN" ]; then
-        echo "应用 TUN 模式下的防火墙规则..."
-        bash /etc/sing-box/scripts/configure_tun.sh
-    else
-        echo "无效的模式，跳过防火墙规则应用。"
-        exit 1
-    fi
+    local mode
+    mode=$(awk -F= '$1 == "MODE" {print $2; exit}' /etc/sing-box/mode.conf 2>/dev/null || true)
+    case "$mode" in
+        TProxy) exec "$SCRIPT_DIR/configure_tproxy.sh" ;;
+        TUN) exec "$SCRIPT_DIR/configure_tun.sh" ;;
+        *) echo "无效的模式: $mode" >&2; return 1 ;;
+    esac
 }
 
-case $autostart_choice in
-    1)
-        # 检查自启动是否已经开启
-        if systemctl is-enabled sing-box.service >/dev/null 2>&1 && systemctl is-enabled nftables-singbox.service >/dev/null 2>&1; then
-            echo -e "${GREEN}自启动已经开启，无需操作。${NC}"
-            exit 0  # 返回主菜单
-        fi
+if [[ "${1:-}" == "apply_firewall" ]]; then
+    apply_firewall
+    exit $?
+fi
 
-        echo -e "${GREEN}启用自启动...${NC}"
-
-        # 删除旧的配置文件以避免重复配置
-        sudo rm -f /etc/systemd/system/nftables-singbox.service
-
-        # 创建 nftables-singbox.service 文件
-        sudo bash -c 'cat > /etc/systemd/system/nftables-singbox.service <<EOF
+read -rp "请选择操作(1: 启用自启动, 2: 禁用自启动): " choice
+case "$choice" in
+1)
+    cat > "$SERVICE" <<EOF
 [Unit]
-Description=Apply nftables rules for Sing-Box
-After=network.target
+Description=Apply sing-box firewall rules
+After=network-online.target
+Wants=network-online.target
+Before=sing-box.service
 
 [Service]
-ExecStart=/etc/sing-box/scripts/manage_autostart.sh apply_firewall
 Type=oneshot
+ExecStart=$SCRIPT_DIR/manage_autostart.sh apply_firewall
 RemainAfterExit=yes
 
 [Install]
 WantedBy=multi-user.target
-EOF'
-
-        # 修改 sing-box.service 文件
-        sudo bash -c "sed -i '/After=network.target nss-lookup.target network-online.target/a After=nftables-singbox.service' /usr/lib/systemd/system/sing-box.service"
-        sudo bash -c "sed -i '/^Requires=/d' /usr/lib/systemd/system/sing-box.service"
-        sudo bash -c "sed -i '/
-
-\[Unit\]
-
-/a Requires=nftables-singbox.service' /usr/lib/systemd/system/sing-box.service"
-
-        # 启用并启动服务
-        sudo systemctl daemon-reload
-        sudo systemctl enable nftables-singbox.service sing-box.service
-        sudo systemctl start nftables-singbox.service sing-box.service
-        cmd_status=$?
-
-        if [ "$cmd_status" -eq 0 ]; then
-            echo -e "${GREEN}自启动已成功启用。${NC}"
-        else
-            echo -e "${RED}启用自启动失败。${NC}"
-        fi
-        ;;
-    2)
-        # 检查自启动是否已经禁用
-        if ! systemctl is-enabled sing-box.service >/dev/null 2>&1 && ! systemctl is-enabled nftables-singbox.service >/dev/null 2>&1; then
-            echo -e "${GREEN}自启动已经禁用，无需操作。${NC}"
-            exit 0  # 返回主菜单
-        fi
-
-        echo -e "${RED}禁用自启动...${NC}"
-        
-        # 禁用并停止服务
-        sudo systemctl disable sing-box.service
-        sudo systemctl disable nftables-singbox.service
-        sudo systemctl stop sing-box.service
-        sudo systemctl stop nftables-singbox.service
-
-        # 删除 nftables-singbox.service 文件
-        sudo rm -f /etc/systemd/system/nftables-singbox.service
-
-        # 还原 sing-box.service 文件
-        sudo bash -c "sed -i '/After=nftables-singbox.service/d' /usr/lib/systemd/system/sing-box.service"
-        sudo bash -c "sed -i '/Requires=nftables-singbox.service/d' /usr/lib/systemd/system/sing-box.service"
-
-        # 重新加载 systemd
-        sudo systemctl daemon-reload
-        cmd_status=$?
-
-        if [ "$cmd_status" -eq 0 ]; then
-            echo -e "${GREEN}自启动已成功禁用。${NC}"
-        else
-            echo -e "${RED}禁用自启动失败。${NC}"
-        fi
-        ;;
-    *)
-        echo -e "${RED}无效的选择${NC}"
-        ;;
+EOF
+    systemctl daemon-reload
+    systemctl enable nftables-singbox.service
+    systemctl enable sing-box.service
+    if ! systemctl start nftables-singbox.service; then
+        systemctl disable nftables-singbox.service >/dev/null 2>&1 || true
+        rm -f "$SERVICE"
+        systemctl daemon-reload
+        echo -e "${RED}防火墙规则应用失败，未启用自启动。${NC}"
+        exit 1
+    fi
+    systemctl restart sing-box
+    echo -e "${GREEN}自启动已成功启用。${NC}"
+    ;;
+2)
+    systemctl disable nftables-singbox.service >/dev/null 2>&1 || true
+    systemctl disable sing-box.service >/dev/null 2>&1 || true
+    systemctl stop nftables-singbox.service >/dev/null 2>&1 || true
+    rm -f "$SERVICE"
+    systemctl daemon-reload
+    echo -e "${GREEN}自启动已成功禁用。${NC}"
+    ;;
+*) echo -e "${RED}无效的选择。${NC}"; exit 1 ;;
 esac
-
-# 调用应用防火墙规则的函数
-if [ "$1" = "apply_firewall" ]; then
-    apply_firewall
-fi

@@ -1,12 +1,6 @@
 #!/bin/bash
+set -Eeuo pipefail
 
-#################################################
-# 描述: Debian/Ubuntu/Armbian 官方sing-box 全自动脚本
-# 版本: 3.0.0
-# 说明: Sing-box 服务管理脚本，提供客户端和服务端模式。
-#################################################
-
-# --- 1. 全局变量和颜色定义 ---
 CYAN='\033[0;36m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -17,233 +11,182 @@ LIGHT_PURPLE='\033[1;35m'
 LIGHT_BLUE='\033[1;34m'
 NC='\033[0m'
 
+if [ "$(id -u)" -ne 0 ]; then
+    exec sudo bash "$0" "$@"
+fi
+
 SCRIPT_DIR="/etc/sing-box/scripts"
 INITIALIZED_FILE="$SCRIPT_DIR/.initialized"
 ROLE_FILE="$SCRIPT_DIR/.role"
-BASE_URL="https://ghfast.top/https://raw.githubusercontent.com/qljsyph/sbshell/refs/heads/main/debian"
-ROLE="" # 运行角色: client 或 server
+BASE_URL="https://raw.githubusercontent.com/meiao123/sbshell/main/debian"
+ROLE=""
 
-# 脚本功能列表，按功能分组
 SCRIPTS=(
-    # --- 核心与安装 ---
-    "menu.sh"                  # 主菜单
-    "install_singbox.sh"       # 安装/更新 sing-box
-    "check_update.sh"          # 检查 sing-box 更新
-    "update_scripts.sh"        # 更新所有管理脚本
-    "update_ui.sh"             # 更新 Web 控制面板 (Yacd)
-
-    # --- 客户端配置 ---
-    "manual_input.sh"          # 手动输入订阅链接
-    "manual_update.sh"         # 手动更新配置文件
-    "auto_update.sh"           # 配置订阅自动更新
-    "switch_mode.sh"           # 切换 TProxy / TUN 模式
-    "configure_tproxy.sh"      # 配置 TProxy
-    "configure_tun.sh"         # 配置 TUN
-
-    # --- 服务端配置 ---
-    "update_config.sh"         # 更新服务端配置文件
-    "setup.sh"                 # (服务端) 依赖安装和证书申请
-    "ufw.sh"                   # (服务端) 防火墙配置
-
-    # --- 服务管理 ---
-    "start_singbox.sh"         # 启动 sing-box
-    "stop_singbox.sh"          # 停止 sing-box
-    "manage_autostart.sh"      # 管理开机自启
-    "check_config.sh"          # 检查配置文件语法
-
-    # --- 系统与网络 ---
-    "check_environment.sh"     # 检查系统环境
-    "set_network.sh"           # 配置网络接口
-    "clean_nft.sh"             # 清理 nftables 规则
-    "kernel.sh"                # 更换/管理系统内核
-    "optimize.sh"              # 网络性能优化
-    "set_defaults.sh"          # 设置脚本默认参数
-    "delaytest.sh"             # 外网延迟测试脚本
-    "commands.sh"              # 常用命令速查
+    "menu.sh" "install_singbox.sh" "check_update.sh" "update_scripts.sh" "update_ui.sh"
+    "manual_input.sh" "manual_update.sh" "auto_update.sh" "switch_mode.sh" "configure_tproxy.sh" "configure_tun.sh"
+    "update_config.sh" "setup.sh" "ufw.sh"
+    "start_singbox.sh" "stop_singbox.sh" "manage_autostart.sh" "check_config.sh"
+    "check_environment.sh" "set_network.sh" "clean_nft.sh" "kernel.sh" "optimize.sh" "set_defaults.sh" "delaytest.sh" "commands.sh"
 )
 
-# --- 2. 辅助函数 ---
+require_cmd() {
+    command -v "$1" >/dev/null 2>&1 || {
+        echo -e "${RED}缺少依赖: $1${NC}" >&2
+        return 1
+    }
+}
 
-# 带有状态提示的脚本执行器
-# 用法: run_script "提示信息" "脚本名" ["--quiet"]
 run_script() {
-    local message="$1"
-    local script_name="$2"
-    local quiet_mode="$3"
-    
+    local message="$1" script_name="$2" quiet_mode="${3:-}"
     echo -e "${CYAN}${message}...${NC}"
-    if [ "$quiet_mode" == "--quiet" ]; then
-        bash "$SCRIPT_DIR/$script_name" >/dev/null
-    else
-        bash "$SCRIPT_DIR/$script_name"
-    fi
-
-    if [ $? -ne 0 ]; then
-        echo -e "${RED}${message}失败！${NC}"
-        return 1
-    else
-        # 对于非静默模式，成功信息由子脚本自己提供
-        if [ "$quiet_mode" == "--quiet" ]; then
+    if [[ "$quiet_mode" == "--quiet" ]]; then
+        if bash "$SCRIPT_DIR/$script_name" >/dev/null; then
             echo -e "${GREEN}${message}成功。${NC}"
+        else
+            echo -e "${RED}${message}失败！${NC}"
+            return 1
         fi
-        return 0
+    else
+        if bash "$SCRIPT_DIR/$script_name"; then
+            return 0
+        else
+            echo -e "${RED}${message}失败！${NC}"
+            return 1
+        fi
     fi
 }
 
-# 带有状态提示的 systemctl 命令执行器
-# 用法: run_systemctl "提示信息" "操作"
 run_systemctl() {
-    local message="$1"
-    local action="$2"
-
+    local message="$1" action="$2"
     echo -e "${CYAN}${message}...${NC}"
-    if sudo systemctl "$action" sing-box >/dev/null 2>&1; then
+    if systemctl "$action" sing-box >/dev/null 2>&1; then
         echo -e "${GREEN}${message}成功。${NC}"
-        return 0
     else
         echo -e "${RED}${message}失败！${NC}"
         return 1
     fi
 }
 
-# --- 3. 脚本下载与准备 ---
-
-# 下载单个脚本
 download_script() {
-    local script="$1"
-    local retries=3
-    for ((i=1; i<=retries; i++)); do
-        if wget -q -O "$SCRIPT_DIR/$script" "$BASE_URL/$script"; then
-            chmod +x "$SCRIPT_DIR/$script"
-            return 0
-        fi
-        sleep 2
-    done
-    echo -e "${YELLOW}下载 $script 失败 (尝试 $retries 次)。${NC}"
-    return 1
-}
-
-# 并行下载所有脚本
-parallel_download_scripts() {
-    echo -e "${CYAN}开始下载所有必需脚本...${NC}"
-    local pids=()
-    local failed_scripts=()
-    for script in "${SCRIPTS[@]}"; do
-        download_script "$script" &
-        pids+=("$!")
-    done
-    for pid in "${pids[@]}"; do
-        if ! wait "$pid"; then
-            failed_scripts+=("1")
-        fi
-    done
-    if [ ${#failed_scripts[@]} -ne 0 ]; then
-        echo -e "${RED}一个或多个脚本下载失败，请检查网络并重试。${NC}"
+    local script="$1" tmp
+    tmp=$(mktemp "/tmp/sbshell.${script//\//_}.XXXXXX")
+    if ! curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 60 \
+        "$BASE_URL/$script" -o "$tmp"; then
+        rm -f "$tmp"
+        echo -e "${YELLOW}下载 $script 失败。${NC}" >&2
         return 1
     fi
-    echo -e "${GREEN}所有脚本下载完成。${NC}"
-    return 0
-}
-
-# 检查并按需下载缺失的脚本
-check_and_download_scripts() {
-    local missing_scripts=()
-    for script in "${SCRIPTS[@]}"; do
-        [ ! -f "$SCRIPT_DIR/$script" ] && missing_scripts+=("$script")
-    done
-
-    if [ ${#missing_scripts[@]} -ne 0 ]; then
-        echo -e "${YELLOW}发现缺失脚本，正在尝试下载...${NC}"
-        for script in "${missing_scripts[@]}"; do
-            download_script "$script"
-        done
+    if ! bash -n "$tmp"; then
+        rm -f "$tmp"
+        echo -e "${RED}$script 语法校验失败，拒绝安装。${NC}" >&2
+        return 1
     fi
+    install -o root -g root -m 0755 "$tmp" "$SCRIPT_DIR/$script"
+    rm -f "$tmp"
 }
 
-# 清理旧脚本并下载最新版本
+parallel_download_scripts() {
+    local tmpdir pid failed=0 script
+    tmpdir=$(mktemp -d /tmp/sbshell-download.XXXXXX)
+    for script in "${SCRIPTS[@]}"; do
+        (
+            local tmp="$tmpdir/${script//\//_}"
+            if curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 60 \
+                "$BASE_URL/$script" -o "$tmp" && bash -n "$tmp"; then
+                install -o root -g root -m 0755 "$tmp" "$SCRIPT_DIR/$script"
+            else
+                echo "$script" >> "$tmpdir/failed"
+                exit 1
+            fi
+        ) &
+    done
+    for pid in $(jobs -pr); do
+        wait "$pid" || failed=1
+    done
+    if [ "$failed" -ne 0 ] || [ -f "$tmpdir/failed" ]; then
+        echo -e "${RED}一个或多个脚本下载/校验失败，未完成更新。${NC}" >&2
+        rm -rf "$tmpdir"
+        return 1
+    fi
+    rm -rf "$tmpdir"
+    echo -e "${GREEN}所有脚本下载并校验完成。${NC}"
+}
+
+check_and_download_scripts() {
+    local script
+    for script in "${SCRIPTS[@]}"; do
+        if [ ! -s "$SCRIPT_DIR/$script" ]; then
+            echo -e "${YELLOW}发现缺失脚本: $script${NC}"
+            download_script "$script" || return 1
+        fi
+    done
+}
+
 prepare_scripts() {
-    echo -e "${CYAN}正在清理旧脚本...${NC}"
-    find "$SCRIPT_DIR" -type f -name "*.sh" ! -name "menu.sh" -exec rm -f {} \;
+    echo -e "${CYAN}正在更新管理脚本...${NC}"
+    find "$SCRIPT_DIR" -type f -name '*.sh' ! -name 'menu.sh' -delete
     rm -f "$INITIALIZED_FILE"
     parallel_download_scripts
 }
 
-# --- 4. 初始化流程 ---
-
-# 客户端初始化
 client_initialize() {
-    echo -e "${CYAN}--- 开始客户端初始化 ---${NC}"
-    prepare_scripts || exit 1
-    run_script "检查系统环境" "check_environment.sh" --quiet
-    run_script "安装/更新 sing-box" "install_singbox.sh" --quiet
-    run_script "配置代理模式" "switch_mode.sh"
-    run_script "配置订阅链接" "manual_input.sh"
-    run_script "启动 sing-box" "start_singbox.sh" --quiet
+    prepare_scripts || return 1
+    run_script "检查系统环境" "check_environment.sh" --quiet || return 1
+    run_script "安装/更新 sing-box" "install_singbox.sh" --quiet || return 1
+    run_script "配置代理模式" "switch_mode.sh" || return 1
+    run_script "配置订阅链接" "manual_input.sh" || return 1
+    run_script "启动 sing-box" "start_singbox.sh" --quiet || return 1
     echo -e "${GREEN}--- 客户端初始化完成 ---${NC}"
 }
 
-# 服务端初始化
 server_initialize() {
-    echo -e "${CYAN}--- 开始服务端初始化 ---${NC}"
-    prepare_scripts || exit 1
-    run_script "配置防火墙" "ufw.sh" "--auto"
-    run_script "安装/更新 sing-box" "install_singbox.sh" --quiet
-    run_script "更新服务端配置" "update_config.sh"
-    run_systemctl "启动 sing-box 服务" "start"
+    prepare_scripts || return 1
+    run_script "配置防火墙" "ufw.sh" || return 1
+    run_script "安装/更新 sing-box" "install_singbox.sh" --quiet || return 1
+    run_script "更新服务端配置" "update_config.sh" || return 1
+    run_systemctl "启动 sing-box 服务" "start" || return 1
     echo -e "${GREEN}--- 服务端初始化完成 ---${NC}"
 }
 
-# --- 5. 主逻辑 ---
-
-# 角色选择
 select_role() {
+    local role_choice
     echo -e "${CYAN}请选择运行角色: [1] 客户端 [2] 服务端${NC}"
     read -rp "输入数字选择: " role_choice
-    case $role_choice in
+    case "$role_choice" in
         1) ROLE="client" ;;
         2) ROLE="server" ;;
         *) echo -e "${YELLOW}无效选择，默认为客户端。${NC}"; ROLE="client" ;;
     esac
-    echo "$ROLE" > "$ROLE_FILE"
+    printf '%s\n' "$ROLE" > "$ROLE_FILE"
+    chmod 0644 "$ROLE_FILE"
 }
 
-# 初始化检查与执行
 run_initialization() {
-    # 首先选择角色
     select_role
-
     echo -e "${YELLOW}为 '$ROLE' 角色进行首次初始化。${NC}"
-    echo "初始化将自动完成环境检查、sing-box安装、配置等步骤。"
     read -rp "按回车开始，或输入 'skip' 仅下载脚本进入菜单: " init_choice
-    
     if [[ "$init_choice" =~ ^[Ss]kip$ ]]; then
-        echo -e "${CYAN}跳过初始化，仅下载脚本...${NC}"
-        parallel_download_scripts
+        parallel_download_scripts || return 1
+    elif [ "$ROLE" = "server" ]; then
+        server_initialize || return 1
     else
-        if [ "$ROLE" = "server" ]; then
-            server_initialize
-        else
-            client_initialize
-        fi
-        touch "$INITIALIZED_FILE" # 成功后创建标记
+        client_initialize || return 1
     fi
+    touch "$INITIALIZED_FILE"
+    chmod 0644 "$INITIALIZED_FILE"
 }
 
-# 创建别名
 setup_alias() {
-    if ! grep -q "alias sb=" ~/.bashrc; then
-        echo -e "\n# sing-box 快捷方式\nalias sb='bash $SCRIPT_DIR/menu.sh'" >> ~/.bashrc
-        echo -e "${GREEN}已添加 'sb' 快捷命令到 .bashrc，请运行 'source ~/.bashrc' 或重新登录生效。${NC}"
+    local bashrc="${HOME:-/root}/.bashrc"
+    if ! grep -Fq 'alias sb=' "$bashrc" 2>/dev/null; then
+        printf '\n# sing-box 快捷方式\nalias sb='"'bash /etc/sing-box/scripts/menu.sh'"'\n' >> "$bashrc"
     fi
-    if [ ! -f /usr/local/bin/sb ]; then
-        echo -e '#!/bin/bash\nbash /etc/sing-box/scripts/menu.sh "$@"' | sudo tee /usr/local/bin/sb >/dev/null
-        sudo chmod +x /usr/local/bin/sb
-    fi
+    install -o root -g root -m 0755 /dev/stdin /usr/local/bin/sb <<'EOF'
+#!/bin/bash
+exec sudo bash /etc/sing-box/scripts/menu.sh "$@"
+EOF
 }
 
-# --- 6. 菜单定义与处理 ---
-
-# 客户端菜单
 show_client_menu() {
     echo -e "\n${CYAN}================= sbshell客户端管理菜单 =================${NC}"
     echo -e "${BOLD}${LIGHT_BLUE}--- 配置管理 ---${NC}"
@@ -270,21 +213,17 @@ show_client_menu() {
 }
 
 handle_client_choice() {
+    local choice
     read -rp "请选择操作: " choice
-    case $choice in
-        1) run_script "配置代理模式" "switch_mode.sh"; run_script "配置订阅链接" "manual_input.sh"; run_script "启动 sing-box" "start_singbox.sh" --quiet ;;
+    case "$choice" in
+        1) run_script "配置代理模式" "switch_mode.sh" && run_script "配置订阅链接" "manual_input.sh" && run_script "启动 sing-box" "start_singbox.sh" --quiet ;;
         2) run_script "手动更新配置" "manual_update.sh" ;;
         3) run_script "自动更新配置" "auto_update.sh" ;;
         4) run_script "设置默认参数" "set_defaults.sh" ;;
         5) run_script "启动sing-box" "start_singbox.sh" --quiet ;;
         6) run_script "停止sing-box" "stop_singbox.sh" --quiet ;;
         7) run_script "管理自启动" "manage_autostart.sh" ;;
-        8) if command -v sing-box &> /dev/null; then
-               run_script "检查 sing-box 更新" "check_update.sh"
-           else
-               run_script "安装/更新 sing-box" "install_singbox.sh"
-           fi
-           ;;
+        8) if command -v sing-box >/dev/null 2>&1; then run_script "检查 sing-box 更新" "check_update.sh"; else run_script "安装/更新 sing-box" "install_singbox.sh"; fi ;;
         9) run_script "更新所有脚本" "update_scripts.sh" ;;
         10) run_script "更新控制面板" "update_ui.sh" ;;
         11) run_script "网络设置" "set_network.sh" ;;
@@ -296,7 +235,6 @@ handle_client_choice() {
     esac
 }
 
-# 服务端菜单
 show_server_menu() {
     echo -e "\n${CYAN}================= sbshell服务端管理菜单 =================${NC}"
     echo -e "${BOLD}${LIGHT_PURPLE}--- 服务控制 ---${NC}"
@@ -320,20 +258,16 @@ show_server_menu() {
 }
 
 handle_server_choice() {
+    local choice
     read -rp "请选择操作: " choice
-    case $choice in
+    case "$choice" in
         1) run_systemctl "启动sing-box" "start" ;;
         2) run_systemctl "停止sing-box" "stop" ;;
         3) run_systemctl "重启sing-box" "restart" ;;
         4) run_systemctl "设置开机自启" "enable" ;;
-        5) sudo journalctl -u sing-box --output cat -f ;;
+        5) journalctl -u sing-box --output cat -f ;;
         6) run_script "更新服务端配置文件" "update_config.sh" ;;
-        7) if command -v sing-box &> /dev/null; then
-               run_script "检查 sing-box 更新" "check_update.sh"
-           else
-               run_script "安装/更新 sing-box" "install_singbox.sh"
-           fi
-           ;;
+        7) if command -v sing-box >/dev/null 2>&1; then run_script "检查 sing-box 更新" "check_update.sh"; else run_script "安装/更新 sing-box" "install_singbox.sh"; fi ;;
         8) run_script "更新脚本" "update_scripts.sh" ;;
         9) run_script "证书申请" "setup.sh" ;;
         10) run_script "更换XanMod内核" "kernel.sh" ;;
@@ -344,56 +278,38 @@ handle_server_choice() {
     esac
 }
 
-# --- 7. 脚本入口 ---
-
 main() {
-    # 确保脚本目录存在
-    sudo mkdir -p "$SCRIPT_DIR"
-    sudo chown "$(whoami)":"$(whoami)" "$SCRIPT_DIR"
-    cd "$SCRIPT_DIR" || exit 1
+    require_cmd curl
+    mkdir -p "$SCRIPT_DIR"
+    chown root:root "$SCRIPT_DIR"
+    chmod 0755 "$SCRIPT_DIR"
+    cd "$SCRIPT_DIR"
 
-    # 如果通过快捷方式 sb 调用，则第一个参数可能是菜单选项
-    if [ "$1" == "menu" ]; then
-        shift
-    fi
+    if [[ "${1:-}" == "menu" ]]; then shift; fi
 
-    # 检查是否已经初始化过
     if [ ! -f "$INITIALIZED_FILE" ]; then
-        run_initialization
+        run_initialization || exit 1
     else
-        # 如果已经初始化，加载角色并检查脚本
         if [ -f "$ROLE_FILE" ]; then
             ROLE=$(cat "$ROLE_FILE")
         else
-            # 兼容旧版本，如果 .initialized 存在但 .role 不存在
-            echo -e "${YELLOW}角色文件丢失，引导重新初始化。${NC}"
-            sudo rm -f "$INITIALIZED_FILE"
-            run_initialization
+            rm -f "$INITIALIZED_FILE"
+            run_initialization || exit 1
         fi
-        check_and_download_scripts
+        check_and_download_scripts || exit 1
     fi
 
-    # 如果初始化流程被跳过或失败，ROLE 可能为空
-    if [ -z "$ROLE" ]; then
-        # 尝试从文件再次加载角色，以防 'skip' 初始化后直接运行
-        if [ -f "$ROLE_FILE" ]; then
-            ROLE=$(cat "$ROLE_FILE")
-        else
-            echo -e "${RED}未设置角色，无法继续。请重新运行以完成初始化。${NC}"
-            exit 1
-        fi
-    fi
-
-    # 设置别名
-    setup_alias
-
-    # 进入主循环
-    if [ "$ROLE" = "server" ]; then
-        while true; do show_server_menu; handle_server_choice; done
-    else
-        while true; do show_client_menu; handle_client_choice; done
-    fi
+    case "$ROLE" in
+        client)
+            setup_alias
+            while true; do show_client_menu; handle_client_choice; done
+            ;;
+        server)
+            setup_alias
+            while true; do show_server_menu; handle_server_choice; done
+            ;;
+        *) echo -e "${RED}角色无效: $ROLE${NC}" >&2; exit 1 ;;
+    esac
 }
 
-# 执行主函数
 main "$@"
