@@ -45,12 +45,16 @@ acquire_lock() {
         sleep 1
 done
     printf '%s\n' "$$" > "$LOCK_DIR/pid"
-    trap 'rm -rf "$LOCK_DIR"' EXIT INT TERM
+    # 这里必须接管 EXIT 清理：后设置的 EXIT trap 会覆盖前面的 `trap cleanup EXIT`，
+    # 否则 TMP_FILES 里的临时文件（含配置备份）永远不会被删除。
+    trap 'cleanup; rm -rf "$LOCK_DIR"' EXIT INT TERM
 }
 
-MODE=$(grep -oP '(?<=^MODE=).*' "$MODE_FILE" 2>/dev/null || true)
+# busybox grep 不支持 -oP（PCRE），OpenWrt 默认就是 busybox，用 sed 解析 MODE。
+MODE=$(sed -n 's/^MODE=//p' "$MODE_FILE" 2>/dev/null | head -n1)
 TMP_FILES=()
-cleanup() { local file; for file in "${TMP_FILES[@]}"; do rm -f "$file" 2>/dev/null || true; done; }
+# 使用 ${arr[@]+...} 兜底，避免老 bash 在 set -u 下对空数组报 unbound variable。
+cleanup() { local file; for file in ${TMP_FILES[@]+"${TMP_FILES[@]}"}; do rm -f "$file" 2>/dev/null || true; done; }
 trap cleanup EXIT
 
 while true; do
@@ -103,7 +107,7 @@ while true; do
     [ -s "$tmp_config" ] || { echo -e "${RED}下载的配置为空。${NC}" >&2; exit 1; }
     sing-box check -c "$tmp_config" || { echo -e "${RED}配置文件验证失败，未修改现有配置。${NC}" >&2; exit 1; }
 
-    if [ -f "$CONFIG_FILE" ]; then install -o root -g root -m 0644 "$CONFIG_FILE" "$backup_config"; config_existed=1; fi
+    if [ -f "$CONFIG_FILE" ]; then install -o root -g root -m 0600 "$CONFIG_FILE" "$backup_config"; config_existed=1; fi
     chown root:root "$tmp_manual" "$tmp_config"
     chmod 0600 "$tmp_manual"; chmod 0644 "$tmp_config"
 

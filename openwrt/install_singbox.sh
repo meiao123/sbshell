@@ -3,6 +3,9 @@ set -eu
 command -v opkg >/dev/null 2>&1 || { echo '仅支持 OpenWrt。' >&2; exit 1; }
 opkg update
 opkg install kmod-nft-tproxy sing-box
+# TUN 模式需要 /dev/net/tun（OpenWrt 上通常由 kmod-tun 提供）。部分目标把 tun 编进内核、
+# 没有该包，因此这里尽力而为，失败不阻断安装。
+opkg install kmod-tun >/dev/null 2>&1 || true
 command -v sing-box >/dev/null 2>&1 || { echo 'sing-box 安装失败。' >&2; exit 1; }
 [ ! -f /etc/sing-box/config.json ] || sing-box check -c /etc/sing-box/config.json
 

@@ -8,7 +8,8 @@ CONFIG_FILE=/etc/sing-box/config.json
 MODE_FILE=/etc/sing-box/mode.conf
 LOCK_FILE=/run/lock/sbshell-config.lock
 TMP_FILES=()
-cleanup() { local file; for file in "${TMP_FILES[@]}"; do rm -f "$file" 2>/dev/null || true; done; }
+# 使用 ${arr[@]+...} 兜底，避免老 bash 在 set -u 下对空数组报 unbound variable。
+cleanup() { local file; for file in ${TMP_FILES[@]+"${TMP_FILES[@]}"}; do rm -f "$file" 2>/dev/null || true; done; }
 trap cleanup EXIT
 
 [ "$(id -u)" -eq 0 ] || exec sudo bash "$0" "$@"
@@ -61,7 +62,7 @@ while true; do
     curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 60 "$FULL_URL" -o "$tmp_config" || { echo -e "${RED}配置下载失败。${NC}" >&2; exit 1; }
     [ -s "$tmp_config" ] || { echo -e "${RED}下载的配置为空。${NC}" >&2; exit 1; }
     sing-box check -c "$tmp_config" || { echo -e "${RED}配置验证失败。${NC}" >&2; exit 1; }
-    if [ -f "$CONFIG_FILE" ]; then install -o root -g root -m 0644 "$CONFIG_FILE" "$backup_config"; config_existed=1; fi
+    if [ -f "$CONFIG_FILE" ]; then install -o root -g root -m 0600 "$CONFIG_FILE" "$backup_config"; config_existed=1; fi
     chown root:root "$tmp_manual" "$tmp_config"; chmod 0600 "$tmp_manual"; chmod 0644 "$tmp_config"
     mv -f "$tmp_manual" "$MANUAL_FILE"
     if ! mv -f "$tmp_config" "$CONFIG_FILE"; then

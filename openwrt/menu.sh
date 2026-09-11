@@ -66,7 +66,18 @@ update_scripts() {
     return "$rc"
 }
 run() { bash "$SCRIPT_DIR/$1"; }
-initialize() { update_scripts || { echo -e "${RED}脚本更新失败，现有安装保持不变。${NC}" >&2; return 1; }; run check_environment.sh; run install_singbox.sh; run switch_mode.sh; run manual_input.sh; run start_singbox.sh; touch "$INITIALIZED_FILE"; chmod 0644 "$INITIALIZED_FILE"; }
+# 注意：本函数被 `initialize || exit 1` 调用时，bash 会在整个函数体内关闭 errexit，
+# 因此每一步都必须显式判断失败，否则安装/切模式/下配置/启动失败都会被吞掉，
+# 而 .initialized 仍会被写入，用户得到一个“看似初始化成功”的空壳环境。
+initialize() {
+    update_scripts || { echo -e "${RED}脚本更新失败，现有安装保持不变。${NC}" >&2; return 1; }
+    run check_environment.sh || return 1
+    run install_singbox.sh || return 1
+    run switch_mode.sh || return 1
+    run manual_input.sh || return 1
+    run start_singbox.sh || return 1
+    touch "$INITIALIZED_FILE" && chmod 0644 "$INITIALIZED_FILE"
+}
 if [ ! -f "$INITIALIZED_FILE" ]; then echo -e "${CYAN}回车进入初始化，输入 skip 跳过：${NC}"; read -r choice; if [[ "$choice" =~ ^[Ss]kip$ ]]; then update_scripts || exit 1; else initialize || exit 1; fi; else [ -f "$SCRIPT_DIR/menu.sh" ] || update_scripts || exit 1; fi
 while true; do
     echo -e "${CYAN}=========== Sbshell OpenWrt 管理菜单 ===========${NC}"
