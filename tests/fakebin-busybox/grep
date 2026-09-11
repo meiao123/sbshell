@@ -1,0 +1,18 @@
+#!/bin/bash
+# busybox grep 模拟：不支持 -P/--perl-regexp（OpenWrt 默认 grep 就是 busybox）。
+# 用来在容器里真实复现“grep -oP 在 OpenWrt 上失败”的行为。
+for arg in "$@"; do
+    case "$arg" in
+        -P|--perl-regexp|-oP|-Po|-eP)
+            echo "grep: unrecognized option: P" >&2
+            exit 2
+            ;;
+        -*P*)
+            case "$arg" in
+                --*) ;;
+                *) echo "grep: unrecognized option: P" >&2; exit 2 ;;
+            esac
+            ;;
+    esac
+done
+exec /usr/bin/grep "$@"

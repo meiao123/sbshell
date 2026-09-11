@@ -1,0 +1,6 @@
+#!/bin/bash
+# logread stub：只支持 -f 的“静默流”，避免测试挂住。
+case "${1:-}" in
+    -f) sleep 0.1 ;;
+esac
+exit 0

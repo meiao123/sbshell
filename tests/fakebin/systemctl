@@ -1,0 +1,52 @@
+#!/bin/bash
+# systemctl stub：只跟踪 sing-box 的 active 状态，其余动作记录到日志。
+S=${SBSHELL_STUB_STATE:-/tmp/sbshell-stub-state}
+mkdir -p "$S" 2>/dev/null || true
+log() { printf '%s\n' "$*" >> "$S/systemctl.log" 2>/dev/null || true; }
+ACTIVE="$S/singbox_active"
+log "systemctl $*"
+
+action="${1:-}"; shift || true
+unit=''
+for a in "$@"; do
+    case "$a" in -*) ;; *) unit="$a"; break ;; esac
+done
+
+case "$action" in
+    is-active)
+        if [ "$unit" = "sing-box" ]; then
+            [ -f "$ACTIVE" ] && { echo active; exit 0; }
+            echo inactive; exit 3
+        fi
+        echo inactive; exit 3
+        ;;
+    restart|start)
+        if [ "$unit" = "sing-box" ]; then
+            if [ "${SBSHELL_SINGBOX_FAIL:-0}" = 1 ]; then
+                rm -f "$ACTIVE"
+                echo "Job for sing-box.service failed." >&2
+                exit 1
+            fi
+            # 与真实 systemd 一致：没有可用配置时服务起不来
+            if [ -s /etc/sing-box/config.json ]; then
+                touch "$ACTIVE"
+                exit 0
+            fi
+            rm -f "$ACTIVE"
+            echo "sing-box.service: Failed to load configuration" >&2
+            exit 1
+        fi
+        exit 0
+        ;;
+    stop)
+        [ "$unit" = "sing-box" ] && rm -f "$ACTIVE"
+        exit 0
+        ;;
+    list-unit-files)
+        [ -n "$unit" ] && echo "$unit enabled" && exit 0
+        exit 0
+        ;;
+    *)
+        exit 0
+        ;;
+esac

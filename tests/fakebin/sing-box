@@ -1,0 +1,42 @@
+#!/bin/bash
+# sing-box stub：check 用 jq 校验 JSON，generate 产出可预测的随机值。
+S=${SBSHELL_STUB_STATE:-/tmp/sbshell-stub-state}
+mkdir -p "$S" 2>/dev/null || true
+log() { printf '%s\n' "$*" >> "$S/singbox.log" 2>/dev/null || true; }
+log "sing-box $*"
+
+case "${1:-}" in
+    check)
+        shift
+        file=''
+        while [ $# -gt 0 ]; do case "$1" in -c) file="${2:-}"; shift 2 ;; *) shift ;; esac; done
+        [ -n "$file" ] || { echo "sing-box: missing config" >&2; exit 1; }
+        if [ "${SBSHELL_SINGBOX_CHECK_FAIL:-0}" = 1 ]; then echo "FATAL invalid config" >&2; exit 1; fi
+        jq empty "$file" >/dev/null 2>&1 || { echo "FATAL decode config: invalid JSON" >&2; exit 1; }
+        exit 0
+        ;;
+    generate)
+        case "${2:-}" in
+            uuid) echo "11111111-2222-3333-4444-555555555555"; exit 0 ;;
+            reality-keypair)
+                printf 'PrivateKey: %s\nPublicKey: %s\n' \
+                    "$(head -c 32 /dev/urandom | base64 | tr -d '\n=')" \
+                    "$(head -c 32 /dev/urandom | base64 | tr -d '\n=')"
+                exit 0
+                ;;
+            rand)
+                case "${3:-}" in
+                    --hex) head -c "${4:-8}" /dev/urandom | od -An -v -tx1 | tr -d ' \n'; echo ;;
+                    *) head -c "${4:-16}" /dev/urandom | base64 | tr -d '\n'; echo ;;
+                esac
+                exit 0
+                ;;
+        esac
+        exit 0
+        ;;
+    version)
+        echo "sing-box version 1.12.0"
+        exit 0
+        ;;
+esac
+exit 0

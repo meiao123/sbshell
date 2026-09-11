@@ -1,0 +1,10 @@
+#!/bin/bash
+# pidof stub：以 $SBSHELL_STUB_STATE/singbox_active 作为“进程存在”的标志。
+S=${SBSHELL_STUB_STATE:-/tmp/sbshell-stub-state}
+case "${1:-}" in
+    sing-box)
+        if [ -f "$S/singbox_active" ]; then echo 4242; exit 0; fi
+        exit 1
+        ;;
+esac
+exit 1

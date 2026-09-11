@@ -1,0 +1,10 @@
+#!/bin/bash
+# opkg stub：记录调用，默认成功。
+S=${SBSHELL_STUB_STATE:-/tmp/sbshell-stub-state}
+mkdir -p "$S" 2>/dev/null || true
+printf 'opkg %s\n' "$*" >> "$S/opkg.log" 2>/dev/null || true
+if [ -n "${SBSHELL_OPKG_FAIL:-}" ]; then
+    echo "opkg: failed" >&2
+    exit 1
+fi
+exit 0

@@ -1,10 +1,10 @@
-name: Shell static checks
+name: Shell static checks and behavioural tests
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'security-release-*']
   pull_request:
-    branches: [main]
+    branches: [main, 'security-release-*']
 
 permissions:
   contents: read
@@ -13,7 +13,7 @@ jobs:
   syntax:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
       - name: Check Bash syntax
         shell: bash
         run: |
@@ -32,11 +32,30 @@ jobs:
               sh -n "$file"
             fi
           done < <(find . -type f -name '*.sh' -print0)
-      - name: Run ShellCheck
+      - name: Validate JSON templates
+        shell: bash
+        run: |
+          set -euo pipefail
+          for f in config_template/*.json config_template/server/*.json; do
+            echo "jq empty $f"
+            jq empty "$f"
+          done
+      - name: Run ShellCheck (errors, blocking)
         uses: ludeeus/action-shellcheck@2.0.0
         with:
           scandir: .
           severity: error
-      - name: Run security regression checks
+      - name: Run ShellCheck (warnings, non-blocking)
+        uses: ludeeus/action-shellcheck@2.0.0
+        continue-on-error: true
+        with:
+          scandir: .
+          severity: warning
+
+  behavioural:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run containerised behavioural tests
         shell: bash
-        run: bash tests/security_regression.sh
+        run: bash tests/run.sh

@@ -1,0 +1,98 @@
+#!/bin/bash
+# ip stub：route/rule/addr 的可断言状态机实现。
+#   ip_rules 里每行形如 "10010:\tfrom all fwmark 0x1 lookup 100"（与 iproute2 一致，用制表符）
+S=${SBSHELL_STUB_STATE:-/tmp/sbshell-stub-state}
+mkdir -p "$S" 2>/dev/null || true
+RULES="$S/ip_rules"; [ -f "$RULES" ] || : > "$RULES"
+log() { printf '%s\n' "$*" >> "$S/ip.log" 2>/dev/null || true; }
+IFACE=${SBSHELL_TEST_IFACE:-eth0}
+ADDR=${SBSHELL_TEST_ADDR:-192.0.2.10/24}
+GW=${SBSHELL_TEST_GW:-192.0.2.1}
+
+args=()
+for a in "$@"; do
+    case "$a" in
+        -4|-6|-family) continue ;;
+        *) args+=("$a") ;;
+    esac
+done
+set -- "${args[@]+"${args[@]}"}"
+
+sub="${1:-} ${2:-}"
+case "$sub" in
+    "route show")
+        if [ "${3:-}" = "default" ]; then
+            echo "default via $GW dev $IFACE proto static"
+            exit 0
+        fi
+        if [ "${3:-}" = "table" ]; then
+            cat "$S/ip_routes_${4:-}" 2>/dev/null
+            exit 0
+        fi
+        echo "default via $GW dev $IFACE proto static"
+        exit 0
+        ;;
+    "route add"|"route del")
+        tbl=''; ifc=''
+        shift 2
+        while [ $# -gt 0 ]; do
+            case "$1" in
+                table) tbl="${2:-}"; shift 2 ;;
+                dev) ifc="${2:-}"; shift 2 ;;
+                *) shift ;;
+            esac
+        done
+        [ -n "$tbl" ] || tbl=main
+        pf="$S/ip_routes_$tbl"
+        line="local default dev $ifc table $tbl"
+        if [ "$sub" = "route add" ]; then
+            : > "$pf"
+            printf '%s\n' "$line" >> "$pf"
+            log "route add $line"
+        else
+            grep -vxF "$line" "$pf" > "$pf.tmp" 2>/dev/null || : > "$pf.tmp"
+            mv "$pf.tmp" "$pf"
+            log "route del $line"
+        fi
+        exit 0
+        ;;
+    "rule show")
+        cat "$RULES"
+        exit 0
+        ;;
+    "rule add")
+        pref=10010; mark=''; tbl=''
+        shift 2
+        while [ $# -gt 0 ]; do
+            case "$1" in
+                pref) pref="${2:-}"; shift 2 ;;
+                fwmark) mark="${2:-}"; shift 2 ;;
+                lookup|table) tbl="${2:-}"; shift 2 ;;
+                *) shift ;;
+            esac
+        done
+        printf '%s:\tfrom all fwmark 0x%s lookup %s\n' "$pref" "$mark" "$tbl" >> "$RULES"
+        log "rule add pref=$pref mark=$mark table=$tbl"
+        exit 0
+        ;;
+    "rule del")
+        pref=''
+        shift 2
+        while [ $# -gt 0 ]; do
+            case "$1" in
+                pref) pref="${2:-}"; shift 2 ;;
+                *) shift ;;
+            esac
+        done
+        grep -v "^${pref}:" "$RULES" > "$RULES.tmp" 2>/dev/null || : > "$RULES.tmp"
+        mv "$RULES.tmp" "$RULES"
+        log "rule del pref=$pref"
+        exit 0
+        ;;
+    "addr show")
+        echo "2: $IFACE    inet $ADDR scope global $IFACE"
+        echo "       valid_lft forever preferred_lft forever"
+        exit 0
+        ;;
+esac
+exit 0

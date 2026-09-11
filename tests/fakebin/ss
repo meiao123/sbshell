@@ -1,0 +1,7 @@
+#!/bin/bash
+# ss stub：默认不报告 sshd 监听（让 ufw.sh 走 sshd_config/SSH_CONNECTION 分支）；
+# 设置 SBSHELL_SS_SSHD_PORT 可模拟 ss 直接看到 sshd。
+if [ -n "${SBSHELL_SS_SSHD_PORT:-}" ] && [ "${1:-}" != "-h" ]; then
+    printf 'LISTEN 0 128 0.0.0.0:%s 0.0.0.0:* users:(("sshd",pid=1,fd=3))\n' "$SBSHELL_SS_SSHD_PORT"
+fi
+exit 0

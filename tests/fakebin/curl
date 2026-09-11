@@ -1,0 +1,39 @@
+#!/bin/bash
+# curl stub：按 URL 的 basename 从 $SBSHELL_FIXTURES 取本地 fixture，
+# 并记录所有请求过的 URL 以便断言订阅 URL 的组装是否正确。
+S=${SBSHELL_STUB_STATE:-/tmp/sbshell-stub-state}
+FIX=${SBSHELL_FIXTURES:-/tmp/sbshell-fixtures}
+mkdir -p "$S" 2>/dev/null || true
+
+out=''; url=''; wfmt=''
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -o) out="${2:-}"; shift 2 ;;
+        -w) wfmt="${2:-}"; shift 2 ;;
+        -H|--connect-timeout|--max-time|--max-filesize|--proto) shift 2 ;;
+        http://*|https://*) url="$1"; shift ;;
+        *) shift ;;
+    esac
+done
+
+printf '%s\n' "$url" >> "$S/curl.log"
+
+name="${url%%\?*}"
+name="${name##*/}"
+[ -n "$name" ] || name=index
+
+src=''
+for candidate in "$FIX/$name" "$FIX/${url//\//_}" "$FIX/default"; do
+    if [ -f "$candidate" ]; then src="$candidate"; break; fi
+done
+if [ -z "$src" ]; then
+    echo "curl: (22) The requested URL returned error: 404 ($url)" >&2
+    exit 22
+fi
+if [ -n "$out" ]; then
+    cp "$src" "$out" || exit 23
+else
+    cat "$src"
+fi
+[ -n "$wfmt" ] && printf '0.010000,0.020000,0.030000\n'
+exit 0

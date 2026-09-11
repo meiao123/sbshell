@@ -1,0 +1,49 @@
+#!/bin/bash
+# nft stub：把表状态保存在 $SBSHELL_STUB_STATE/nft/<family>__<table>，
+# 支持脚本用到的 -c/-f/list/delete 子集。
+S=${SBSHELL_STUB_STATE:-/tmp/sbshell-stub-state}
+mkdir -p "$S/nft" 2>/dev/null || true
+table_path() { printf '%s/nft/%s__%s' "$S" "$1" "$2"; }
+log() { printf '%s\n' "$*" >> "$S/nft.log" 2>/dev/null || true; }
+
+case "${1:-}" in
+    -c)
+        # nft -c -f FILE -> 语法检查
+        shift
+        while [ $# -gt 0 ]; do case "$1" in -f) shift;; *) shift;; esac; done
+        log "check"
+        exit 0
+        ;;
+    -f)
+        f="${2:-}"
+        [ -f "$f" ] || { echo "nft: cannot open $f" >&2; exit 1; }
+        fam=$(awk '/^[[:space:]]*table[[:space:]]/ {print $2; exit}' "$f")
+        name=$(awk '/^[[:space:]]*table[[:space:]]/ {print $3; exit}' "$f")
+        [ -n "$fam" ] && [ -n "$name" ] || { log "apply noop"; exit 0; }
+        if [ -n "${SBSHELL_NFT_FAIL:-}" ] && [ "${SBSHELL_NFT_FAIL}" = "$name" ]; then
+            log "apply FAIL $fam/$name"
+            echo "nft: apply failed for $name" >&2
+            exit 1
+        fi
+        cp "$f" "$(table_path "$fam" "$name")" || exit 1
+        log "apply $fam/$name"
+        exit 0
+        ;;
+    list)
+        if [ "${2:-}" = "ruleset" ]; then
+            cat "$S"/nft/* 2>/dev/null
+            exit 0
+        fi
+        fam="${3:-}"; name="${4:-}"
+        p=$(table_path "$fam" "$name")
+        if [ -f "$p" ]; then cat "$p"; exit 0; fi
+        exit 1
+        ;;
+    delete)
+        fam="${3:-}"; name="${4:-}"
+        p=$(table_path "$fam" "$name")
+        if [ -f "$p" ]; then rm -f "$p"; log "delete $fam/$name"; exit 0; fi
+        exit 1
+        ;;
+esac
+exit 0

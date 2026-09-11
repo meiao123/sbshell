@@ -1,0 +1,12 @@
+# 保证脚本在任何平台检出时都是 LF：CRLF 会破坏 shebang 和续行符。
+* text=auto
+*.sh text eol=lf
+*.service text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.md text eol=lf
+Dockerfile text eol=lf
+tests/fakebin/* text eol=lf
+tests/fakebin-busybox/* text eol=lf
+tests/rc.common text eol=lf
+tests/initd/* text eol=lf

@@ -1,0 +1,10 @@
+#!/bin/bash
+# ufw stub：记录所有调用，`status` 报告 inactive。
+S=${SBSHELL_STUB_STATE:-/tmp/sbshell-stub-state}
+mkdir -p "$S" 2>/dev/null || true
+printf 'ufw %s\n' "$*" >> "$S/ufw.log" 2>/dev/null || true
+case "${1:-}" in
+    status) echo "Status: inactive" ;;
+    --force) exit 0 ;;
+esac
+exit 0

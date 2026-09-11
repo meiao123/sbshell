@@ -1,0 +1,30 @@
+#!/bin/bash
+# sysctl stub：可控的转发开关读取，用于验证 check_environment 对缺失 sysctl 键的容错。
+S=${SBSHELL_STUB_STATE:-/tmp/sbshell-stub-state}
+mkdir -p "$S" 2>/dev/null || true
+case "${1:-}" in
+    -n)
+        key="${2:-}"
+        case "$key" in
+            net.ipv4.ip_forward)
+                echo "${SBSHELL_IPV4_FORWARD:-1}"
+                exit 0
+                ;;
+            net.ipv6.conf.all.forwarding)
+                if [ "${SBSHELL_NO_IPV6:-0}" = 1 ]; then
+                    echo "sysctl: cannot stat /proc/sys/$key: No such file or directory" >&2
+                    exit 1
+                fi
+                echo "${SBSHELL_IPV6_FORWARD:-1}"
+                exit 0
+                ;;
+            *)
+                echo 0
+                exit 0
+                ;;
+        esac
+        ;;
+    *)
+        exit 0
+        ;;
+esac

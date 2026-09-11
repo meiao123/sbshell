@@ -1,0 +1,28 @@
+#!/bin/sh /etc/rc.common
+# 测试用 sing-box 服务脚本（模拟 OpenWrt 由包管理器提供的 procd 服务）。
+START=99
+S=${SBSHELL_STUB_STATE:-/tmp/sbshell-stub-state}
+
+start() {
+    mkdir -p "$S" 2>/dev/null || true
+    if [ ! -s /etc/sing-box/config.json ]; then
+        echo "sing-box: no config" >&2
+        return 1
+    fi
+    touch "$S/singbox_active"
+    return 0
+}
+
+stop() {
+    rm -f "$S/singbox_active" 2>/dev/null || true
+    return 0
+}
+
+restart() {
+    stop
+    start
+}
+
+boot() {
+    start
+}
