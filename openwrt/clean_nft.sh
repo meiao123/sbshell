@@ -21,13 +21,18 @@ clean_owned_table() {
 
 clean_tproxy_routes() {
     if [ -f "$TPROXY_STATE_FILE" ] && grep -q '^OWNER=sbshell$' "$TPROXY_STATE_FILE"; then
-        local pref interface
+        local pref interface rule_owned route_owned
         pref=$(sed -n 's/^RULE_PREF=//p' "$TPROXY_STATE_FILE" | head -n1)
         interface=$(sed -n 's/^INTERFACE=//p' "$TPROXY_STATE_FILE" | head -n1)
-        if grep -q '^RULE_CREATED=1$' "$TPROXY_STATE_FILE" && [ -n "$pref" ]; then
+        rule_owned=0; route_owned=0
+        grep -q '^RULE_OWNED=1$' "$TPROXY_STATE_FILE" && rule_owned=1
+        grep -q '^ROUTE_OWNED=1$' "$TPROXY_STATE_FILE" && route_owned=1
+        [ "$rule_owned" -eq 1 ] || { grep -q '^RULE_CREATED=1$' "$TPROXY_STATE_FILE" && rule_owned=1; }
+        [ "$route_owned" -eq 1 ] || { grep -q '^ROUTE_CREATED=1$' "$TPROXY_STATE_FILE" && route_owned=1; }
+        if [ "$rule_owned" -eq 1 ] && [ -n "$pref" ]; then
             ip -4 rule del pref "$pref" fwmark 1 lookup 100 2>/dev/null || true
         fi
-        if grep -q '^ROUTE_CREATED=1$' "$TPROXY_STATE_FILE" && [ -n "$interface" ]; then
+        if [ "$route_owned" -eq 1 ] && [ -n "$interface" ]; then
             ip -4 route del local default dev "$interface" table 100 2>/dev/null || true
         fi
     fi
