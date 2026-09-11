@@ -12,8 +12,8 @@ run_opkg() {
         rc=$?
     fi
     sed \
-        '/^Collected errors:$/d' \
-        "/^ \\* opkg_conf_deinit: Couldn't unlink \/var\/lock\/opkg.lock: No such file or directory$/d" \
+        -e '/^Collected errors:$/d' \
+        -e "/^ \\* opkg_conf_deinit: Couldn't unlink \/var\/lock\/opkg.lock: No such file or directory$/d" \
         "$log"
     rm -f "$log"
     return "$rc"
