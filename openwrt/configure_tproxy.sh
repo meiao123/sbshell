@@ -43,11 +43,13 @@ EOF
 nft -c -f "$TMP"
 nft list table inet sing-box > "$OLD" 2>/dev/null || true
 
-OLD_RULE=$(ip -4 rule show | awk -v mark="$PROXY_FWMARK" -v table="$PROXY_ROUTE_TABLE" '$0 ~ ("fwmark 0x" mark) && $0 ~ ("lookup " table) {sub(/^[^:]*:[[:space:]]*/, ""); print; exit}')
+OLD_RULE_LINE=$(ip -4 rule show | awk -v mark="$PROXY_FWMARK" -v table="$PROXY_ROUTE_TABLE" '$0 ~ ("fwmark 0x" mark) && $0 ~ ("lookup " table) {print; exit}')
+OLD_RULE_PREF=${OLD_RULE_LINE%%:*}
+OLD_RULE_SPEC=${OLD_RULE_LINE#*: }
 OLD_ROUTE=$(ip -4 route show table "$PROXY_ROUTE_TABLE" | awk -v ifc="$INTERFACE" '$0 == "local default dev " ifc || index($0, "local default dev " ifc " ") == 1 {print; exit}')
 RULE_WAS_PRESENT=0
 ROUTE_WAS_PRESENT=0
-[ -n "$OLD_RULE" ] && RULE_WAS_PRESENT=1
+[ -n "$OLD_RULE_LINE" ] && RULE_WAS_PRESENT=1
 [ -n "$OLD_ROUTE" ] && ROUTE_WAS_PRESENT=1
 CREATED_RULE=0
 CREATED_ROUTE=0
@@ -55,22 +57,25 @@ CREATED_ROUTE=0
 rollback() {
     nft list table inet sing-box >/dev/null 2>&1 && nft delete table inet sing-box || true
     [ ! -s "$OLD" ] || nft -f "$OLD" 2>/dev/null || true
-    if [ "$CREATED_RULE" -eq 1 ]; then ip rule del fwmark "$PROXY_FWMARK" table "$PROXY_ROUTE_TABLE" 2>/dev/null || true; fi
-    if [ "$CREATED_ROUTE" -eq 1 ]; then ip route del local default dev "$INTERFACE" table "$PROXY_ROUTE_TABLE" 2>/dev/null || true; fi
-    if [ "$RULE_WAS_PRESENT" -eq 1 ]; then ip rule show | grep -Fq "$OLD_RULE" || ip rule add pref "$(printf '%s\n' "$OLD_RULE" | awk '{print $1}')" 2>/dev/null || true; fi
-    if [ "$ROUTE_WAS_PRESENT" -eq 1 ]; then ip route show table "$PROXY_ROUTE_TABLE" | grep -Fqx "$OLD_ROUTE" || ip route add table "$PROXY_ROUTE_TABLE" $OLD_ROUTE 2>/dev/null || true; fi
+    if [ "$CREATED_RULE" -eq 1 ]; then ip -4 rule del fwmark "$PROXY_FWMARK" table "$PROXY_ROUTE_TABLE" 2>/dev/null || true; fi
+    if [ "$CREATED_ROUTE" -eq 1 ]; then ip -4 route del local default dev "$INTERFACE" table "$PROXY_ROUTE_TABLE" 2>/dev/null || true; fi
+    if [ "$RULE_WAS_PRESENT" -eq 1 ]; then
+        ip -4 rule show | grep -Fq "$OLD_RULE_SPEC" || ip -4 rule add pref "$OLD_RULE_PREF" $OLD_RULE_SPEC 2>/dev/null || true
+    fi
+    if [ "$ROUTE_WAS_PRESENT" -eq 1 ]; then
+        ip -4 route show table "$PROXY_ROUTE_TABLE" | grep -Fqx "$OLD_ROUTE" || ip -4 route add table "$PROXY_ROUTE_TABLE" $OLD_ROUTE 2>/dev/null || true
+    fi
 }
 
 if [ "$ROUTE_WAS_PRESENT" -eq 0 ]; then
-    if ! ip route add local default dev "$INTERFACE" table "$PROXY_ROUTE_TABLE"; then rollback; exit 1; fi
+    if ! ip -4 route add local default dev "$INTERFACE" table "$PROXY_ROUTE_TABLE"; then rollback; exit 1; fi
     CREATED_ROUTE=1
 fi
 if [ "$RULE_WAS_PRESENT" -eq 0 ]; then
-    if ! ip -f inet rule add fwmark "$PROXY_FWMARK" lookup "$PROXY_ROUTE_TABLE"; then rollback; exit 1; fi
+    if ! ip -4 rule add fwmark "$PROXY_FWMARK" lookup "$PROXY_ROUTE_TABLE"; then rollback; exit 1; fi
     CREATED_RULE=1
 fi
-if ! nft list table inet sing-box >/dev/null 2>&1 || ! nft -f "$TMP"; then rollback; exit 1; fi
+if ! nft -f "$TMP"; then rollback; exit 1; fi
 
 sysctl -w net.ipv4.ip_forward=1 >/dev/null
-nft list ruleset > /etc/nftables.conf
 echo 'TProxy 模式防火墙规则已安全应用。'
