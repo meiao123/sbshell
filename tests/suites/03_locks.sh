@@ -24,7 +24,7 @@ assert_rc "$rc" 0 "设置自动更新成功"
 assert_file /etc/sing-box/update-singbox.sh "生成 update-singbox.sh"
 assert_file /etc/crontabs/root "写入 /etc/crontabs/root"
 assert_grep '\*/12 \* \* \*' /etc/crontabs/root "cron 表达式使用 */12"
-assert_grep 'owner.*=.*\$\$.*rm -rf.*LOCK_DIR|\[.*owner.*=.*\$\$.*\].*rm -rf.*LOCK_DIR' /etc/sing-box/update-singbox.sh "更新脚本只允许 owner 删除配置锁"
+assert_grep '\[ "\$owner" = "\$\$" \] && rm -rf "\$LOCK_DIR"' /etc/sing-box/update-singbox.sh "更新脚本只允许 owner 删除配置锁"
 
 run_with_timeout /etc/sing-box/update-singbox.sh >/tmp/auto2.out 2>&1
 rc=$?
