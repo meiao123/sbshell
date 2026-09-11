@@ -1,92 +1,52 @@
 #!/bin/bash
+set -Eeuo pipefail
+CYAN='\033[0;36m'; RED='\033[0;31m'; NC='\033[0m'
+[ "$(id -u)" -eq 0 ] || { echo '请以 root 运行。' >&2; exit 1; }
 
-# 定义颜色
-CYAN='\033[0;36m'
-RED='\033[0;31m'
-NC='\033[0m' # 无颜色
-
-# 手动输入的配置文件
-MANUAL_FILE="/etc/sing-box/manual.conf"
-DEFAULTS_FILE="/etc/sing-box/defaults.conf"
-
-# 获取当前模式
-MODE=$(grep -E '^MODE=' /etc/sing-box/mode.conf | sed 's/^MODE=//')
-
-prompt_user_input() {
-    read -rp "请输入后端地址(回车使用默认值可留空): " BACKEND_URL
-    if [ -z "$BACKEND_URL" ]; then
-        BACKEND_URL=$(grep BACKEND_URL "$DEFAULTS_FILE" 2>/dev/null | cut -d'=' -f2-)
-        echo -e "${CYAN}使用默认后端地址: $BACKEND_URL${NC}"
-    fi
-
-    read -rp "请输入订阅地址(回车使用默认值可留空): " SUBSCRIPTION_URL
-    if [ -z "$SUBSCRIPTION_URL" ]; then
-        SUBSCRIPTION_URL=$(grep SUBSCRIPTION_URL "$DEFAULTS_FILE" 2>/dev/null | cut -d'=' -f2-)
-        echo -e "${CYAN}使用默认订阅地址: $SUBSCRIPTION_URL${NC}"
-    fi
-
-    read -rp "请输入配置文件地址(回车使用默认值可留空): " TEMPLATE_URL
-    if [ -z "$TEMPLATE_URL" ]; then
-        if [ "$MODE" = "TProxy" ]; then
-            TEMPLATE_URL=$(grep TPROXY_TEMPLATE_URL "$DEFAULTS_FILE" 2>/dev/null | cut -d'=' -f2-)
-            echo -e "${CYAN}使用默认 TProxy 配置文件地址: $TEMPLATE_URL${NC}"
-        elif [ "$MODE" = "TUN" ]; then
-            TEMPLATE_URL=$(grep TUN_TEMPLATE_URL "$DEFAULTS_FILE" 2>/dev/null | cut -d'=' -f2-)
-            echo -e "${CYAN}使用默认 TUN 配置文件地址: $TEMPLATE_URL${NC}"
-        else
-            echo -e "${RED}未知的模式: $MODE${NC}"
-            exit 1
-        fi
-    fi
-}
+MANUAL_FILE=/etc/sing-box/manual.conf
+DEFAULTS_FILE=/etc/sing-box/defaults.conf
+CONFIG_FILE=/etc/sing-box/config.json
+MODE=$(sed -n 's/^MODE=//p' /etc/sing-box/mode.conf 2>/dev/null | head -n1)
+get_default() { awk -F= -v k="$1" '$1 == k {sub(/^[^=]*=/, ""); print; exit}' "$DEFAULTS_FILE" 2>/dev/null || true; }
+valid_url() { [[ "$1" =~ ^https://[^[:space:]]+$ ]]; }
 
 while true; do
-    prompt_user_input
-
-    echo -e "${CYAN}你输入的配置信息如下:${NC}"
-    echo "后端地址: $BACKEND_URL"
-    echo "订阅地址: $SUBSCRIPTION_URL"
-    echo "配置文件地址: $TEMPLATE_URL"
-
-    read -rp "确认输入的配置信息？(y/n): " confirm_choice
-    if [[ "$confirm_choice" =~ ^[Yy]$ ]]; then
-        # 更新手动输入的配置文件
-        cat > "$MANUAL_FILE" <<EOF
-BACKEND_URL=$BACKEND_URL
-SUBSCRIPTION_URL=$SUBSCRIPTION_URL
-TEMPLATE_URL=$TEMPLATE_URL
-EOF
-
-        echo "手动输入的配置已更新"
-
-        # 构建完整的配置文件URL
-        if [ -n "$BACKEND_URL" ] && [ -n "$SUBSCRIPTION_URL" ]; then
-            FULL_URL="${BACKEND_URL}/config/${SUBSCRIPTION_URL}&file=${TEMPLATE_URL}"
-        else
-            FULL_URL="${TEMPLATE_URL}"
-        fi
-        echo "生成完整订阅链接: $FULL_URL"
-
-        while true; do
-            # 下载并验证配置文件
-            if curl -L --connect-timeout 10 --max-time 30 "$FULL_URL" -o /etc/sing-box/config.json; then
-                echo "配置文件下载完成，并验证成功！"
-                if ! sing-box check -c /etc/sing-box/config.json; then
-                    echo "配置文件验证失败"
-                    exit 1
-                fi
-                break
-            else
-                echo "配置文件下载失败"
-                read -rp "下载失败，是否重试？(y/n): " retry_choice
-                if [[ "$retry_choice" =~ ^[Nn]$ ]]; then
-                    exit 1
-                fi
-            fi
-        done
-
-        break
-    else
-        echo -e "${RED}请重新输入配置信息。${NC}"
+    read -rp '请输入后端地址(回车使用默认值可留空): ' BACKEND_URL
+    BACKEND_URL=${BACKEND_URL:-$(get_default BACKEND_URL)}
+    read -rp '请输入订阅地址(回车使用默认值): ' SUBSCRIPTION_URL
+    SUBSCRIPTION_URL=${SUBSCRIPTION_URL:-$(get_default SUBSCRIPTION_URL)}
+    read -rp '请输入配置文件地址(回车使用默认值): ' TEMPLATE_URL
+    if [ -z "$TEMPLATE_URL" ]; then
+        case "$MODE" in
+            TProxy) TEMPLATE_URL=$(get_default TPROXY_TEMPLATE_URL) ;;
+            TUN) TEMPLATE_URL=$(get_default TUN_TEMPLATE_URL) ;;
+            *) echo -e "${RED}未知的模式: $MODE${NC}" >&2; exit 1 ;;
+        esac
     fi
+
+    if [ -n "$BACKEND_URL" ] && ! valid_url "$BACKEND_URL"; then echo -e "${RED}后端地址必须是 HTTPS URL。${NC}"; continue; fi
+    if [ -n "$TEMPLATE_URL" ] && ! valid_url "$TEMPLATE_URL"; then echo -e "${RED}配置地址必须是 HTTPS URL。${NC}"; continue; fi
+    if [ -n "$BACKEND_URL" ] && [ -z "$SUBSCRIPTION_URL" ]; then echo -e "${RED}使用后端时订阅地址不能为空。${NC}"; continue; fi
+
+    echo -e "${CYAN}后端地址: $BACKEND_URL${NC}"
+    echo -e "${CYAN}订阅地址: $SUBSCRIPTION_URL${NC}"
+    echo -e "${CYAN}配置文件地址: $TEMPLATE_URL${NC}"
+    read -rp '确认输入？(y/n): ' confirm_choice
+    [[ "$confirm_choice" =~ ^[Yy]$ ]] || continue
+
+    if [ -n "$BACKEND_URL" ]; then FULL_URL="${BACKEND_URL%/}/config/${SUBSCRIPTION_URL}&file=${TEMPLATE_URL}"; else FULL_URL="$TEMPLATE_URL"; fi
+    valid_url "$FULL_URL" || { echo -e "${RED}生成的订阅 URL 无效。${NC}"; continue; }
+
+    install -d -m 0755 /etc/sing-box
+    tmp_manual=$(mktemp /tmp/sbshell-manual.XXXXXX)
+    tmp_config=$(mktemp /tmp/sbshell-config.XXXXXX)
+    trap 'rm -f "$tmp_manual" "$tmp_config"' EXIT
+    printf 'BACKEND_URL=%s\nSUBSCRIPTION_URL=%s\nTEMPLATE_URL=%s\n' "$BACKEND_URL" "$SUBSCRIPTION_URL" "$TEMPLATE_URL" > "$tmp_manual"
+    curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 60 "$FULL_URL" -o "$tmp_config" || { echo -e "${RED}配置下载失败。${NC}"; continue; }
+    [ -s "$tmp_config" ] || { echo -e "${RED}下载的配置为空。${NC}"; continue; }
+    sing-box check -c "$tmp_config" || { echo -e "${RED}配置验证失败，未覆盖现有配置。${NC}"; continue; }
+    install -o root -g root -m 0600 "$tmp_manual" "$MANUAL_FILE"
+    install -o root -g root -m 0644 "$tmp_config" "$CONFIG_FILE"
+    echo '手动输入的配置已更新。'
+    break
 done
