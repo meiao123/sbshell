@@ -45,7 +45,7 @@ tests/run.sh --local  # Linux 主机以 root 直接运行
 | P2-5 | 模板 `cache_file` 指向 root 属主的 `/etc/sing-box/cache.db`，而服务以 `sing-box` 用户运行；`config_fakeiptun12.json` 甚至写到 `/etc/momo/run/` | 安装脚本预创建 `cache.db` 并 chown 给 `sing-box`；fakeiptun 模板路径修正 | 安装脚本 + 模板 |
 | P2-6 | 服务端默认只放行 22/80/443，而内置配置监听 52021/udp → 该入站被静默挡掉；固定 `ufw allow ssh` 会锁死自定义 SSH 端口的用户 | `ufw.sh` 自动探测 sshd 端口与配置里的 `listen_port` 并放行 | `suites/06` |
 | P2-7 | TUN 模式的 nft 表创建 input/forward/output 三个空 `policy accept` 基链，不做任何过滤，只增加同 hook 上的绕过面 | 收窄为仅 `forward` 链 | `suites/02` |
-| P2-8 | `systemd-analyze verify <drop-in 文件>` 在部分 systemd 版本上直接失败并中止安装 | 改为校验父 unit `sing-box.service`，失败仅告警；CI 的 `actions/checkout` 固定到存在的 v4 | `suites/06` |
+| P2-8 | `systemd-analyze verify <drop-in 文件>` 在部分 systemd 版本上直接失败并中止安装 | 改为校验父 unit `sing-box.service`，失败仅告警；CI 的 `actions/checkout` 固定到存在的 `v5.1.0` | `suites/06` |
 
 ## 发布流程（固定发布提交）
 
@@ -71,3 +71,34 @@ README.md                 模板地址
 
 为什么不用分支名：分支可被移动，任何人拿到写权限（或账号被入侵）都能替换所有脚本内容，
 而脚本只做 `bash -n`；固定 SHA 让内容由哈希确定，配合 HTTPS 即可获得完整性保证。
+
+
+## 第二轮复审（针对 `fdbceb9`）修复清单
+
+第二轮把 42 个上游提交与全部脚本重新过了一遍，并由两个独立评审者分别覆盖
+「六个 nftables 文件」与「菜单/锁/UI/权限/自更新」。已修复：
+
+| 问题 | 位置 | 修复 |
+| --- | --- | --- |
+| 自更新引用指向**已被删除的分支** → 一键安装与更新全部 404 | `sbshall.sh`、两个 `menu.sh`、两个 `update_scripts.sh` | 引用改为存在的**不可变提交 SHA**；CI 增加 `git ls-remote --exit-code` 校验；离线套件要求 40 位 SHA |
+| `configure_tun.sh` 先拆除后校验，早期失败无恢复 | 两平台 `configure_tun.sh` | `nft -c` 提前到所有破坏性操作之前；恢复块抽成 `restore_prev()` + `trap … ERR` |
+| `clean_nft.sh` 吞掉 `nft delete` 失败并删掉 state、谎报已清理 | 两平台 `clean_nft.sh` | 用 `nft list tables` 判定存在性；删除失败/无法判定即中止并保留 state；清理后复核规则与路由 |
+| `INTERFACE=$5` 在 dev-only 默认路由上取到 `link` | 四个 `configure_*.sh` | 按 `dev` 关键字取网卡（PPPoE/WireGuard 机器上 TProxy 从此可用） |
+| TProxy 重放失败时旧策略规则/路由不恢复、state 说谎 | 两平台 `configure_tproxy.sh` | 快照并在 `rollback()` 中恢复旧 rule/route |
+| TUN 侧清理以“表是否存在”为开关 | 两平台 `configure_tun.sh` | 改为以 `tproxy.state` 所有权为准 |
+| `mode.conf` 缺失时 pipefail 让脚本 rc=2 静默中止 | 三个 bash 配置脚本 | 显式吞掉 sed 失败，保持“无 mode.conf 即静默退出 0” |
+| Debian 锁文件位于世界可写的 `/run/lock`（符号链接 + O_TRUNC 可清空任意 root 文件） | Debian 四个脚本（含生成的 cron 版） | 锁移到 `/run/sbshell`（0700）、打开前拒绝符号链接、不再 chmod `/run/lock` |
+| OpenWrt 锁：活 pid 让 900s 过期判断永不可达；信号不退出；rm 失败忙等 | 四个 OpenWrt 脚本（含生成的 cron 版） | 先判过期、pid 需为数字、等待有硬上限、拆开 EXIT 与 INT/TERM（后者 `exit 1`）、rm 失败退避 |
+| cron 自动更新把 `config.json` 降权为 0644 | `debian/auto_update.sh` 生成的 `/etc/sing-box/update-singbox.sh` | 与交互路径一致 0640（组缺失回落 root，仍不可被本地用户读取） |
+| 硬依赖 `sing-box` 组，缺失时客户端完全无法配置 | `manual_input.sh`、`update_config.sh`、`install_singbox.sh`、`commands.sh` | 组缺失时回落 root（保持 0640）并提示；安装时显式 `groupadd` |
+| `zipinfo` 失败时压缩包校验“空转通过”（解压炸弹上限被绕过） | 两平台 `update_ui.sh`（含生成的 cron 版） | 检查工具退出码、要求 `count > 0`、从落盘输出读取大小 |
+| `confirm_yes` 在 EOF 时 100% CPU 死循环 | 两个 `menu.sh` | `read … || return 1` |
+| 备份 `cp -a` 失败与“原本不存在”不可区分 → 回滚删掉健康脚本 | 两个 `menu.sh` | 只回滚确实备份成功的条目；备份失败即中止更新 |
+| 首个 `mktemp` 无保护 → 空变量把脚本写到 `/` | 两个 `menu.sh` | 两个 `mktemp` 都检查返回值 |
+| `exec sudo` 之前创建临时目录会泄漏 | `update_scripts.sh`、`check_update.sh`、`openwrt/manual_update.sh`、`sbshall.sh` | 先提权再建临时文件；`sbshall.sh` 在 exec 前显式清理 |
+| 4 个客户端模板仍走第三方代理 + 可变分支规则集 | `config_template/*.json` | 去掉 `gh-proxy.com`/`ghfast.top` 前缀、面板地址固定 commit、删除未被引用的第三方规则集 |
+| Debian UI 安装缺少 chown 失败回滚（与 OpenWrt 不对称） | `debian/update_ui.sh` | 对齐 OpenWrt：失败时恢复旧备份 |
+
+发布流程补充：`BASE_REF`/`RELEASE_REF` 必须是**确实存在**的不可变提交；
+CI 的 `Verify the pinned release ref exists` 步骤与 `tests/suites/06_misc.sh`
+（`SBSHELL_ONLINE=1` 时）都会验证这一点 —— 2026-09-11 的事故正是引用被删除后无人发现。
