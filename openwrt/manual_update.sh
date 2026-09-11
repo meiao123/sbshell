@@ -17,7 +17,6 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 
 read_value() { awk -F= -v k="$1" '$1 == k {sub(/^[^=]*=/, ""); print; exit}' "$2" 2>/dev/null || true; }
 valid_url() { [[ "$1" =~ ^https://[^[:space:]]+$ ]]; }
-# 订阅地址不是 URL（是后端约定的查询串），但必须排除空白、'#' 以及会覆盖 file 参数的片段。
 valid_subscription() {
     local value="$1"
     [ -z "$value" ] && return 0
@@ -44,6 +43,11 @@ validate_endpoints() {
     valid_url "$FULL_URL" || { echo -e "${RED}生成的订阅 URL 无效。${NC}" >&2; return 1; }
     return 0
 }
+release_lock() {
+    [ -d "$LOCK_DIR" ] || return 0
+    owner=$(cat "$LOCK_DIR/pid" 2>/dev/null || true)
+    [ "$owner" = "$$" ] && rm -rf "$LOCK_DIR"
+}
 acquire_lock() {
     while ! mkdir "$LOCK_DIR" 2>/dev/null; do
         owner=$(cat "$LOCK_DIR/pid" 2>/dev/null || true)
@@ -53,7 +57,7 @@ acquire_lock() {
         sleep 1
     done
     printf '%s\n' "$$" > "$LOCK_DIR/pid"
-    trap 'rm -rf "$LOCK_DIR"; rm -rf "$TMP_DIR"' EXIT INT TERM
+    trap 'release_lock; rm -rf "$TMP_DIR"' EXIT INT TERM
 }
 MODE=$(read_value MODE "$MODE_FILE")
 
@@ -100,11 +104,11 @@ curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connec
 sing-box check -c "$TMP_DIR/config.json" || { echo '配置验证失败。' >&2; exit 1; }
 
 if [ "$PROMPT_FLAG" -eq 1 ]; then install -o root -g root -m 0600 "$TMP_DIR/manual.conf" "$MANUAL_FILE"; fi
-install -o root -g root -m 0644 "$TMP_DIR/config.json" "$CONFIG_FILE"
+install -o root -g root -m 0600 "$TMP_DIR/config.json" "$CONFIG_FILE"
 
 if ! /etc/init.d/sing-box restart || ! sleep 2 || ! pidof sing-box >/dev/null 2>&1; then
     [ ! -f "$TMP_DIR/manual.backup" ] || install -o root -g root -m 0600 "$TMP_DIR/manual.backup" "$MANUAL_FILE"
-    [ ! -f "$TMP_DIR/config.backup" ] || install -o root -g root -m 0644 "$TMP_DIR/config.backup" "$CONFIG_FILE"
+    [ ! -f "$TMP_DIR/config.backup" ] || install -o root -g root -m 0600 "$TMP_DIR/config.backup" "$CONFIG_FILE"
     /etc/init.d/sing-box restart || true
     echo -e "${RED}新配置启动失败，已恢复旧配置。${NC}" >&2
     exit 1
