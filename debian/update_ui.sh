@@ -21,22 +21,35 @@ get_config_url() {
     sed -n 's/.*"external_ui_download_url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' /etc/sing-box/config.json | head -n1
 }
 validate_archive() {
-    local zip="$1" mode size total=0 count=0 entry
+    local zip="$1" mode size total=0 count=0 entry list
+    # 工具失败时不能“空转通过”：旧代码把两个检查接到进程替换上、从不看退出码，
+    # zipinfo 缺失或无法解析时循环读到 0 行直接返回 0，条目数、链接/设备拒绝与
+    # 200 MiB 声明总量上限全部被跳过（解压炸弹可绕过）。
+    list=$(mktemp) || { echo '无法创建临时文件。' >&2; return 1; }
+    if ! unzip -Z1 "$zip" > "$list" 2>/dev/null; then
+        echo 'UI 压缩包无法解析（unzip -Z1 失败）。' >&2; rm -f "$list"; return 1
+    fi
     while IFS= read -r entry; do
         [ -n "$entry" ] || continue
         case "$entry" in
-            /*|../*|*/../*|*\\*) echo 'UI 压缩包包含不安全路径。' >&2; return 1;;
+            /*|../*|*/../*|*\\*) echo 'UI 压缩包包含不安全路径。' >&2; rm -f "$list"; return 1;;
         esac
         count=$((count + 1))
-        [ "$count" -le 10000 ] || { echo 'UI 压缩包条目过多。' >&2; return 1; }
-    done < <(unzip -Z1 "$zip")
+        [ "$count" -le 10000 ] || { echo 'UI 压缩包条目过多。' >&2; rm -f "$list"; return 1; }
+    done < "$list"
+    [ "$count" -gt 0 ] || { echo 'UI 压缩包为空或无法解析。' >&2; rm -f "$list"; return 1; }
+    if ! zipinfo -l "$zip" > "$list" 2>/dev/null; then
+        echo 'UI 压缩包无法解析（zipinfo 失败，请确认已安装 unzip）。' >&2; rm -f "$list"; return 1
+    fi
     while read -r mode size; do
         [ -n "$mode" ] || continue
-        case "$mode" in l*|b*|c*|p*) echo 'UI 压缩包包含不安全的链接或设备条目。' >&2; return 1;; esac
-        case "$size" in ''|*[!0-9]*) echo '无法解析 UI 压缩包展开大小。' >&2; return 1;; esac
+        case "$mode" in l*|b*|c*|p*) echo 'UI 压缩包包含不安全的链接或设备条目。' >&2; rm -f "$list"; return 1;; esac
+        case "$size" in ''|*[!0-9]*) echo '无法解析 UI 压缩包展开大小。' >&2; rm -f "$list"; return 1;; esac
         total=$((total + size))
-        [ "$total" -le 209715200 ] || { echo 'UI 压缩包展开后超过 200 MiB。' >&2; return 1; }
-    done < <(zipinfo -l "$zip" | awk '$1 ~ /^[-dlcbp]/ {print $1, $4}')
+        [ "$total" -le 209715200 ] || { echo 'UI 压缩包展开后超过 200 MiB。' >&2; rm -f "$list"; return 1; }
+    done < <(awk '$1 ~ /^[-dlcbp]/ {print $1, $4}' "$list")
+    rm -f "$list"
+    return 0
 }
 archive_top() {
     local zip="$1" extract="$2" candidate top=''
@@ -61,7 +74,7 @@ prune_backups() {
     for ((i=keep; i<${#backups[@]}; i++)); do rm -rf -- "${backups[i]}"; done
 }
 install_ui() {
-    local url="$1" tmp top backup
+    local url="$1" tmp top backup failed_ui
     [ ! -L "$UI_LOCK" ] || { echo "锁文件是符号链接，拒绝使用: $UI_LOCK" >&2; exit 1; }
     exec 9>"$UI_LOCK"
     flock -x 9
@@ -88,7 +101,15 @@ install_ui() {
         cleanup_ui_tmp
         return 1
     fi
-    chown -R root:root "$UI_DIR"
+    if ! chown -R root:root "$UI_DIR"; then
+        failed_ui="$tmp/failed-ui"
+        mv "$UI_DIR" "$failed_ui" || true
+        if [ -n "$backup" ] && [ -d "$backup" ]; then
+            mv "$backup" "$UI_DIR" || true
+        fi
+        cleanup_ui_tmp
+        return 1
+    fi
     prune_backups
     cleanup_ui_tmp
     echo 'UI 安装完成。'
@@ -115,18 +136,24 @@ TMP=$(mktemp -d /tmp/sbshell-ui-auto.XXXXXX)
 trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$BACKUP_DIR"
 validate_archive() {
-  local zip="$1" entry mode size total=0 count=0
+  local zip="$1" entry mode size total=0 count=0 list
+  # 工具失败/空归档必须拒绝（旧代码从不检查退出码 → 校验被空转跳过）。
+  list=$(mktemp) || exit 1
+  unzip -Z1 "$zip" > "$list" 2>/dev/null || { echo 'UI 压缩包无法解析。' >&2; rm -f "$list"; exit 1; }
   while IFS= read -r entry; do
     [ -n "$entry" ] || continue
-    case "$entry" in /*|../*|*/../*|*\\*) exit 1;; esac
-    count=$((count + 1)); [ "$count" -le 10000 ] || exit 1
-  done < <(unzip -Z1 "$zip")
+    case "$entry" in /*|../*|*/../*|*\\*) rm -f "$list"; exit 1;; esac
+    count=$((count + 1)); [ "$count" -le 10000 ] || { rm -f "$list"; exit 1; }
+  done < "$list"
+  [ "$count" -gt 0 ] || { echo 'UI 压缩包为空或无法解析。' >&2; rm -f "$list"; exit 1; }
+  zipinfo -l "$zip" > "$list" 2>/dev/null || { echo 'UI 压缩包无法解析（zipinfo 失败）。' >&2; rm -f "$list"; exit 1; }
   while read -r mode size; do
     [ -n "$mode" ] || continue
-    case "$mode" in l*|b*|c*|p*) exit 1;; esac
-    case "$size" in ''|*[!0-9]*) exit 1;; esac
-    total=$((total + size)); [ "$total" -le 209715200 ] || exit 1
-  done < <(zipinfo -l "$zip" | awk '$1 ~ /^[-dlcbp]/ {print $1, $4}')
+    case "$mode" in l*|b*|c*|p*) rm -f "$list"; exit 1;; esac
+    case "$size" in ''|*[!0-9]*) rm -f "$list"; exit 1;; esac
+    total=$((total + size)); [ "$total" -le 209715200 ] || { rm -f "$list"; exit 1; }
+  done < <(awk '$1 ~ /^[-dlcbp]/ {print $1, $4}' "$list")
+  rm -f "$list"
 }
 archive_top() {
   local zip="$1" extract="$2" candidate top=''
@@ -152,7 +179,12 @@ top=$(archive_top "$TMP/ui.zip" "$TMP/extract")
 backup=$(mktemp -d "$BACKUP_DIR/.ui-backup.XXXXXX"); rm -rf "$backup"
 [ ! -d "$UI_DIR" ] || mv "$UI_DIR" "$backup"
 if ! mv "$top" "$UI_DIR"; then [ ! -d "$backup" ] || mv "$backup" "$UI_DIR"; exit 1; fi
-chown -R root:root "$UI_DIR"
+if ! chown -R root:root "$UI_DIR"; then
+  failed_ui="$TMP/failed-ui"
+  mv "$UI_DIR" "$failed_ui" || true
+  [ ! -d "$backup" ] || mv "$backup" "$UI_DIR" || true
+  exit 1
+fi
 mapfile -t backups < <(ls -1dt "$BACKUP_DIR"/.ui-backup.* 2>/dev/null || true)
 for ((i=3; i<${#backups[@]}; i++)); do rm -rf -- "${backups[i]}"; done
 EOF
