@@ -1,6 +1,6 @@
 #!/bin/bash
 set -Eeuo pipefail
-CYAN='\033[0;36m'; GREEN='\033[0;32m'; RED='\033[0;31m'; NC='\033[0m'
+GREEN='\033[0;32m'; RED='\033[0;31m'; NC='\033[0m'
 SCRIPT_DIR=/etc/sing-box/scripts
 BASE_REF=11199c6934319dbe42d7c7fb38c6c91ce6f322ec
 BASE_URL="https://raw.githubusercontent.com/meiao123/sbshell/$BASE_REF/debian"
