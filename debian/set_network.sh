@@ -65,7 +65,10 @@ while true; do
     cp -a /etc/resolv.conf "$backup_dir/resolv.conf"
     tmp_interfaces=$(mktemp /etc/network/.interfaces.XXXXXX)
     tmp_resolv=$(mktemp /etc/.resolv.conf.XXXXXX)
-    trap 'rm -f "$tmp_interfaces" "$tmp_resolv"; rm -rf "$backup_dir"' RETURN
+    # 用 EXIT trap 而不是 RETURN trap：RETURN trap 只在函数返回时触发，本脚本是顶层
+    # 脚本，异常退出（或将来某处函数返回）时不会清理；EXIT trap 才是正确语义。
+    cleanup_network_tmp() { rm -f "${tmp_interfaces:-}" "${tmp_resolv:-}"; rm -rf "${backup_dir:-}"; }
+    trap cleanup_network_tmp EXIT
 
     cat /etc/network/interfaces > "$tmp_interfaces"
     cat >> "$tmp_interfaces" <<EOL
@@ -85,8 +88,7 @@ EOL
     if systemctl restart networking; then
         sleep 2
         if ip -4 addr show dev "$INTERFACE" | grep -q "inet $IP_ADDRESS" && ip -4 route show default | grep -q "via $GATEWAY dev $INTERFACE"; then
-            rm -rf "$backup_dir"
-            trap - RETURN
+            rm -rf "$backup_dir"; backup_dir=''
             echo -e "${GREEN}网络配置完成。${NC}"
             break
         fi

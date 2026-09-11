@@ -23,17 +23,47 @@ uninstall_sbshell() {
     exit 0
 }
 update_scripts() {
-    local tmp backup s
-    tmp=$(mktemp -d /tmp/sbshell-openwrt.XXXXXX); backup=$(mktemp -d /tmp/sbshell-openwrt-backup.XXXXXX)
-    trap 'rm -rf "$tmp" "$backup"' RETURN
+    local tmp backup s item rc=0
+    tmp=$(mktemp -d /tmp/sbshell-openwrt.XXXXXX); backup=$(mktemp -d /tmp/sbshell-openwrt-backup.XXXXXX) || return 1
+    # 不要在此处使用 `trap ... RETURN` 清理临时目录：RETURN trap 在本函数返回后仍会对
+    # 同一调用链上每个父函数的返回再次触发，那时 local 变量已被销毁，配合 `set -u`
+    # 会以 "unbound variable" 中止整个脚本。统一使用显式清理 + 单一返回点。
+    restore_scripts() {
+        local item
+        for item in "${SCRIPTS[@]}"; do
+            if [ -f "$backup/$item" ]; then
+                install -o root -g root -m 0755 "$backup/$item" "$SCRIPT_DIR/$item"
+            else
+                rm -f "$SCRIPT_DIR/$item"
+            fi
+        done
+    }
     for s in "${SCRIPTS[@]}"; do
-        curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 60 "$BASE_URL/$s" -o "$tmp/$s" || return 1
-        bash -n "$tmp/$s" || return 1
-        if head -n1 "$tmp/$s" | grep -q '^#!/bin/sh'; then sh -n "$tmp/$s" || return 1; fi
+        if ! curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 60 "$BASE_URL/$s" -o "$tmp/$s" ||
+            [ ! -s "$tmp/$s" ] ||
+            ! bash -n "$tmp/$s"; then
+            rc=1
+            break
+        fi
+        if head -n1 "$tmp/$s" | grep -q '^#!/bin/sh' && ! sh -n "$tmp/$s"; then
+            rc=1
+            break
+        fi
     done
-    for s in "${SCRIPTS[@]}"; do [ -f "$SCRIPT_DIR/$s" ] && cp -a "$SCRIPT_DIR/$s" "$backup/$s"; done
-    restore() { local item; for item in "${SCRIPTS[@]}"; do if [ -f "$backup/$item" ]; then install -o root -g root -m 0755 "$backup/$item" "$SCRIPT_DIR/$item"; else rm -f "$SCRIPT_DIR/$item"; fi; done; }
-    for s in "${SCRIPTS[@]}"; do install -o root -g root -m 0755 "$tmp/$s" "$SCRIPT_DIR/$s" || { restore; return 1; }; done
+    if [ "$rc" -eq 0 ]; then
+        for s in "${SCRIPTS[@]}"; do
+            if [ -f "$SCRIPT_DIR/$s" ]; then cp -a "$SCRIPT_DIR/$s" "$backup/$s"; fi
+        done
+        for s in "${SCRIPTS[@]}"; do
+            if ! install -o root -g root -m 0755 "$tmp/$s" "$SCRIPT_DIR/$s"; then
+                restore_scripts
+                rc=1
+                break
+            fi
+        done
+    fi
+    rm -rf "$tmp" "$backup"
+    return "$rc"
 }
 run() { bash "$SCRIPT_DIR/$1"; }
 initialize() { update_scripts || { echo -e "${RED}脚本更新失败，现有安装保持不变。${NC}" >&2; return 1; }; run check_environment.sh; run install_singbox.sh; run switch_mode.sh; run manual_input.sh; run start_singbox.sh; touch "$INITIALIZED_FILE"; chmod 0644 "$INITIALIZED_FILE"; }

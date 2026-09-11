@@ -59,21 +59,12 @@ uninstall_sbshell() {
     exit 0
 }
 download_all_scripts() {
-    local tmpdir backupdir script
-    tmpdir=$(mktemp -d /tmp/sbshell-download.XXXXXX); backupdir=$(mktemp -d /tmp/sbshell-backup.XXXXXX)
-    trap 'rm -rf "$tmpdir" "$backupdir"' RETURN
-    for script in "${SCRIPTS[@]}"; do
-        curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 60 "$BASE_URL/$script" -o "$tmpdir/$script" || return 1
-        [ -s "$tmpdir/$script" ] || return 1
-        bash -n "$tmpdir/$script" || return 1
-        if head -n1 "$tmpdir/$script" | grep -q '^#!/bin/sh'; then
-            sh -n "$tmpdir/$script" || return 1
-        fi
-    done
-    for script in "${SCRIPTS[@]}"; do
-        [ -f "$SCRIPT_DIR/$script" ] && cp -a "$SCRIPT_DIR/$script" "$backupdir/$script"
-    done
-    restore() {
+    local tmpdir backupdir script item rc=0
+    tmpdir=$(mktemp -d /tmp/sbshell-download.XXXXXX); backupdir=$(mktemp -d /tmp/sbshell-backup.XXXXXX) || return 1
+    # 不要在此处使用 `trap ... RETURN` 清理临时目录：RETURN trap 在本函数返回后仍会对
+    # 同一调用链上每个父函数的返回再次触发，那时这里的 local 变量已被销毁，配合
+    # `set -u` 会以 "unbound variable" 中止整个脚本。统一使用显式清理 + 单一返回点。
+    restore_scripts() {
         local item
         for item in "${SCRIPTS[@]}"; do
             if [ -f "$backupdir/$item" ]; then
@@ -84,8 +75,33 @@ download_all_scripts() {
         done
     }
     for script in "${SCRIPTS[@]}"; do
-        install -o root -g root -m 0755 "$tmpdir/$script" "$SCRIPT_DIR/$script" || { restore; return 1; }
+        if ! curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 60 "$BASE_URL/$script" -o "$tmpdir/$script" ||
+            [ ! -s "$tmpdir/$script" ] ||
+            ! bash -n "$tmpdir/$script"; then
+            rc=1
+            break
+        fi
+        if head -n1 "$tmpdir/$script" | grep -q '^#!/bin/sh' && ! sh -n "$tmpdir/$script"; then
+            rc=1
+            break
+        fi
     done
+    if [ "$rc" -eq 0 ]; then
+        for script in "${SCRIPTS[@]}"; do
+            if [ -f "$SCRIPT_DIR/$script" ]; then
+                cp -a "$SCRIPT_DIR/$script" "$backupdir/$script"
+            fi
+        done
+        for script in "${SCRIPTS[@]}"; do
+            if ! install -o root -g root -m 0755 "$tmpdir/$script" "$SCRIPT_DIR/$script"; then
+                restore_scripts
+                rc=1
+                break
+            fi
+        done
+    fi
+    rm -rf "$tmpdir" "$backupdir"
+    return "$rc"
 }
 check_and_download_scripts() {
     local script

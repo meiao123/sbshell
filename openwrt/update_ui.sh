@@ -65,16 +65,27 @@ install_ui() {
     acquire_ui_lock
     valid_url "$url" || { echo 'UI 地址必须使用 HTTPS。' >&2; return 1; }
     tmp=$(mktemp -d /tmp/sbshell-ui.XXXXXX)
-    trap 'rm -rf "$tmp"; rm -rf "$UI_LOCK_DIR"' RETURN
-    mkdir -p "$tmp/extract" "$BACKUP_DIR"
-    curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 120 --max-filesize 52428800 "$url" -o "$tmp/ui.zip"
-    [ "$(wc -c < "$tmp/ui.zip")" -le 52428800 ] || { echo 'UI 压缩包超过 50 MiB。' >&2; return 1; }
-    top=$(archive_top "$tmp/ui.zip" "$tmp/extract") || return 1
-    backup=$(mktemp -d "$BACKUP_DIR/.ui-backup.XXXXXX"); rm -rf "$backup"
-    if [ -d "$UI_DIR" ]; then mv "$UI_DIR" "$backup"; else rmdir "$backup"; backup=''; fi
-    if ! mv "$top" "$UI_DIR"; then [ -z "$backup" ] || mv "$backup" "$UI_DIR"; return 1; fi
+    # 显式清理，替代 `trap ... RETURN`（RETURN trap 会在父函数返回时再次触发，
+    # 此时 local 变量已销毁，set -u 下会中止整个脚本）。UI_LOCK_DIR 由
+    # acquire_ui_lock() 注册的 EXIT trap 负责释放。
+    cleanup_ui_tmp() { [ -n "${tmp:-}" ] && rm -rf "$tmp"; return 0; }
+    mkdir -p "$tmp/extract" "$BACKUP_DIR" || { cleanup_ui_tmp; return 1; }
+    if ! curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 120 --max-filesize 52428800 "$url" -o "$tmp/ui.zip"; then
+        echo 'UI 压缩包下载失败。' >&2; cleanup_ui_tmp; return 1
+    fi
+    [ "$(wc -c < "$tmp/ui.zip")" -le 52428800 ] || { echo 'UI 压缩包超过 50 MiB。' >&2; cleanup_ui_tmp; return 1; }
+    top=$(archive_top "$tmp/ui.zip" "$tmp/extract") || { cleanup_ui_tmp; return 1; }
+    backup=$(mktemp -d "$BACKUP_DIR/.ui-backup.XXXXXX") || { cleanup_ui_tmp; return 1; }
+    rm -rf "$backup"
+    if [ -d "$UI_DIR" ]; then
+        mv "$UI_DIR" "$backup" || { cleanup_ui_tmp; return 1; }
+    else
+        rmdir "$backup"; backup=''
+    fi
+    if ! mv "$top" "$UI_DIR"; then [ -z "$backup" ] || mv "$backup" "$UI_DIR"; cleanup_ui_tmp; return 1; fi
     chown -R root:root "$UI_DIR"
     prune_backups
+    cleanup_ui_tmp
     echo 'UI 安装完成。'
 }
 check_ui() { [ -f "$UI_DIR/index.html" ] && echo 'UI 面板已安装。' || echo 'UI 面板未安装或不完整。'; }
