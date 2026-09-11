@@ -1,7 +1,7 @@
 #!/bin/bash
 set -Eeuo pipefail
 
-# --- busybox 兼容：ImmortalWrt/OpenWrt 的 busybox 常常没有 install applet ---
+# --- busybox 兼容：模拟 install 命令 ---
 if ! command -v install >/dev/null 2>&1; then
     install() {
         local d=0 m='' o='' g=''
@@ -20,6 +20,8 @@ if ! command -v install >/dev/null 2>&1; then
             [ -z "$m" ] || { chmod "$m" "$@" 2>/dev/null || return 1; }
         else
             [ $# -eq 2 ] || return 1
+            # 关键修复：先 rm 避免覆盖正在运行中的脚本 inode 导致 Bash 崩溃
+            rm -f "$2" 2>/dev/null || true
             cp -f "$1" "$2" || return 1
             [ -z "$m" ] || { chmod "$m" "$2" 2>/dev/null || return 1; }
             set -- "$2"
@@ -28,25 +30,34 @@ if ! command -v install >/dev/null 2>&1; then
         return 0
     }
 fi
+
+CYAN='\033[0;36m'; GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[1;33m'; NC='\033[0m'
+[ "$(id -u)" -eq 0 ] || exec sudo bash "$0" "$@"
+
 SCRIPT_DIR=/etc/sing-box/scripts
-REPO_RAW="https://raw.githubusercontent.com/meiao123/sbshell"
-BASE_URL="$REPO_RAW/main/openwrt"
+INITIALIZED_FILE="$SCRIPT_DIR/.initialized"
+
+# 允许外部传入镜像源，默认提供 ghfast 加速
+export REPO_RAW="${REPO_RAW:-https://raw.githubusercontent.com/meiao123/sbshell}"
+
 github_api_download() {
     local path="$1" ref="$2" output="$3"
-    curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+    # 注意：api.github.com 不走 ghfast 代理
+    curl --fail --silent --location --proto '=https' --tlsv1.2 \
         --connect-timeout 10 --max-time 30 \
         -H 'Accept: application/vnd.github.raw+json' \
         -H 'X-GitHub-Api-Version: 2022-11-28' \
-        "https://api.github.com/repos/meiao123/sbshell/contents/$path?ref=$ref" -o "$output" || return 1
+        "https://api.github.com/repos/meiao123/sbshell/contents/$path?ref=$ref" -o "$output" 2>/dev/null || return 1
     [ -s "$output" ] || { rm -f "$output"; return 1; }
 }
+
 github_archive_download() {
     local path="$1" ref="$2" output="$3" archive prefix entry
     command -v tar >/dev/null 2>&1 || return 1
     archive=$(mktemp /tmp/sbshell-archive.XXXXXX) || return 1
-    if ! curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+    if ! curl --fail --silent --location --proto '=https' --tlsv1.2 \
         --connect-timeout 10 --max-time 120 \
-        "https://github.com/meiao123/sbshell/archive/$ref.tar.gz" -o "$archive"; then
+        "https://github.com/meiao123/sbshell/archive/$ref.tar.gz" -o "$archive" 2>/dev/null; then
         rm -f "$archive"
         return 1
     fi
@@ -64,41 +75,188 @@ github_archive_download() {
     rm -f "$archive"
     [ -s "$output" ] || { rm -f "$output"; return 1; }
 }
+
 download_repo_file() {
     local path="$1" ref="$2" output="$3"
-    if curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+    # 第一层：直连 / 代理 Raw
+    if curl --fail --silent --location --proto '=https' --tlsv1.2 \
         --connect-timeout 10 --max-time 60 "$REPO_RAW/$ref/$path" -o "$output" 2>/dev/null && [ -s "$output" ]; then
         return 0
     fi
     rm -f "$output"
+    # 第二层：API 容灾
     if github_api_download "$path" "$ref" "$output"; then
         return 0
     fi
     rm -f "$output"
+    # 第三层：全量压缩包解压提取
     github_archive_download "$path" "$ref" "$output"
 }
-TMP_DIR=$(mktemp -d /tmp/sbshell-update.XXXXXX)
-BACKUP_DIR=$(mktemp -d /tmp/sbshell-update-backup.XXXXXX)
-trap 'rm -rf "$TMP_DIR" "$BACKUP_DIR"' EXIT
-[ "$(id -u)" -eq 0 ] || { echo '请以 root 运行。' >&2; exit 1; }
-install -d -m 0755 "$SCRIPT_DIR"
+
 SCRIPTS=(check_environment.sh install_singbox.sh manual_input.sh manual_update.sh auto_update.sh configure_tproxy.sh configure_tun.sh start_singbox.sh stop_singbox.sh clean_nft.sh set_defaults.sh commands.sh switch_mode.sh manage_autostart.sh check_config.sh update_scripts.sh update_ui.sh menu.sh)
-for script in "${SCRIPTS[@]}"; do
-    download_repo_file "$script" "main" "$TMP_DIR/$script"
-    [ -s "$TMP_DIR/$script" ] || exit 1
-    bash -n "$TMP_DIR/$script"
-    if head -n1 "$TMP_DIR/$script" | grep -q '^#!/bin/sh'; then sh -n "$TMP_DIR/$script"; fi
-done
-for script in "${SCRIPTS[@]}"; do
-    if [ -f "$SCRIPT_DIR/$script" ]; then cp -a "$SCRIPT_DIR/$script" "$BACKUP_DIR/$script"; fi
-done
-restore() {
-    local script
-    for script in "${SCRIPTS[@]}"; do
-        if [ -f "$BACKUP_DIR/$script" ]; then install -o root -g root -m 0755 "$BACKUP_DIR/$script" "$SCRIPT_DIR/$script"; else rm -f "$SCRIPT_DIR/$script"; fi
+install -d -o root -g root -m 0755 "$SCRIPT_DIR"
+
+confirm_yes() {
+    local prompt="$1" answer
+    while true; do
+        read -r -p "$prompt [y/n]: " answer || { echo -e "${YELLOW}无法读取输入（EOF），已取消。${NC}" >&2; return 1; }
+        case "$answer" in
+            [Yy]) return 0;;
+            [Nn]) return 1;;
+            *) echo -e "${YELLOW}请输入 y 或 n。${NC}";;
+        esac
     done
 }
-for script in "${SCRIPTS[@]}"; do
-    if ! install -o root -g root -m 0755 "$TMP_DIR/$script" "$SCRIPT_DIR/$script"; then restore; exit 1; fi
+
+uninstall_sbshell() {
+    echo -e "${YELLOW}此操作将卸载 Sbshell、sing-box、配置文件及其管理的防火墙状态。${NC}"
+    confirm_yes '确定要卸载 Sbshell 吗？' || { echo -e "${GREEN}已取消卸载。${NC}"; return 0; }
+
+    echo -e "${CYAN}正在停止 sing-box 并清理防火墙...${NC}"
+    if pidof sing-box >/dev/null 2>&1; then
+        if ! /etc/init.d/sing-box stop 2> >(sed '/^Command failed: Not found$/d' >&2); then
+            echo -e "${RED}停止 sing-box 失败，已取消卸载。${NC}" >&2
+            return 1
+        fi
+    else
+        echo -e "${GREEN}sing-box 未运行，无需重复停止。${NC}"
+    fi
+    if ! bash "$SCRIPT_DIR/clean_nft.sh"; then
+        echo -e "${RED}防火墙清理失败，已取消卸载，避免留下残余代理状态。${NC}" >&2
+        return 1
+    fi
+
+    echo -e "${CYAN}正在卸载 sing-box 软件包及 Sbshell...${NC}"
+    if command -v opkg >/dev/null 2>&1; then
+        if opkg remove sing-box >/dev/null 2>&1; then
+            :
+        else
+            echo -e "${YELLOW}sing-box 软件包当前无法卸载（可能被其他软件包依赖），已保留 sing-box，继续清理 Sbshell 文件。${NC}" >&2
+        fi
+    else
+        echo -e "${YELLOW}未找到 opkg，无法卸载 sing-box 软件包，继续清理 Sbshell 文件。${NC}" >&2
+    fi
+
+    rm -f /usr/local/bin/sb /usr/bin/sb /etc/cron.d/sbshell-ui /etc/cron.d/sbshell-singbox /etc/sing-box/update-ui.sh /etc/sing-box/update-singbox.sh
+    rm -f /etc/crontabs/sbshell-ui 2>/dev/null || true
+    if [ -f /etc/crontabs/root ]; then sed -i '/[[:space:]]# sbshell-singbox-auto-update$/d; /[[:space:]]# sbshell-ui-auto-update$/d' /etc/crontabs/root; fi
+    rm -rf /etc/sing-box
+    echo -e "${GREEN}Sbshell 与 sing-box 配置目录已清理；若软件包存在依赖冲突，sing-box 软件包本身会继续保留。${NC}"
+    exit 0
+}
+
+update_scripts() {
+    local tmp backup s rc=0
+    local -a backed_up=()
+    tmp=$(mktemp -d /tmp/sbshell-openwrt.XXXXXX) || return 1
+    backup=$(mktemp -d /tmp/sbshell-openwrt-backup.XXXXXX) || { rm -rf "$tmp"; return 1; }
+
+    restore_scripts() {
+        local item
+        for item in "${backed_up[@]}"; do
+            install -o root -g root -m 0755 "$backup/$item" "$SCRIPT_DIR/$item" || true
+        done
+    }
+
+    # 关键修复：加入 openwrt/ 前缀
+    for s in "${SCRIPTS[@]}"; do
+        if ! download_repo_file "openwrt/$s" "main" "$tmp/$s" || [ ! -s "$tmp/$s" ] || ! bash -n "$tmp/$s"; then
+            rc=1
+            break
+        fi
+        if head -n1 "$tmp/$s" | grep -q '^#!/bin/sh' && ! sh -n "$tmp/$s"; then
+            rc=1
+            break
+        fi
+    done
+
+    if [ "$rc" -eq 0 ]; then
+        for s in "${SCRIPTS[@]}"; do
+            if [ -f "$SCRIPT_DIR/$s" ]; then
+                if ! cp -a "$SCRIPT_DIR/$s" "$backup/$s"; then
+                    echo -e "${RED}备份 $s 失败，已中止更新（现有安装保持不变）。${NC}" >&2
+                    rc=1
+                    break
+                fi
+                backed_up+=("$s")
+            fi
+        done
+    fi
+
+    if [ "$rc" -eq 0 ]; then
+        for s in "${SCRIPTS[@]}"; do
+            if ! install -o root -g root -m 0755 "$tmp/$s" "$SCRIPT_DIR/$s"; then
+                restore_scripts
+                rc=1
+                break
+            fi
+        done
+    fi
+
+    rm -rf "$tmp" "$backup"
+    return "$rc"
+}
+
+run() { bash "$SCRIPT_DIR/$1"; }
+
+initialize() {
+    update_scripts || { echo -e "${RED}脚本更新失败，现有安装保持不变。${NC}" >&2; return 1; }
+    run check_environment.sh || return 1
+    run install_singbox.sh || return 1
+    run switch_mode.sh || return 1
+    touch "$INITIALIZED_FILE" && chmod 0644 "$INITIALIZED_FILE"
+    run manual_input.sh || return 1
+    run start_singbox.sh || return 1
+    local ui_output
+    if ui_output=$(run update_ui.sh <<< '1' 2>&1); then
+        printf '%s\n' "$ui_output" | tail -n1
+    else
+        echo -e "${YELLOW}默认 UI 安装失败，可稍后从菜单“10. 更新控制面板”重试。${NC}" >&2
+        printf '%s\n' "$ui_output" | tail -n1 >&2
+    fi
+}
+
+if [ ! -f "$INITIALIZED_FILE" ]; then
+    echo -e "${CYAN}回车进入初始化，输入 skip 跳过：${NC}"
+    read -r choice
+    if [[ "$choice" =~ ^[Ss]kip$ ]]; then
+        update_scripts || exit 1
+    else
+        initialize || exit 1
+    fi
+else
+    [ -f "$SCRIPT_DIR/menu.sh" ] || update_scripts || exit 1
+fi
+
+while true; do
+    echo -e "${CYAN}=========== Sbshell OpenWrt 管理菜单 ===========${NC}"
+    echo '1. TProxy/TUN 模式切换'
+    echo '2. 手动更新配置'
+    echo '3. 自动更新配置'
+    echo '4. 启动 sing-box'
+    echo '5. 停止 sing-box'
+    echo '6. 默认参数设置'
+    echo '7. 设置自启动'
+    echo '8. 常用命令'
+    echo '9. 更新脚本'
+    echo '10. 更新控制面板'
+    echo '11. 卸载Sbshell'
+    echo '0. 退出'
+    echo -e "${CYAN}===============================================${NC}"
+    read -rp '请选择操作: ' choice
+    case "$choice" in
+        1) run switch_mode.sh; run manual_input.sh; run start_singbox.sh;;
+        2) run manual_update.sh;;
+        3) run auto_update.sh;;
+        4) run start_singbox.sh;;
+        5) run stop_singbox.sh;;
+        6) run set_defaults.sh;;
+        7) run manage_autostart.sh;;
+        8) run commands.sh;;
+        9) run update_scripts.sh;;
+        10) run update_ui.sh;;
+        11) uninstall_sbshell;;
+        0) exit 0;;
+        *) echo -e "${RED}无效的选择。${NC}";;
+    esac
 done
-echo 'OpenWrt 管理脚本已完成审核发布引用下载、语法校验和事务式更新。'
