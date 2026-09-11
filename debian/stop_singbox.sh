@@ -1,4 +1,5 @@
 #!/bin/bash
+set -Eeuo pipefail
 
 # 定义颜色
 CYAN='\033[0;36m'
@@ -9,9 +10,11 @@ NC='\033[0m' # 无颜色
 # 脚本下载目录
 SCRIPT_DIR="/etc/sing-box/scripts"
 
+[ "$(id -u)" -eq 0 ] || { [ -x "$(command -v sudo 2>/dev/null)" ] && exec sudo bash "$0" "$@" || { echo -e "${RED}请以 root 运行。${NC}" >&2; exit 1; }; }
+
 # 停止 sing-box 服务
 stop_singbox() {
-    sudo systemctl stop sing-box
+    systemctl stop sing-box
 
     if ! systemctl is-active --quiet sing-box; then
         echo -e "${GREEN}sing-box 已停止${NC}"
