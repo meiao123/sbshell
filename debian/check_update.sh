@@ -4,10 +4,10 @@ set -Eeuo pipefail
 CYAN='\033[0;36m'
 RED='\033[0;31m'
 NC='\033[0m'
-TMP_DIR=$(mktemp -d /tmp/sbshell-package.XXXXXX)
-trap 'rm -rf "$TMP_DIR"' EXIT
-
+# 先提权再建临时目录（exec 不触发 EXIT trap）。
 [ "$(id -u)" -eq 0 ] || exec sudo bash "$0" "$@"
+TMP_DIR=$(mktemp -d /tmp/sbshell-package.XXXXXX) || exit 1
+trap 'rm -rf "$TMP_DIR"' EXIT
 command -v apt-get >/dev/null 2>&1 || { echo -e "${RED}仅支持 Debian/Ubuntu。${NC}" >&2; exit 1; }
 command -v dpkg >/dev/null 2>&1 || { echo -e "${RED}缺少 dpkg。${NC}" >&2; exit 1; }
 

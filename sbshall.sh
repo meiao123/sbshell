@@ -50,4 +50,7 @@ install -o root -g root -m 0755 "$tmp" "$SCRIPT_DIR/menu.sh"
 
 echo -e "${GREEN}主脚本下载并校验完成（审核发布引用: $RELEASE_REF）。${NC}"
 echo -e "${YELLOW}注意：脚本会修改系统网络、防火墙和 sing-box 配置，请确认已做好备份。${NC}"
+# exec 不会触发 EXIT trap，这里显式清理临时文件
+rm -f "$tmp"
+trap - EXIT
 exec bash "$SCRIPT_DIR/menu.sh" "$@"

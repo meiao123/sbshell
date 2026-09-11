@@ -10,10 +10,10 @@ CONFIG_FILE=/etc/sing-box/config.json
 MODE_FILE=/etc/sing-box/mode.conf
 LOCK_DIR=/tmp/sbshell-config.lock
 LOCK_TIMEOUT=900
-TMP_DIR=$(mktemp -d /tmp/sbshell-config.XXXXXX)
-trap 'rm -rf "$TMP_DIR"' EXIT
-
+# 先提权再建临时目录（exec 不触发 EXIT trap）。
 [ "$(id -u)" -eq 0 ] || exec sudo bash "$0" "$@"
+TMP_DIR=$(mktemp -d /tmp/sbshell-config.XXXXXX) || exit 1
+trap 'rm -rf "$TMP_DIR"' EXIT
 
 read_value() { awk -F= -v k="$1" '$1 == k {sub(/^[^=]*=/, ""); print; exit}' "$2" 2>/dev/null || true; }
 valid_url() { [[ "$1" =~ ^https://[^[:space:]]+$ ]]; }
