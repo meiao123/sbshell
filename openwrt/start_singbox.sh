@@ -1,6 +1,6 @@
 #!/bin/bash
 set -Eeuo pipefail
-CYAN='\033[0;36m'; GREEN='\033[0;32m'; RED='\033[0;31m'; MAGENTA='\033[0;35m'; NC='\033[0m'
+GREEN='\033[0;32m'; RED='\033[0;31m'; MAGENTA='\033[0;35m'; NC='\033[0m'
 [ "$(id -u)" -eq 0 ] || { echo '请以 root 运行。' >&2; exit 1; }
 SCRIPT_DIR=/etc/sing-box/scripts
 MODE=$(sed -n 's/^MODE=//p' /etc/sing-box/mode.conf 2>/dev/null | head -n1)
