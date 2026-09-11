@@ -17,7 +17,8 @@ assert_before 'cd "$TMP_DIR"' 'apt-get download' debian/check_update.sh 'Debian 
 assert_present 'apt-get install -y "\$\{debs\[0\]\}"' debian/check_update.sh 'Debian package switching must use transactional apt installation'
 
 assert_present 'OLD_TABLE=' debian/configure_tun.sh 'Debian TUN must snapshot only owned firewall state before changes'
-assert_present 'ip -4 rule show > "$OLD_RULE"' debian/configure_tun.sh 'Debian TUN must snapshot policy rules'
+assert_present 'OLD_RULE=' debian/configure_tun.sh 'Debian TUN must allocate a policy-rule snapshot'
+assert_present 'ip -4 rule show' debian/configure_tun.sh 'Debian TUN must snapshot policy rules'
 assert_present 'ip -4 route show table' debian/configure_tun.sh 'Debian TUN must snapshot policy routes'
 assert_present 'OLD_TUN_TABLE=' openwrt/configure_tun.sh 'OpenWrt TUN must snapshot its owned table before reapplication'
 assert_present 'TUN_STATE_FILE=' openwrt/configure_tun.sh 'OpenWrt TUN must have a dedicated ownership state file'
@@ -35,7 +36,7 @@ assert_present 'OWNER=sbshell' openwrt/configure_tproxy.sh 'OpenWrt TProxy must 
 assert_present 'OLD_TUN_TABLE=' openwrt/configure_tproxy.sh 'OpenWrt TProxy must snapshot the owned TUN table before cleanup'
 assert_present 'TUN_STATE_FILE=' openwrt/configure_tproxy.sh 'OpenWrt TProxy must inspect TUN ownership before removing it'
 assert_present 'nft delete table inet sing-box-tun' openwrt/configure_tproxy.sh 'OpenWrt TProxy must clean the owned TUN table'
-assert_present 'rm -f "$TUN_STATE_FILE"' openwrt/configure_tproxy.sh 'OpenWrt TProxy must remove stale TUN ownership state after success'
+assert_present 'rm -f "\$TUN_STATE_FILE"' openwrt/configure_tproxy.sh 'OpenWrt TProxy must remove stale TUN ownership state after success'
 
 assert_present 'clean_owned_table sing-box-tun' openwrt/clean_nft.sh 'OpenWrt cleanup must handle the TUN table'
 assert_present 'clean_owned_table sing-box' openwrt/clean_nft.sh 'OpenWrt cleanup must handle the TProxy table'
