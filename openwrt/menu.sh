@@ -181,9 +181,11 @@ initialize() {
     run check_environment.sh || return 1
     run install_singbox.sh || return 1
     run switch_mode.sh || return 1
+    # 管理脚本、sing-box 和网络模式已经完成基础初始化；之后即使配置下载失败，
+    # 再次执行 sb 也应直接进入菜单，而不是重复执行完整初始化。
+    touch "$INITIALIZED_FILE" && chmod 0644 "$INITIALIZED_FILE"
     run manual_input.sh || return 1
     run start_singbox.sh || return 1
-    touch "$INITIALIZED_FILE" && chmod 0644 "$INITIALIZED_FILE"
 }
 
 if [ ! -f "$INITIALIZED_FILE" ]; then
