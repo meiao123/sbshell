@@ -1,7 +1,7 @@
 #!/bin/bash
 set -Eeuo pipefail
 
-RELEASE_REF=6da7e9e2f35d716db8a832e54a85dc5b44e92ac6
+RELEASE_REF=d9be5b66153ee2acaa8a3e040325d23c4f96ee53
 DEBIAN_MAIN_SCRIPT_URL="https://raw.githubusercontent.com/meiao123/sbshell/$RELEASE_REF/debian/menu.sh"
 OPENWRT_MAIN_SCRIPT_URL="https://raw.githubusercontent.com/meiao123/sbshell/$RELEASE_REF/openwrt/menu.sh"
 SCRIPT_DIR=/etc/sing-box/scripts
