@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 GREEN='\033[0;32m'; RED='\033[0;31m'; NC='\033[0m'
 SCRIPT_DIR=/etc/sing-box/scripts
-BASE_REF=fdbceb9b2e69ee8e48ea3ba5efd054a267b6816f
+BASE_REF=91865d43c91b5d22141d412c27d3c54624c4be95
 BASE_URL="https://raw.githubusercontent.com/meiao123/sbshell/$BASE_REF/debian"
 # 先提权再做任何事：`exec` 不会触发 EXIT trap，先建临时目录会在非 root 调用时泄漏
 # （并且提权后的实例还会再建一份）。
