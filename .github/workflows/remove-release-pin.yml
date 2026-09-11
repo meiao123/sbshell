@@ -9,7 +9,6 @@ permissions:
 
 jobs:
   migrate:
-    if: ${{ !startsWith(github.event.head_commit.message, 'chore: remove legacy RELEASE pin') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5.1.0
@@ -17,11 +16,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          BASE_COMMIT=27cab46aec8bc57e2f6abf194b2ca4d9e2008a29
+          case "${GITHUB_EVENT_NAME}:${GITHUB_SHA}" in
+            push:*) ;;
+          esac
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git fetch origin main
-          git fetch origin "$BASE_COMMIT"
+          git fetch --depth=1 origin 27cab46aec8bc57e2f6abf194b2ca4d9e2008a29
           git reset --hard origin/main
 
+          BASE_COMMIT=27cab46aec8bc57e2f6abf194b2ca4d9e2008a29
           for f in sbshall.sh openwrt/menu.sh openwrt/update_scripts.sh debian/menu.sh debian/update_scripts.sh .github/workflows/shell-static-check.yml README.md docs/security-hardening.md tests/suites/08_archive_fallback.sh; do
             git show "$BASE_COMMIT:$f" > "$f"
           done
@@ -33,21 +37,17 @@ jobs:
           def read(p): return Path(p).read_text()
           def write(p, s): Path(p).write_text(s)
 
-          # sbshall.sh
           s = read('sbshall.sh')
           s = re.sub(r'(?m)^RELEASE_REF=7dfddbae21d224349bb4ba4ac2d81bd541d39b9d\n', '', s, count=1)
           s = re.sub(r'(?ms)^resolve_release_ref \{.*?^\}\n\n', '', s, count=1)
-          s = s.replace('resolve_release_ref\n', '')
-          s = s.replace('"$RELEASE_REF"', '"main"')
-          s = s.replace('审核发布引用: $RELEASE_REF', '代码引用: main')
+          s = s.replace('resolve_release_ref\n', '').replace('"$RELEASE_REF"', '"main"').replace('审核发布引用: $RELEASE_REF', '代码引用: main')
           write('sbshall.sh', s)
 
           def clean_release(s):
               s = re.sub(r'(?m)^BASE_REF=7dfddbae21d224349bb4ba4ac2d81bd541d39b9d\n', '', s, count=1)
               s = re.sub(r'(?m)^RELEASE_DECL_URL=.*\n', '', s)
               s = re.sub(r'(?ms)^resolve_release_ref \{.*?^\}\n\n', '', s, count=1)
-              s = s.replace('resolve_release_ref\n', '')
-              s = s.replace('"$BASE_REF"', '"main"')
+              s = s.replace('resolve_release_ref\n', '').replace('"$BASE_REF"', '"main"')
               return s
 
           for p in ['openwrt/menu.sh', 'openwrt/update_scripts.sh', 'debian/menu.sh', 'debian/update_scripts.sh']:
@@ -58,7 +58,6 @@ jobs:
                   s = re.sub(r'^BASE_URL=.*$', 'BASE_URL="https://raw.githubusercontent.com/meiao123/sbshell/main/debian"', s, count=1, flags=re.M)
               write(p, s)
 
-          # CI: replace release-pin validation with main-only invariants.
           p = '.github/workflows/shell-static-check.yml'
           s = read(p)
           start = s.index('      - name: Verify the pinned release ref exists\n')
@@ -66,14 +65,12 @@ jobs:
           new = '''      - name: Verify update source is main\n        shell: bash\n        run: |\n          set -euo pipefail\n          ! grep -REq '(^|[^A-Za-z_])(BASE_REF|RELEASE_REF|RELEASE_DECL_URL|resolve_release_ref|RELEASE)([^A-Za-z_]|$)' \\\n            sbshall.sh debian/menu.sh debian/update_scripts.sh openwrt/menu.sh openwrt/update_scripts.sh\n          grep -q 'main/openwrt/' openwrt/menu.sh\n          grep -q 'main/debian/' debian/menu.sh\n          grep -q '"main"' sbshall.sh\n\n'''
           write(p, s[:start] + new + s[end:])
 
-          # Behaviour test.
           p = 'tests/suites/08_archive_fallback.sh'
           s = read(p)
           if 'release pin has been removed' not in s:
               s += '''\nsuite_begin "release pin has been removed; main is the only update source"\nfor f in sbshall.sh openwrt/menu.sh openwrt/update_scripts.sh debian/menu.sh debian/update_scripts.sh; do\n    if grep -Eq 'RELEASE|RELEASE_REF|resolve_release_ref' "$SBSHELL_SRC/$f"; then\n        fail "$f 仍依赖 RELEASE 发布指针"\n    else\n        pass "$f 不再依赖 RELEASE 发布指针"\n    fi\ndone\nassert_grep '"main"' "$SBSHELL_SRC/sbshall.sh" "sbshall.sh 使用 main 作为最新代码来源"\nassert_grep 'main/openwrt/' "$SBSHELL_SRC/openwrt/menu.sh" "OpenWrt 更新路径直接指向 main"\nassert_grep 'main/debian/' "$SBSHELL_SRC/debian/menu.sh" "Debian 更新路径直接指向 main"\nsuite_end\n'''
           write(p, s)
 
-          # README.
           p = 'README.md'
           s = read(p)
           line = '- **在线更新**：支持脚本在线更新，始终保持最新版本。\n'
@@ -81,7 +78,6 @@ jobs:
               s = s.replace(line, line + '- **代码来源**：一键安装与脚本自更新直接使用 `main` 分支当前代码，不再使用 `RELEASE` 发布指针。\n')
           write(p, s)
 
-          # Security-hardening documentation.
           p = 'docs/security-hardening.md'
           s = read(p)
           marker = '## 发布流程（固定发布提交）'
@@ -94,8 +90,6 @@ jobs:
           PY
 
           rm -f RELEASE .github/workflows/remove-release-pin.yml
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A
           git diff --cached --check
           git commit -m 'chore: remove legacy RELEASE pin'
