@@ -15,8 +15,9 @@ cat > "$UPDATE_SCRIPT" <<'EOF'
 set -Eeuo pipefail
 MANUAL_FILE="/etc/sing-box/manual.conf"
 CONFIG_FILE="/etc/sing-box/config.json"
-LOCK_FILE="/run/lock/sbshell-config.lock"
-install -d -o root -g root -m 0755 /run/lock
+LOCK_FILE="/run/sbshell/config.lock"
+install -d -o root -g root -m 0700 /run/sbshell
+[ ! -L "$LOCK_FILE" ] || { echo "锁文件是符号链接，拒绝使用: $LOCK_FILE" >&2; exit 1; }
 exec 9>"$LOCK_FILE"
 flock -x 9
 TMP_DIR=$(mktemp -d /tmp/sbshell-auto.XXXXXX)

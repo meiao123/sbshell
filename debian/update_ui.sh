@@ -4,11 +4,11 @@ set -Eeuo pipefail
 [ "$(id -u)" -eq 0 ] || exec sudo bash "$0" "$@"
 UI_DIR=/etc/sing-box/ui
 BACKUP_DIR=/var/lib/sing-box/ui-backups
-UI_LOCK=/run/lock/sbshell-ui.lock
+UI_LOCK=/run/sbshell/ui.lock
 ZASHBOARD_URL=https://github.com/Zephyruso/zashboard/archive/15575961dc84cc614c66c3e9bd20e70b862b6734/gh-pages.zip
 METACUBEXD_URL=https://github.com/MetaCubeX/metacubexd/archive/28a9589f6239bbafc24e87bbf5e5b4997fe42e59/gh-pages.zip
 YACD_URL=https://github.com/MetaCubeX/Yacd-meta/archive/6945744f5ab10d3d639d6eb76f3a67167da77b34/gh-pages.zip
-install -d -o root -g root -m 0755 /run/lock
+install -d -o root -g root -m 0700 /run/sbshell
 
 install_dependencies() {
     command -v curl >/dev/null 2>&1 || { apt-get update; apt-get install -y curl; }
@@ -62,6 +62,7 @@ prune_backups() {
 }
 install_ui() {
     local url="$1" tmp top backup
+    [ ! -L "$UI_LOCK" ] || { echo "锁文件是符号链接，拒绝使用: $UI_LOCK" >&2; exit 1; }
     exec 9>"$UI_LOCK"
     flock -x 9
     valid_url "$url" || { echo 'UI 地址必须使用 HTTPS。' >&2; return 1; }
@@ -105,8 +106,9 @@ set -Eeuo pipefail
 UI_DIR=/etc/sing-box/ui
 BACKUP_DIR=/var/lib/sing-box/ui-backups
 CONFIG_FILE=/etc/sing-box/config.json
-LOCK_FILE=/run/lock/sbshell-ui.lock
-install -d -o root -g root -m 0755 /run/lock
+LOCK_FILE=/run/sbshell/ui.lock
+install -d -o root -g root -m 0700 /run/sbshell
+[ ! -L "$LOCK_FILE" ] || { echo "锁文件是符号链接，拒绝使用: $LOCK_FILE" >&2; exit 1; }
 exec 9>"$LOCK_FILE"
 flock -x 9
 TMP=$(mktemp -d /tmp/sbshell-ui-auto.XXXXXX)

@@ -6,10 +6,10 @@ MANUAL_FILE=/etc/sing-box/manual.conf
 DEFAULTS_FILE=/etc/sing-box/defaults.conf
 CONFIG_FILE=/etc/sing-box/config.json
 TMP_DIR=/tmp/sbshell-config
-LOCK_FILE=/run/lock/sbshell-config.lock
+LOCK_FILE=/run/sbshell/config.lock
 
 [ "$(id -u)" -eq 0 ] || exec sudo bash "$0" "$@"
-install -d -o root -g root -m 0755 /run/lock
+install -d -o root -g root -m 0700 /run/sbshell
 read_value() { local key="$1" file="$2"; awk -F= -v k="$key" '$1 == k {sub(/^[^=]*=/, ""); print; exit}' "$file" 2>/dev/null || true; }
 valid_url() { [[ "$1" =~ ^https://[^[:space:]]+$ ]]; }
 # 订阅地址不是 URL（是后端约定的查询串），但必须排除空白、'#' 以及会覆盖 file 参数的片段。
@@ -80,6 +80,7 @@ else
     validate_endpoints || exit 1
 fi
 
+[ ! -L "$LOCK_FILE" ] || { echo "锁文件是符号链接，拒绝使用: $LOCK_FILE" >&2; exit 1; }
 exec 9>"$LOCK_FILE"
 flock -x 9
 if [ "$PROMPT_FLAG" -eq 1 ]; then

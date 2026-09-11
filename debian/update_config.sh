@@ -6,12 +6,13 @@ CONFIG_FILE="$CONFIG_DIR/config.json"
 CONFIG_URL_FILE="$CONFIG_DIR/config.url"
 SCRIPT_DIR="$CONFIG_DIR/scripts"
 GENERATOR="$SCRIPT_DIR/gen_server_config.sh"
-LOCK_FILE=/run/lock/sbshell-config.lock
+LOCK_FILE=/run/sbshell/config.lock
 
 [ "$(id -u)" -eq 0 ] || exec sudo bash "$0" "$@"
 [ -d "$CONFIG_DIR" ] || { echo -e "${RED}sing-box 配置目录不存在，请先安装。${NC}" >&2; exit 1; }
 getent group sing-box >/dev/null 2>&1 || { echo -e "${RED}未找到 sing-box 服务组，请先安装 sing-box。${NC}" >&2; exit 1; }
-install -d -o root -g root -m 0755 /run/lock
+install -d -o root -g root -m 0700 /run/sbshell
+[ ! -L "$LOCK_FILE" ] || { echo "锁文件是符号链接，拒绝使用: $LOCK_FILE" >&2; exit 1; }
 exec 9>"$LOCK_FILE"
 flock -x 9
 

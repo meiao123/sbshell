@@ -6,13 +6,13 @@ MANUAL_FILE=/etc/sing-box/manual.conf
 DEFAULTS_FILE=/etc/sing-box/defaults.conf
 CONFIG_FILE=/etc/sing-box/config.json
 MODE_FILE=/etc/sing-box/mode.conf
-LOCK_FILE=/run/lock/sbshell-config.lock
+LOCK_FILE=/run/sbshell/config.lock
 TMP_FILES=()
 cleanup() { local file; for file in ${TMP_FILES[@]+"${TMP_FILES[@]}"}; do rm -f "$file" 2>/dev/null || true; done; }
 trap cleanup EXIT
 
 [ "$(id -u)" -eq 0 ] || exec sudo bash "$0" "$@"
-install -d -o root -g root -m 0755 /run/lock
+install -d -o root -g root -m 0700 /run/sbshell
 get_default() { local key="$1"; grep -m1 "^${key}=" "$DEFAULTS_FILE" 2>/dev/null | cut -d'=' -f2- || true; }
 valid_url() { [[ "$1" =~ ^https://[^[:space:]]+$ ]]; }
 valid_subscription() {
@@ -39,6 +39,7 @@ while true; do
     [ -z "$TEMPLATE_URL" ] || valid_url "$TEMPLATE_URL" || { echo -e "${RED}配置文件地址必须是 HTTPS URL。${NC}"; continue; }
     valid_subscription "$SUBSCRIPTION_URL" || { echo -e "${RED}订阅地址包含非法字符。${NC}"; continue; }
     [ -z "$BACKEND_URL" ] || [ -n "$SUBSCRIPTION_URL" ] || { echo -e "${RED}使用后端地址时订阅地址不能为空。${NC}"; continue; }
+    [ ! -L "$LOCK_FILE" ] || { echo "锁文件是符号链接，拒绝使用: $LOCK_FILE" >&2; exit 1; }
     exec 9>"$LOCK_FILE"; flock -x 9
     tmp_manual=$(mktemp "$MANUAL_FILE.XXXXXX"); tmp_config=$(mktemp "$CONFIG_FILE.XXXXXX"); backup_manual=$(mktemp "$MANUAL_FILE.backup.XXXXXX"); backup_config=$(mktemp "$CONFIG_FILE.backup.XXXXXX")
     TMP_FILES+=("$tmp_manual" "$tmp_config" "$backup_manual" "$backup_config")
