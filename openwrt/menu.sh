@@ -8,15 +8,12 @@ ROLE_FILE="$SCRIPT_DIR/.role"
 BASE_URL=https://raw.githubusercontent.com/meiao123/sbshell/main/openwrt
 SCRIPTS=(check_environment.sh install_singbox.sh manual_input.sh manual_update.sh auto_update.sh configure_tproxy.sh configure_tun.sh start_singbox.sh stop_singbox.sh clean_nft.sh set_defaults.sh commands.sh switch_mode.sh manage_autostart.sh check_config.sh update_scripts.sh update_ui.sh menu.sh)
 install -d -o root -g root -m 0755 "$SCRIPT_DIR"
-
 confirm_yes() {
     local prompt="$1" answer
     while true; do
         read -r -p "$prompt [y/n]: " answer
         case "$answer" in
-            [Yy]) return 0;;
-            [Nn]) return 1;;
-            *) echo -e "${YELLOW}请输入 y 或 n。${NC}";;
+            [Yy]) return 0;; [Nn]) return 1;; *) echo -e "${YELLOW}请输入 y 或 n。${NC}";;
         esac
     done
 }
@@ -25,19 +22,19 @@ uninstall_sbshell() {
     echo -e "${YELLOW}不会删除 sing-box 程序、配置文件、服务或现有代理配置。${NC}"
     confirm_yes '第一次确认：确定要卸载 Sbshell 吗？' || { echo -e "${GREEN}已取消卸载。${NC}"; return 0; }
     confirm_yes '第二次确认：此操作将删除 Sbshell 管理脚本，确定继续吗？' || { echo -e "${GREEN}已取消卸载。${NC}"; return 0; }
-
     echo -e "${CYAN}正在卸载 Sbshell...${NC}"
-    rm -f /usr/local/bin/sb /etc/cron.d/sbshell-ui /etc/sing-box/update-ui.sh
+    rm -f /usr/local/bin/sb /etc/cron.d/sbshell-ui /etc/cron.d/sbshell-singbox /etc/sing-box/update-ui.sh /etc/sing-box/update-singbox.sh
     rm -f /etc/crontabs/sbshell-ui 2>/dev/null || true
+    if [ -f /etc/crontabs/root ]; then
+        sed -i '/[[:space:]]# sbshell-singbox-auto-update$/d; /[[:space:]]# sbshell-ui-auto-update$/d' /etc/crontabs/root
+    fi
     rm -rf "$SCRIPT_DIR"
     echo -e "${GREEN}Sbshell 已卸载。sing-box 及其现有配置已保留。${NC}"
     exit 0
 }
-
 update_scripts() {
     local tmp backup s
-    tmp=$(mktemp -d /tmp/sbshell-openwrt.XXXXXX)
-    backup=$(mktemp -d /tmp/sbshell-openwrt-backup.XXXXXX)
+    tmp=$(mktemp -d /tmp/sbshell-openwrt.XXXXXX); backup=$(mktemp -d /tmp/sbshell-openwrt-backup.XXXXXX)
     trap 'rm -rf "$tmp" "$backup"' RETURN
     for s in "${SCRIPTS[@]}"; do
         curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 60 "$BASE_URL/$s" -o "$tmp/$s" || return 1
@@ -54,14 +51,12 @@ initialize() {
     run check_environment.sh; run install_singbox.sh; run switch_mode.sh; run manual_input.sh; run start_singbox.sh
     touch "$INITIALIZED_FILE"; chmod 0644 "$INITIALIZED_FILE"
 }
-
 if [ ! -f "$INITIALIZED_FILE" ]; then
     echo -e "${CYAN}回车进入初始化，输入 skip 跳过：${NC}"; read -r choice
     if [[ "$choice" =~ ^[Ss]kip$ ]]; then update_scripts || exit 1; else initialize || exit 1; fi
 else
     [ -f "$SCRIPT_DIR/menu.sh" ] || update_scripts || exit 1
 fi
-
 while true; do
     echo -e "${CYAN}=========== Sbshell OpenWrt 管理菜单 ===========${NC}"
     echo '1. TProxy/TUN 模式切换'; echo '2. 手动更新配置'; echo '3. 自动更新配置'; echo '4. 启动 sing-box'; echo '5. 停止 sing-box'; echo '6. 默认参数设置'; echo '7. 设置自启动'; echo '8. 常用命令'; echo '9. 更新脚本'; echo '10. 更新控制面板'; echo -e "11. ${RED}卸载Sbshell${NC}"; echo '0. 退出'
