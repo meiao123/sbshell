@@ -22,7 +22,13 @@ valid_subscription() {
     return 0
 }
 MODE=$(sed -n 's/^MODE=//p' "$MODE_FILE" 2>/dev/null | head -n1)
-getent group sing-box >/dev/null 2>&1 || { echo -e "${RED}未找到 sing-box 服务组，请先安装 sing-box。${NC}" >&2; exit 1; }
+# 组存在就用 sing-box 组（服务以该用户运行），缺失时回落到 root 但保持 0640 ——
+# 客户端不应因为缺少服务组而完全无法配置。
+CONFIG_GROUP=sing-box
+if ! getent group sing-box >/dev/null 2>&1; then
+    CONFIG_GROUP=root
+    echo -e "${RED}提示: 未找到 sing-box 服务组，本次配置以 root:root 0640 写入（请检查 sing-box 服务用户）。${NC}" >&2
+fi
 while true; do
     read -rp '请输入后端地址(回车使用默认值可留空): ' BACKEND_URL
     BACKEND_URL=${BACKEND_URL:-$(get_default BACKEND_URL)}
@@ -52,11 +58,11 @@ while true; do
     [ -s "$tmp_config" ] || { echo -e "${RED}下载的配置为空。${NC}" >&2; exit 1; }
     sing-box check -c "$tmp_config" || { echo -e "${RED}配置验证失败。${NC}" >&2; exit 1; }
     if [ -f "$CONFIG_FILE" ]; then install -o root -g root -m 0600 "$CONFIG_FILE" "$backup_config"; config_existed=1; fi
-    chown root:sing-box "$tmp_config"; chmod 0640 "$tmp_config"; chown root:root "$tmp_manual"; chmod 0600 "$tmp_manual"
+    chown "root:$CONFIG_GROUP" "$tmp_config"; chmod 0640 "$tmp_config"; chown root:root "$tmp_manual"; chmod 0600 "$tmp_manual"
     mv -f "$tmp_manual" "$MANUAL_FILE"
     if ! mv -f "$tmp_config" "$CONFIG_FILE"; then
         if [ "$manual_existed" -eq 1 ]; then install -o root -g root -m 0600 "$backup_manual" "$MANUAL_FILE"; else rm -f "$MANUAL_FILE"; fi
-        if [ "$config_existed" -eq 1 ]; then install -o root -g sing-box -m 0640 "$backup_config" "$CONFIG_FILE"; else rm -f "$CONFIG_FILE"; fi
+        if [ "$config_existed" -eq 1 ]; then install -o root -g "$CONFIG_GROUP" -m 0640 "$backup_config" "$CONFIG_FILE"; else rm -f "$CONFIG_FILE"; fi
         echo -e "${RED}配置提交失败，已回滚。${NC}" >&2; exit 1
     fi
     echo '配置文件下载并验证成功。'

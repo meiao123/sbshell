@@ -13,7 +13,8 @@ delaytest() { echo -e "${YELLOW}正在测试网络延迟...${NC}"; bash "$SCRIPT
 
 setup_singbox_permissions() {
     echo -e "${YELLOW}正在设置 sing-box 权限与服务...${NC}"
-    id sing-box >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin sing-box
+    getent group sing-box >/dev/null 2>&1 || groupadd --system sing-box 2>/dev/null || true
+    id sing-box >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin -g sing-box sing-box
     install -d -o sing-box -g sing-box -m 0750 /var/lib/sing-box
     install -d -o root -g root -m 0755 /etc/sing-box /etc/systemd/system/sing-box.service.d
     cat > /etc/systemd/system/sing-box.service.d/10-sbshell.conf <<'EOF'

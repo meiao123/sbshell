@@ -23,6 +23,10 @@ flock -x 9
 TMP_DIR=$(mktemp -d /tmp/sbshell-auto.XXXXXX)
 trap 'rm -rf "$TMP_DIR"' EXIT
 read_value() { awk -F= -v k="$1" '$1 == k {sub(/^[^=]*=/, ""); print; exit}' "$2" 2>/dev/null || true; }
+# 与 manual_input.sh/update_config.sh 一致：配置含凭据，必须 0640；
+# 组存在用 sing-box，缺失则回落 root（仍不可被其它本地用户读取）。
+CONFIG_GROUP=sing-box
+getent group sing-box >/dev/null 2>&1 || CONFIG_GROUP=root
 valid_url() { [[ "$1" =~ ^https://[^[:space:]]+$ ]]; }
 valid_subscription() { local v="$1"; [ -z "$v" ] && return 0; case "$v" in *[[:space:]]*|*'&file='*|*'#'*) return 1;; esac; return 0; }
 BACKEND_URL=$(read_value BACKEND_URL "$MANUAL_FILE")
@@ -44,9 +48,9 @@ BACKUP="$TMP_DIR/config.json.backup"
 curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 60 "$FULL_URL" -o "$TMP_CONFIG"
 sing-box check -c "$TMP_CONFIG"
 [ ! -f "$CONFIG_FILE" ] || cp -a "$CONFIG_FILE" "$BACKUP"
-install -o root -g root -m 0644 "$TMP_CONFIG" "$CONFIG_FILE"
+install -o root -g "$CONFIG_GROUP" -m 0640 "$TMP_CONFIG" "$CONFIG_FILE"
 if ! systemctl restart sing-box || ! systemctl is-active --quiet sing-box; then
-    [ ! -f "$BACKUP" ] || install -o root -g root -m 0644 "$BACKUP" "$CONFIG_FILE"
+    [ ! -f "$BACKUP" ] || install -o root -g "$CONFIG_GROUP" -m 0640 "$BACKUP" "$CONFIG_FILE"
     systemctl restart sing-box || true
     exit 1
 fi

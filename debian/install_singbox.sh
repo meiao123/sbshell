@@ -35,8 +35,17 @@ fi
 
 command -v sing-box >/dev/null 2>&1 || { echo -e "${RED}sing-box 安装失败。${NC}" >&2; exit 1; }
 
+# 显式建组：`useradd --system` 只有在 USERGROUPS_ENAB=yes 时才创建同名组，
+# 否则后面的 `install -g sing-box` 会直接失败。
+if ! getent group sing-box >/dev/null 2>&1; then
+    groupadd --system sing-box 2>/dev/null || true
+fi
 if ! id sing-box >/dev/null 2>&1; then
-    useradd --system --no-create-home --shell /usr/sbin/nologin sing-box
+    if getent group sing-box >/dev/null 2>&1; then
+        useradd --system --no-create-home --shell /usr/sbin/nologin -g sing-box sing-box
+    else
+        useradd --system --no-create-home --shell /usr/sbin/nologin sing-box
+    fi
 fi
 install -d -o sing-box -g sing-box -m 0750 /var/lib/sing-box
 install -d -o root -g root -m 0755 /etc/sing-box

@@ -10,7 +10,11 @@ LOCK_FILE=/run/sbshell/config.lock
 
 [ "$(id -u)" -eq 0 ] || exec sudo bash "$0" "$@"
 [ -d "$CONFIG_DIR" ] || { echo -e "${RED}sing-box 配置目录不存在，请先安装。${NC}" >&2; exit 1; }
-getent group sing-box >/dev/null 2>&1 || { echo -e "${RED}未找到 sing-box 服务组，请先安装 sing-box。${NC}" >&2; exit 1; }
+CONFIG_GROUP=sing-box
+if ! getent group sing-box >/dev/null 2>&1; then
+    CONFIG_GROUP=root
+    echo -e "${RED}提示: 未找到 sing-box 服务组，本次配置以 root:root 0640 写入。${NC}" >&2
+fi
 install -d -o root -g root -m 0700 /run/sbshell
 [ ! -L "$LOCK_FILE" ] || { echo "锁文件是符号链接，拒绝使用: $LOCK_FILE" >&2; exit 1; }
 exec 9>"$LOCK_FILE"
@@ -57,12 +61,12 @@ curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connec
 [ -s "$tmp_config" ] || { echo -e "${RED}下载的配置文件为空。${NC}" >&2; exit 1; }
 sing-box check -c "$tmp_config" || { echo -e "${RED}配置校验失败，保留现有配置。${NC}" >&2; exit 1; }
 
-install -o root -g sing-box -m 0640 "$tmp_config" "$CONFIG_FILE"
+install -o root -g "$CONFIG_GROUP" -m 0640 "$tmp_config" "$CONFIG_FILE"
 printf '%s\n' "$config_url" > "$CONFIG_URL_FILE"
 chown root:root "$CONFIG_URL_FILE"; chmod 0600 "$CONFIG_URL_FILE"
 if ! systemctl restart sing-box || ! systemctl is-active --quiet sing-box; then
     echo -e "${RED}服务重启失败，正在恢复上一份配置。${NC}" >&2
-    if [ "$config_existed" -eq 1 ]; then install -o root -g sing-box -m 0640 "$backup_config" "$CONFIG_FILE"; else rm -f "$CONFIG_FILE"; fi
+    if [ "$config_existed" -eq 1 ]; then install -o root -g "$CONFIG_GROUP" -m 0640 "$backup_config" "$CONFIG_FILE"; else rm -f "$CONFIG_FILE"; fi
     if [ "$url_existed" -eq 1 ]; then install -o root -g root -m 0600 "$backup_url" "$CONFIG_URL_FILE"; else rm -f "$CONFIG_URL_FILE"; fi
     systemctl restart sing-box || true
     exit 1
