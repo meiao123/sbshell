@@ -25,6 +25,11 @@ TUN_STATE_FILE=/etc/sing-box/tun.state
 TUN_NFT_FILE=/etc/sing-box/tun/nftables.conf
 trap 'rm -f "$TMP" "$OLD_TABLE" "$OLD_TUN_TABLE" "$OLD_TUN_STATE"' EXIT
 
+# table 100 里是否已有我们需要的 local default 路由（幂等判断与回滚恢复共用）。
+route_default_exists() {
+    ip -4 route show table "$PROXY_ROUTE_TABLE" | awk -v ifc="$1" '$0 == "local default dev " ifc || index($0, "local default dev " ifc " ") == 1 {found=1} END {exit !found}'
+}
+
 rule_pref_for_mark() {
     ip -4 rule show | awk -v m="0x$1" -v t="$2" '
         {
@@ -114,6 +119,17 @@ fi
 rollback() {
     if [ "$ROUTE_CREATED" -eq 1 ]; then ip -4 route del local default dev "$INTERFACE" table "$PROXY_ROUTE_TABLE" 2>/dev/null || true; fi
     if [ "$RULE_CREATED" -eq 1 ]; then ip -4 rule del pref "$ACTUAL_RULE_PREF" fwmark "$PROXY_FWMARK" lookup "$PROXY_ROUTE_TABLE" 2>/dev/null || true; fi
+    # 重新应用时旧的 rule/route 已在前面被删除。若本次应用失败，必须把它们放回去，
+    # 否则 nft 表虽然恢复了，TProxy 仍然是坏的，而 state 文件依旧声称
+    # RULE_OWNED=1/ROUTE_OWNED=1（state 与事实不符）。
+    if [ "${prior_rule_owned:-0}" -eq 1 ] && [ -n "${old_pref:-}" ]; then
+        [ -z "$(rule_pref_for_mark "$PROXY_FWMARK" "$PROXY_ROUTE_TABLE")" ] &&
+            ip -4 rule add pref "$old_pref" fwmark "$PROXY_FWMARK" lookup "$PROXY_ROUTE_TABLE" 2>/dev/null || true
+    fi
+    if [ "${prior_route_owned:-0}" -eq 1 ]; then
+        route_default_exists "${OLD_INTERFACE:-$INTERFACE}" ||
+            ip -4 route add local default dev "${OLD_INTERFACE:-$INTERFACE}" table "$PROXY_ROUTE_TABLE" 2>/dev/null || true
+    fi
     if [ -s "$OLD_TABLE" ]; then
         nft list table inet sing-box >/dev/null 2>&1 && nft delete table inet sing-box || true
         nft -f "$OLD_TABLE" 2>/dev/null || true
@@ -136,7 +152,7 @@ if [ -z "$ACTUAL_RULE_PREF" ]; then
     RULE_OWNED=1
     ACTUAL_RULE_PREF="$RULE_PREF"
 fi
-if ! ip -4 route show table "$PROXY_ROUTE_TABLE" | awk -v ifc="$INTERFACE" '$0 == "local default dev " ifc || index($0, "local default dev " ifc " ") == 1 {found=1} END {exit !found}'; then
+if ! route_default_exists "$INTERFACE"; then
     if ! ip -4 route add local default dev "$INTERFACE" table "$PROXY_ROUTE_TABLE"; then
         rollback; exit 1
     fi
