@@ -5,7 +5,8 @@ GREEN='\033[0;32m'; RED='\033[0;31m'; NC='\033[0m'
 [ "$(id -u)" -eq 0 ] || { echo '请以 root 运行。' >&2; exit 1; }
 MANUAL_FILE=/etc/sing-box/manual.conf
 UPDATE_SCRIPT=/etc/sing-box/update-singbox.sh
-CRON_FILE=/etc/cron.d/sbshell-singbox
+CRON_FILE=/etc/crontabs/root
+CRON_MARK='# sbshell-singbox-auto-update'
 [ -f "$MANUAL_FILE" ] || { echo '未找到 manual.conf。' >&2; exit 1; }
 
 cat > "$UPDATE_SCRIPT" <<'EOF'
@@ -48,13 +49,15 @@ while true; do
             read -rp '间隔小时(1-23,默认12): ' h
             h=${h:-12}
             case "$h" in 1|2|3|4|5|6|7|8|9|1[0-9]|2[0-3]) ;; *) echo -e "${RED}请输入 1-23。${NC}"; continue;; esac
-            printf 'SHELL=/bin/sh\nPATH=/usr/sbin:/usr/bin:/sbin:/bin\n0 */%s * * * root %s\n' "$h" "$UPDATE_SCRIPT" > "$CRON_FILE"
-            chmod 0644 "$CRON_FILE"; chown root:root "$CRON_FILE"
+            touch "$CRON_FILE"
+            sed -i "/[[:space:]]$CRON_MARK\$/d" "$CRON_FILE"
+            printf '0 */%s * * * %s %s\n' "$h" "$UPDATE_SCRIPT" "$CRON_MARK" >> "$CRON_FILE"
+            chmod 0600 "$CRON_FILE"; chown root:root "$CRON_FILE"
             /etc/init.d/cron restart >/dev/null 2>&1 || true
             echo -e "${GREEN}已设置，每 $h 小时执行一次。${NC}"; break
             ;;
         2)
-            rm -f "$CRON_FILE"
+            [ -f "$CRON_FILE" ] && sed -i "/[[:space:]]$CRON_MARK\$/d" "$CRON_FILE"
             /etc/init.d/cron restart >/dev/null 2>&1 || true
             echo -e "${GREEN}已取消。${NC}"; break
             ;;
