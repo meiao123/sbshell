@@ -1,6 +1,8 @@
 #!/bin/bash
 set -Eeuo pipefail
-CYAN='\033[0;36m'; GREEN='\033[0;32m'; RED='\033[0;31m'; NC='\033[0m'
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+NC='\033[0m'
 [ "$(id -u)" -eq 0 ] || exec sudo bash "$0" "$@"
 SCRIPT_DIR="/etc/sing-box/scripts"
 MODE_FILE="/etc/sing-box/mode.conf"
