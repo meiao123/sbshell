@@ -1,6 +1,10 @@
 #!/bin/bash
 set -Eeuo pipefail
-TPROXY_PORT=7895; ROUTING_MARK=666; PROXY_FWMARK=1; PROXY_ROUTE_TABLE=100; RULE_PREF=10010
+TPROXY_PORT=7895
+ROUTING_MARK=666
+PROXY_FWMARK=1
+PROXY_ROUTE_TABLE=100
+RULE_PREF=10010
 INTERFACE=$(ip route show default | awk '/default/ {print $5; exit}')
 MODE=$(sed -n 's/^MODE=//p' /etc/sing-box/mode.conf 2>/dev/null | head -n1)
 [ "$MODE" = TProxy ] || exit 0
@@ -14,9 +18,10 @@ OLD_TUN_TABLE=$(mktemp /tmp/sbshell-tun-table.XXXXXX)
 OLD_TUN_STATE=$(mktemp /tmp/sbshell-tun-state.XXXXXX)
 STATE_FILE=/etc/sing-box/tproxy.state
 TUN_STATE_FILE=/etc/sing-box/tun.state
+TUN_NFT_FILE=/etc/sing-box/tun/nftables.conf
 trap 'rm -f "$TMP" "$OLD_TABLE" "$OLD_TUN_TABLE" "$OLD_TUN_STATE"' EXIT
 
-# 精确匹配 fwmark/table，避免 "fwmark 0x1" 命中 "fwmark 0x10"（前缀匹配会误判规则已存在）。
+# 精确匹配 fwmark/table，避免 "fwmark 0x1" 命中 "fwmark 0x10"。
 rule_pref_for_mark() {
     ip -4 rule show | awk -v m="0x$1" -v t="$2" '
         {
@@ -57,8 +62,6 @@ EOF
 nft -c -f "$TMP"
 mkdir -p /etc/sing-box
 
-# 与 OpenWrt 版保持对称：切回 TProxy 时必须清理自有的 TUN 表，否则会永久残留
-# （旧版本 Debian 脚本完全没有这段，inet sing-box-tun 与 tun/nftables.conf 会一直留着）。
 if nft list table inet sing-box-tun > "$OLD_TUN_TABLE" 2>/dev/null; then
     if [ -f "$TUN_STATE_FILE" ] && grep -q '^OWNER=sbshell$' "$TUN_STATE_FILE"; then
         cp "$TUN_STATE_FILE" "$OLD_TUN_STATE"
@@ -72,24 +75,34 @@ else
     : > "$OLD_TUN_STATE"
 fi
 
+RULE_CREATED=0
+ROUTE_CREATED=0
 if [ -f "$STATE_FILE" ] && grep -q '^OWNER=sbshell$' "$STATE_FILE"; then
     nft list table inet sing-box > "$OLD_TABLE" 2>/dev/null || true
-    nft list table inet sing-box >/dev/null 2>&1 && nft delete table inet sing-box || true
-    if grep -q '^RULE_CREATED=1$' "$STATE_FILE"; then
+    prior_rule_created=0
+    prior_route_created=0
+    grep -q '^RULE_CREATED=1$' "$STATE_FILE" && prior_rule_created=1
+    grep -q '^ROUTE_CREATED=1$' "$STATE_FILE" && prior_route_created=1
+    if [ "$prior_rule_created" -eq 1 ]; then
         old_pref=$(sed -n 's/^RULE_PREF=//p' "$STATE_FILE" | head -n1)
         [ -n "$old_pref" ] && ip -4 rule del pref "$old_pref" fwmark "$PROXY_FWMARK" lookup "$PROXY_ROUTE_TABLE" 2>/dev/null || true
     fi
-    OLD_INTERFACE=$(sed -n 's/^INTERFACE=//p' "$STATE_FILE" | head -n1); [ -n "$OLD_INTERFACE" ] || OLD_INTERFACE="$INTERFACE"
-    if grep -q '^ROUTE_CREATED=1$' "$STATE_FILE"; then ip -4 route del local default dev "$OLD_INTERFACE" table "$PROXY_ROUTE_TABLE" 2>/dev/null || true; fi
+    old_interface=$(sed -n 's/^INTERFACE=//p' "$STATE_FILE" | head -n1)
+    [ -n "$old_interface" ] || old_interface="$INTERFACE"
+    if [ "$prior_route_created" -eq 1 ]; then ip -4 route del local default dev "$old_interface" table "$PROXY_ROUTE_TABLE" 2>/dev/null || true; fi
 else
     : > "$OLD_TABLE"
+    prior_rule_created=0
+    prior_route_created=0
 fi
 
-RULE_CREATED=0; ROUTE_CREATED=0; ACTUAL_RULE_PREF=''
 rollback() {
     if [ "$ROUTE_CREATED" -eq 1 ]; then ip -4 route del local default dev "$INTERFACE" table "$PROXY_ROUTE_TABLE" 2>/dev/null || true; fi
     if [ "$RULE_CREATED" -eq 1 ]; then ip -4 rule del pref "$ACTUAL_RULE_PREF" fwmark "$PROXY_FWMARK" lookup "$PROXY_ROUTE_TABLE" 2>/dev/null || true; fi
-    if [ -s "$OLD_TABLE" ]; then nft list table inet sing-box >/dev/null 2>&1 && nft delete table inet sing-box || true; nft -f "$OLD_TABLE" 2>/dev/null || true; fi
+    if [ -s "$OLD_TABLE" ]; then
+        nft list table inet sing-box >/dev/null 2>&1 && nft delete table inet sing-box || true
+        nft -f "$OLD_TABLE" 2>/dev/null || true
+    fi
     nft list table inet sing-box-tun >/dev/null 2>&1 && nft delete table inet sing-box-tun || true
     if [ -s "$OLD_TUN_TABLE" ]; then
         nft -f "$OLD_TUN_TABLE" 2>/dev/null || true
@@ -104,7 +117,8 @@ if [ -z "$ACTUAL_RULE_PREF" ]; then
     if ! ip -4 rule add pref "$RULE_PREF" fwmark "$PROXY_FWMARK" lookup "$PROXY_ROUTE_TABLE"; then
         rollback; exit 1
     fi
-    RULE_CREATED=1; ACTUAL_RULE_PREF="$RULE_PREF"
+    RULE_CREATED=1
+    ACTUAL_RULE_PREF="$RULE_PREF"
 fi
 if ! ip -4 route show table "$PROXY_ROUTE_TABLE" | awk -v ifc="$INTERFACE" '$0 == "local default dev " ifc || index($0, "local default dev " ifc " ") == 1 {found=1} END {exit !found}'; then
     if ! ip -4 route add local default dev "$INTERFACE" table "$PROXY_ROUTE_TABLE"; then
@@ -123,6 +137,8 @@ if ! nft -f "$TMP"; then
     exit 1
 fi
 
+if [ "$prior_rule_created" -eq 1 ]; then RULE_CREATED=0; fi
+if [ "$prior_route_created" -eq 1 ] && [ "$ROUTE_CREATED" -eq 0 ]; then ROUTE_CREATED=0; fi
 cat > "$STATE_FILE" <<EOF
 OWNER=sbshell
 MODE=TProxy
@@ -132,7 +148,8 @@ RULE_PREF=$ACTUAL_RULE_PREF
 RULE_CREATED=$RULE_CREATED
 ROUTE_CREATED=$ROUTE_CREATED
 EOF
-chown root:root "$STATE_FILE"; chmod 0600 "$STATE_FILE"
-rm -f "$TUN_STATE_FILE"
+chown root:root "$STATE_FILE"
+chmod 0600 "$STATE_FILE"
+rm -f "$TUN_STATE_FILE" "$TUN_NFT_FILE"
 sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1 || echo '警告: 无法开启 net.ipv4.ip_forward，转发/透明代理可能不可用。' >&2
 echo 'TProxy 模式的防火墙规则已安全应用。'
