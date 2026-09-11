@@ -4,7 +4,7 @@ CYAN='\033[0;36m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC
 CONFIG_DIR=/etc/sing-box
 CONFIG_FILE="$CONFIG_DIR/config.json"
 CONFIG_URL_FILE="$CONFIG_DIR/config.url"
-DEFAULT_CONFIG_URL=https://raw.githubusercontent.com/qljsyph/sbshell/main/config_template/server/config.json
+DEFAULT_CONFIG_URL=https://raw.githubusercontent.com/meiao123/sbshell/main/config_template/server/config.json
 
 [ "$(id -u)" -eq 0 ] || exec sudo bash "$0" "$@"
 [ -d "$CONFIG_DIR" ] || { echo -e "${RED}sing-box 配置目录不存在，请先安装。${NC}" >&2; exit 1; }
