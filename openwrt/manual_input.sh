@@ -45,15 +45,12 @@ acquire_lock() {
         sleep 1
 done
     printf '%s\n' "$$" > "$LOCK_DIR/pid"
-    # 这里必须接管 EXIT 清理：后设置的 EXIT trap 会覆盖前面的 `trap cleanup EXIT`，
-    # 否则 TMP_FILES 里的临时文件（含配置备份）永远不会被删除。
     trap 'cleanup; rm -rf "$LOCK_DIR"' EXIT INT TERM
 }
 
-# busybox grep 不支持 -oP（PCRE），OpenWrt 默认就是 busybox，用 sed 解析 MODE。
+# BusyBox grep 不支持 PCRE；OpenWrt 默认就是 BusyBox，用 sed 解析 MODE。
 MODE=$(sed -n 's/^MODE=//p' "$MODE_FILE" 2>/dev/null | head -n1)
 TMP_FILES=()
-# 使用 ${arr[@]+...} 兜底，避免老 bash 在 set -u 下对空数组报 unbound variable。
 cleanup() { local file; for file in ${TMP_FILES[@]+"${TMP_FILES[@]}"}; do rm -f "$file" 2>/dev/null || true; done; }
 trap cleanup EXIT
 
