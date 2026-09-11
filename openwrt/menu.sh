@@ -53,15 +53,40 @@ INITIALIZED_FILE="$SCRIPT_DIR/.initialized"
 BASE_REF=7dfddbae21d224349bb4ba4ac2d81bd541d39b9d
 BASE_URL="https://raw.githubusercontent.com/meiao123/sbshell/$BASE_REF/openwrt"
 RELEASE_DECL_URL="https://raw.githubusercontent.com/meiao123/sbshell/refs/heads/main/RELEASE"
+github_api_download() {
+    local path="$1" ref="$2" output="$3" response encoded
+    command -v base64 >/dev/null 2>&1 || return 1
+    response=$(curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+        --connect-timeout 10 --max-time 30 \
+        "https://api.github.com/repos/meiao123/sbshell/contents/$path?ref=$ref") || return 1
+    encoded=$(printf '%s' "$response" | sed -n 's/.*"content"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1) || return 1
+    [ -n "$encoded" ] || return 1
+    encoded=${encoded//\\n/}
+    encoded=${encoded//\\r/}
+    printf '%s' "$encoded" | base64 -d > "$output" || { rm -f "$output"; return 1; }
+    [ -s "$output" ]
+}
+download_repo_file() {
+    local path="$1" ref="$2" output="$3"
+    if curl --fail --silent --location --proto '=https' --tlsv1.2 \
+        --connect-timeout 10 --max-time 60 "$REPO_RAW/$ref/$path" -o "$output" && [ -s "$output" ]; then
+        return 0
+    fi
+    rm -f "$output"
+    github_api_download "$path" "$ref" "$output"
+}
 resolve_release_ref() {
-    local declared=''
-    declared=$(curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
-        --connect-timeout 10 --max-time 20 "$RELEASE_DECL_URL" 2>/dev/null | tr -d '\r\n') || declared=''
+    local tmp='/tmp/sbshell-release-ref' declared=''
+    rm -f "$tmp"
+    if download_repo_file 'RELEASE' 'main' "$tmp"; then
+        declared=$(tr -d '\r\n' < "$tmp")
+    fi
+    rm -f "$tmp"
     case "$declared" in
         *[!0-9a-f]*) ;;
         *) if [ "${#declared}" -eq 40 ]; then
                BASE_REF=$declared
-               BASE_URL="https://raw.githubusercontent.com/meiao123/sbshell/$BASE_REF/openwrt"
+               BASE_URL="$REPO_RAW/$BASE_REF/openwrt"
            fi ;;
     esac
     return 0
@@ -83,13 +108,10 @@ uninstall_sbshell() {
     exit 0
 }
 update_scripts() {
-    # 下载前解析发布提交：只用内置常量会退回上一版（见 docs/security-hardening.md）。
     resolve_release_ref
     local tmp backup s item rc=0
-    # 两个 mktemp 都要检查（原因同 debian/menu.sh）。
     tmp=$(mktemp -d /tmp/sbshell-openwrt.XXXXXX) || return 1
     backup=$(mktemp -d /tmp/sbshell-openwrt-backup.XXXXXX) || { rm -rf "$tmp"; return 1; }
-    # 只回滚确实备份成功的脚本（见 debian/menu.sh 的说明）。
     backed_up=()
     restore_scripts() {
         local item
@@ -98,7 +120,7 @@ update_scripts() {
         done
     }
     for s in "${SCRIPTS[@]}"; do
-        if ! curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 60 "$BASE_URL/$s" -o "$tmp/$s" ||
+        if ! download_repo_file "$s" "$BASE_REF" "$tmp/$s" ||
             [ ! -s "$tmp/$s" ] ||
             ! bash -n "$tmp/$s"; then
             rc=1
