@@ -111,8 +111,7 @@ confirm_yes() {
 uninstall_sbshell() {
     echo -e "${YELLOW}此操作仅卸载 Sbshell 管理脚本及其快捷方式。${NC}"
     echo -e "${YELLOW}不会删除 sing-box 程序、配置文件、服务或现有代理配置。${NC}"
-    confirm_yes '第一次确认：确定要卸载 Sbshell 吗？' || { echo -e "${GREEN}已取消卸载。${NC}"; return 0; }
-    confirm_yes '第二次确认：此操作将删除 Sbshell 管理脚本，确定继续吗？' || { echo -e "${GREEN}已取消卸载。${NC}"; return 0; }
+    confirm_yes '确定要卸载 Sbshell 吗？' || { echo -e "${GREEN}已取消卸载。${NC}"; return 0; }
     echo -e "${CYAN}正在卸载 Sbshell...${NC}"
     rm -f /usr/local/bin/sb /usr/bin/sb /etc/cron.d/sbshell-ui /etc/cron.d/sbshell-singbox /etc/sing-box/update-ui.sh /etc/sing-box/update-singbox.sh
     rm -f /etc/crontabs/sbshell-ui 2>/dev/null || true
@@ -214,7 +213,7 @@ while true; do
     echo '8. 常用命令'
     echo '9. 更新脚本'
     echo '10. 更新控制面板'
-    echo -e "11. ${RED}卸载Sbshell${NC}"
+    echo '11. 卸载Sbshell'
     echo '0. 退出'
     echo -e "${CYAN}===============================================${NC}"
     read -rp '请选择操作: ' choice
