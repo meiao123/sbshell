@@ -103,7 +103,9 @@ suite_begin "supply chain: script updates must not use mutable main refs (P2-4)"
 
 refs=()
 for f in sbshall.sh debian/menu.sh debian/update_scripts.sh openwrt/menu.sh openwrt/update_scripts.sh; do
-    ref=$(grep -oE '(BASE_REF|RELEASE_REF)=[^ ]+' "$SBSHELL_SRC/$f" | head -n1 | cut -d= -f2)
+    # 只认 SHA 形状：脚本里还有 `RELEASE_REF=$declared` 这类运行时赋值，
+    # `[^ ]+` 会把字面量当成固定引用（CI 里实测踩过）。
+    ref=$(grep -oE '(BASE_REF|RELEASE_REF)=[0-9a-f]{40}' "$SBSHELL_SRC/$f" | head -n1 | cut -d= -f2)
     refs+=("$ref")
     # 必须是不可变的提交 SHA：分支名可被移动（2026-09-11 那次事故就是引用的分支被删除，
     # 导致一键安装与自更新全部 404，而当时套件只做字符串形状检查，放过了它）。
@@ -112,10 +114,19 @@ for f in sbshall.sh debian/menu.sh debian/update_scripts.sh openwrt/menu.sh open
     else
         fail "$f 的发布引用不是不可变提交: '$ref'"
     fi
-    if grep -qE 'raw\.githubusercontent\.com/[^" ]*/main/' "$SBSHELL_SRC/$f"; then
-        fail "$f 仍从 main 分支下载脚本"
+    # 唯一允许从 main 读取的是发布声明文件 RELEASE：它只有一行不可变 SHA，且 main 本来就是
+    # README 一键引导的信任锚（能改写 main 的人本来就能替换引导脚本，没有新增信任假设）。
+    # 脚本内容一律按不可变 SHA 下载 —— 这里只禁止从 main 下载脚本/配置内容。
+    main_urls=$(grep -oE 'raw\.githubusercontent\.com/[^" ]*/main/[^" ]*' "$SBSHELL_SRC/$f" | sort -u)
+    if [ -z "$main_urls" ]; then
+        pass "$f 未从 main 分支读取任何内容"
     else
-        pass "$f 未使用 main 分支"
+        for u in $main_urls; do
+            case "$u" in
+                */RELEASE) pass "$f 只从 main 读取发布声明 RELEASE" ;;
+                *) fail "$f 从 main 分支读取了非声明内容: $u" ;;
+            esac
+        done
     fi
 done
 
