@@ -96,14 +96,14 @@ download_repo_file() {
 SCRIPTS=(check_environment.sh install_singbox.sh manual_input.sh manual_update.sh auto_update.sh configure_tproxy.sh configure_tun.sh start_singbox.sh stop_singbox.sh clean_nft.sh set_defaults.sh commands.sh switch_mode.sh manage_autostart.sh check_config.sh update_scripts.sh update_ui.sh menu.sh)
 install -d -o root -g root -m 0755 "$SCRIPT_DIR"
 
-confirm_yes() { 
+confirm_yes() {
     local prompt="$1" answer
-    while true; do 
+    while true; do
         read -r -p "$prompt [y/n]: " answer || { echo -e "${YELLOW}无法读取输入（EOF），已取消。${NC}" >&2; return 1; }
-        case "$answer" in 
-            [Yy]) return 0;; 
-            [Nn]) return 1;; 
-            *) echo -e "${YELLOW}请输入 y 或 n。${NC}";; 
+        case "$answer" in
+            [Yy]) return 0;;
+            [Nn]) return 1;;
+            *) echo -e "${YELLOW}请输入 y 或 n。${NC}";;
         esac
     done
 }
@@ -123,11 +123,11 @@ uninstall_sbshell() {
 }
 
 update_scripts() {
-        local tmp backup s rc=0
+    local tmp backup s rc=0
     local -a backed_up=()
     tmp=$(mktemp -d /tmp/sbshell-openwrt.XXXXXX) || return 1
     backup=$(mktemp -d /tmp/sbshell-openwrt-backup.XXXXXX) || { rm -rf "$tmp"; return 1; }
-    
+
     restore_scripts() {
         local item
         for item in "${backed_up[@]}"; do
@@ -186,6 +186,8 @@ initialize() {
     touch "$INITIALIZED_FILE" && chmod 0644 "$INITIALIZED_FILE"
     run manual_input.sh || return 1
     run start_singbox.sh || return 1
+    # 初始化时自动安装默认 UI；UI 下载失败不阻断主程序初始化。
+    run update_ui.sh <<< '1' || echo -e "${YELLOW}默认 UI 安装失败，可稍后从菜单“10. 更新控制面板”重试。${NC}" >&2
 }
 
 if [ ! -f "$INITIALIZED_FILE" ]; then
@@ -214,6 +216,7 @@ while true; do
     echo '10. 更新控制面板'
     echo -e "11. ${RED}卸载Sbshell${NC}"
     echo '0. 退出'
+    echo -e "${CYAN}===============================================${NC}"
     read -rp '请选择操作: ' choice
     case "$choice" in
         1) run switch_mode.sh; run manual_input.sh; run start_singbox.sh;;
