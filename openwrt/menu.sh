@@ -69,7 +69,7 @@ github_api_download() {
 download_repo_file() {
     local path="$1" ref="$2" output="$3"
     if curl --fail --silent --location --proto '=https' --tlsv1.2 \
-        --connect-timeout 10 --max-time 60 "$REPO_RAW/$ref/$path" -o "$output" && [ -s "$output" ]; then
+        --connect-timeout 10 --max-time 60 "https://raw.githubusercontent.com/meiao123/sbshell/$ref/$path" -o "$output" && [ -s "$output" ]; then
         return 0
     fi
     rm -f "$output"
@@ -86,7 +86,7 @@ resolve_release_ref() {
         *[!0-9a-f]*) ;;
         *) if [ "${#declared}" -eq 40 ]; then
                BASE_REF=$declared
-               BASE_URL="$REPO_RAW/$BASE_REF/openwrt"
+               BASE_URL="https://raw.githubusercontent.com/meiao123/sbshell/$BASE_REF/openwrt"
            fi ;;
     esac
     return 0
