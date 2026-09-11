@@ -104,6 +104,8 @@ assert_no_grep '第二次确认：' "$SBSHELL_SRC/openwrt/menu.sh" "卸载流程
 
 suite_begin "openwrt: startup, opkg lock and config download UX"
 assert_grep 'mkdir -p /var/lock' "$SBSHELL_SRC/openwrt/install_singbox.sh" "opkg 操作前确保锁目录存在"
+assert_grep 'run_opkg' "$SBSHELL_SRC/openwrt/install_singbox.sh" "opkg 调用统一过滤已知无害锁清理告警"
+assert_grep 'opkg_conf_deinit.*opkg.lock' "$SBSHELL_SRC/openwrt/install_singbox.sh" "仅过滤 opkg.lock 清理告警"
 assert_grep 'max-time 30' "$SBSHELL_SRC/openwrt/manual_input.sh" "配置下载超时为 30 秒"
 assert_grep 'curl_pid=' "$SBSHELL_SRC/openwrt/manual_input.sh" "配置下载使用后台进程记录 PID"
 assert_grep '配置文件下载中' "$SBSHELL_SRC/openwrt/manual_input.sh" "配置下载显示进度状态"
@@ -115,10 +117,11 @@ assert_grep 'sing-box 已在运行，无需重复启动' "$SBSHELL_SRC/openwrt/s
 assert_grep 'pidof sing-box' "$SBSHELL_SRC/openwrt/stop_singbox.sh" "停止前检查 sing-box 状态"
 assert_grep 'sing-box 未运行，无需重复停止' "$SBSHELL_SRC/openwrt/stop_singbox.sh" "已停止时不重复调用服务"
 
-suite_begin "openwrt: uninstall removes Sbshell, sing-box and firewall state"
-assert_grep 'bash "\$SCRIPT_DIR/clean_nft.sh"' "$SBSHELL_SRC/openwrt/menu.sh" "卸载前清理 Sbshell 管理的防火墙"
-assert_grep 'opkg remove --purge sing-box' "$SBSHELL_SRC/openwrt/menu.sh" "卸载时通过 opkg 移除 sing-box"
+suite_begin "openwrt: uninstall keeps cleanup moving when sing-box is a dependency"
+assert_grep 'opkg remove sing-box' "$SBSHELL_SRC/openwrt/menu.sh" "卸载使用 OpenWrt opkg remove"
+assert_grep '继续清理 Sbshell 文件' "$SBSHELL_SRC/openwrt/menu.sh" "sing-box 无法卸载时继续清理"
 assert_grep 'rm -rf /etc/sing-box' "$SBSHELL_SRC/openwrt/menu.sh" "卸载时删除 sing-box 配置与脚本目录"
-assert_grep 'opkg remove --purge sing-box' "$SBSHELL_SRC/openwrt/menu.sh" "卸载路径执行完整软件包卸载"
+assert_grep '卸载失败.*继续' "$SBSHELL_SRC/openwrt/menu.sh" "sing-box 卸载失败时只告警并继续"
+assert_no_grep 'opkg remove --purge sing-box' "$SBSHELL_SRC/openwrt/menu.sh" "不再调用 OpenWrt 不支持的 --purge"
 
 suite_end
