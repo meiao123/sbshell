@@ -5,7 +5,11 @@ GREEN='\033[0;32m'; RED='\033[0;31m'; NC='\033[0m'
 MANUAL_FILE=/etc/sing-box/manual.conf
 DEFAULTS_FILE=/etc/sing-box/defaults.conf
 CONFIG_FILE=/etc/sing-box/config.json
-TMP_DIR=$(mktemp -d /tmp/sbshell-config.XXXXXX); trap 'rm -rf "$TMP_DIR"' EXIT
+LOCK_DIR=/tmp/sbshell-config.lock
+while ! mkdir "$LOCK_DIR" 2>/dev/null; do sleep 1; done
+TMP_DIR=$(mktemp -d /tmp/sbshell-config.XXXXXX)
+cleanup(){ rm -rf "$TMP_DIR"; rmdir "$LOCK_DIR" 2>/dev/null || true; }
+trap cleanup EXIT
 read_value(){ awk -F= -v k="$1" '$1==k {sub(/^[^=]*=/,"");print;exit}' "$2" 2>/dev/null || true; }
 valid_url(){ [[ "$1" =~ ^https://[^[:space:]]+$ ]]; }
 MODE=$(read_value MODE /etc/sing-box/mode.conf)
@@ -17,16 +21,18 @@ if [ "${1:-}" = "yes" ]; then
   if [ -z "$TEMPLATE_URL" ]; then case "$MODE" in TProxy) TEMPLATE_URL=$(read_value TPROXY_TEMPLATE_URL "$DEFAULTS_FILE");; TUN) TEMPLATE_URL=$(read_value TUN_TEMPLATE_URL "$DEFAULTS_FILE");; *) echo '未知模式。' >&2; exit 1;; esac; fi
   valid_url "$BACKEND_URL" && [ -n "$SUBSCRIPTION_URL" ] && valid_url "$TEMPLATE_URL" || { echo '配置地址无效。' >&2; exit 1; }
   printf 'BACKEND_URL=%s\nSUBSCRIPTION_URL=%s\nTEMPLATE_URL=%s\n' "$BACKEND_URL" "$SUBSCRIPTION_URL" "$TEMPLATE_URL" > "$TMP_DIR/manual.conf"
-  install -o root -g root -m 0600 "$TMP_DIR/manual.conf" "$MANUAL_FILE"
 else
   [ -f "$MANUAL_FILE" ] || { echo '未找到 manual.conf，请先配置。' >&2; exit 1; }
   BACKEND_URL=$(read_value BACKEND_URL "$MANUAL_FILE"); SUBSCRIPTION_URL=$(read_value SUBSCRIPTION_URL "$MANUAL_FILE"); TEMPLATE_URL=$(read_value TEMPLATE_URL "$MANUAL_FILE")
 fi
 valid_url "$BACKEND_URL" && [ -n "$SUBSCRIPTION_URL" ] && valid_url "$TEMPLATE_URL" || { echo 'manual.conf 配置无效。' >&2; exit 1; }
-FULL_URL="${BACKEND_URL}/config/${SUBSCRIPTION_URL}&file=${TEMPLATE_URL}"
+FULL_URL="${BACKEND_URL%/}/config/${SUBSCRIPTION_URL}&file=${TEMPLATE_URL}"
 TMP_CONFIG="$TMP_DIR/config.json"
 curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 60 "$FULL_URL" -o "$TMP_CONFIG" || { echo '配置下载失败。' >&2; exit 1; }
 sing-box check -c "$TMP_CONFIG" || { echo '配置验证失败。' >&2; exit 1; }
+if [ "${1:-}" = "yes" ]; then
+    install -o root -g root -m 0600 "$TMP_DIR/manual.conf" "$MANUAL_FILE"
+fi
 [ ! -f "$CONFIG_FILE" ] || cp -a "$CONFIG_FILE" "$CONFIG_FILE.backup"
 install -o root -g root -m 0644 "$TMP_CONFIG" "$CONFIG_FILE"
 if ! /etc/init.d/sing-box restart; then
