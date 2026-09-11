@@ -8,7 +8,6 @@ CONFIG_FILE=/etc/sing-box/config.json
 MODE_FILE=/etc/sing-box/mode.conf
 LOCK_FILE=/run/lock/sbshell-config.lock
 TMP_FILES=()
-# 使用 ${arr[@]+...} 兜底，避免老 bash 在 set -u 下对空数组报 unbound variable。
 cleanup() { local file; for file in ${TMP_FILES[@]+"${TMP_FILES[@]}"}; do rm -f "$file" 2>/dev/null || true; done; }
 trap cleanup EXIT
 
@@ -16,8 +15,7 @@ trap cleanup EXIT
 install -d -o root -g root -m 0755 /run/lock
 
 get_default() { local key="$1"; grep -m1 "^${key}=" "$DEFAULTS_FILE" 2>/dev/null | cut -d'=' -f2- || true; }
-valid_url() { [[ "$1" =~ ^https://[^[:space:]]+$ ]]; }
-# 订阅地址不是 URL（是后端约定的查询串），但必须排除空白、'#' 以及会覆盖 file 参数的片段。
+valid_url() { [[ "$1" =~ ^https://[^[:space:]]+$/ ]]; }
 valid_subscription() {
     local value="$1"
     [ -z "$value" ] && return 0
@@ -27,7 +25,7 @@ valid_subscription() {
     return 0
 }
 
-# 用 sed 解析 MODE（grep -oP 是 GNU 专有的 PCRE 扩展，换到 busybox grep 的系统上会失败）。
+# 用 sed 解析 MODE，避免依赖 GNU grep 的 PCRE 扩展。
 MODE=$(sed -n 's/^MODE=//p' "$MODE_FILE" 2>/dev/null | head -n1)
 while true; do
     read -rp '请输入后端地址(回车使用默认值可留空): ' BACKEND_URL
@@ -45,9 +43,8 @@ while true; do
     [[ "$confirm_choice" =~ ^[Yy]$ ]] || continue
     [ -z "$BACKEND_URL" ] || valid_url "$BACKEND_URL" || { echo -e "${RED}后端地址必须是 HTTPS URL。${NC}"; continue; }
     [ -z "$TEMPLATE_URL" ] || valid_url "$TEMPLATE_URL" || { echo -e "${RED}配置文件地址必须是 HTTPS URL。${NC}"; continue; }
-    valid_subscription "$SUBSCRIPTION_URL" || { echo -e "${RED}订阅地址包含非法字符（空白、# 或 &file=）。${NC}"; continue; }
+    valid_subscription "$SUBSCRIPTION_URL" || { echo -e "${RED}订阅地址包含非法字符。${NC}"; continue; }
     [ -z "$BACKEND_URL" ] || [ -n "$SUBSCRIPTION_URL" ] || { echo -e "${RED}使用后端地址时订阅地址不能为空。${NC}"; continue; }
-
     exec 9>"$LOCK_FILE"
     flock -x 9
     tmp_manual=$(mktemp "$MANUAL_FILE.XXXXXX")
