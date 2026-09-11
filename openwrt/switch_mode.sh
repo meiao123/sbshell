@@ -1,39 +1,42 @@
 #!/bin/bash
+set -Eeuo pipefail
 
-# 定义颜色
 GREEN='\033[0;32m'
 RED='\033[0;31m'
-NC='\033[0m' # 无颜色
+NC='\033[0m'
+MODE_FILE=/etc/sing-box/mode.conf
 
-# 检查 sing-box 是否已安装
-if ! command -v sing-box &> /dev/null; then
+if ! command -v sing-box >/dev/null 2>&1; then
     echo "请安装 sing-box 后再执行。"
     bash /etc/sing-box/scripts/install_singbox.sh
     exit 1
 fi
 
-# 确定文件存在
-mkdir -p /etc/sing-box/
-[ -f /etc/sing-box/mode.conf ] || touch /etc/sing-box/mode.conf
-chmod 777 /etc/sing-box/mode.conf
+install -d -o root -g root -m 0755 /etc/sing-box
+if [ -e "$MODE_FILE" ] && [ ! -f "$MODE_FILE" ]; then
+    echo -e "${RED}mode.conf 不是普通文件，拒绝修改。${NC}" >&2
+    exit 1
+fi
+[ -f "$MODE_FILE" ] || install -o root -g root -m 0644 /dev/null "$MODE_FILE"
+chown root:root "$MODE_FILE"
+chmod 0644 "$MODE_FILE"
 
 echo "切换模式开始...请根据提示输入操作。"
-
-
 while true; do
-    # 选择模式
     read -rp "请选择模式(1: TProxy 模式, 2: TUN 模式): " mode_choice
 
     /etc/init.d/sing-box stop
 
-    case $mode_choice in
+    case "$mode_choice" in
         1)
-            echo "MODE=TProxy" | tee /etc/sing-box/mode.conf > /dev/null
+            printf 'MODE=TProxy\n' > "$MODE_FILE"
+            chmod 0644 "$MODE_FILE"
             echo -e "${GREEN}当前选择模式为:TProxy 模式${NC}"
             break
             ;;
         2)
-            echo "MODE=TUN" | tee /etc/sing-box/mode.conf > /dev/null
+            printf 'MODE=TUN\n' > "$MODE_FILE"
+            chmod 0644 "$MODE_FILE"
             echo -e "${GREEN}当前选择模式为:TUN 模式${NC}"
             break
             ;;
