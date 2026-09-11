@@ -57,18 +57,22 @@ if [ -s "$OLD_TPROXY_STATE" ]; then
     old_pref=$(sed -n 's/^RULE_PREF=//p' "$TPROXY_STATE_FILE" | head -n1)
     old_interface=$(sed -n 's/^INTERFACE=//p' "$TPROXY_STATE_FILE" | head -n1)
     [ -n "$old_interface" ] || old_interface="$INTERFACE"
-    if grep -q '^RULE_CREATED=1$' "$TPROXY_STATE_FILE" && [ -n "$old_pref" ]; then
+    rule_owned=0
+    route_owned=0
+    grep -q '^RULE_OWNED=1$' "$TPROXY_STATE_FILE" && rule_owned=1
+    grep -q '^ROUTE_OWNED=1$' "$TPROXY_STATE_FILE" && route_owned=1
+    # Backward compatibility: old state files used *_CREATED as the ownership indicator.
+    [ "$rule_owned" -eq 1 ] || { grep -q '^RULE_CREATED=1$' "$TPROXY_STATE_FILE" && rule_owned=1; }
+    [ "$route_owned" -eq 1 ] || { grep -q '^ROUTE_CREATED=1$' "$TPROXY_STATE_FILE" && route_owned=1; }
+    if [ "$rule_owned" -eq 1 ] && [ -n "$old_pref" ]; then
         ip -4 rule del pref "$old_pref" fwmark "$PROXY_FWMARK" lookup "$PROXY_ROUTE_TABLE" 2>/dev/null || true
     fi
-    if grep -q '^ROUTE_CREATED=1$' "$TPROXY_STATE_FILE"; then
+    if [ "$route_owned" -eq 1 ]; then
         ip -4 route del local default dev "$old_interface" table "$PROXY_ROUTE_TABLE" 2>/dev/null || true
     fi
     rm -f "$TPROXY_STATE_FILE"
 fi
 
-# TUN 模式只需要放行 forward：sing-box 的 auto_route/auto_redirect 负责透明劫持，
-# 本表原先还创建 input/output 两个空的 policy accept 基链，它们不做任何过滤，
-# 只会在同一 hook 上按基链顺序无条件放行流量，属于无谓的绕过面，故收窄为 forward。
 cat > "$TMP" <<'EOF'
 table inet sing-box-tun {
     chain forward { type filter hook forward priority 0; policy accept; }
@@ -79,9 +83,6 @@ if ! nft -f "$TMP"; then
     nft list table inet sing-box-tun >/dev/null 2>&1 && nft delete table inet sing-box-tun || true
     [ ! -s "$OLD_TUN_TABLE" ] || nft -f "$OLD_TUN_TABLE" 2>/dev/null || true
     [ ! -s "$OLD_TPROXY_TABLE" ] || nft -f "$OLD_TPROXY_TABLE" 2>/dev/null || true
-    # 还原机制保存的 ip rule/route 快照。iproute2 输出形如 "0:<TAB>from all lookup local"，
-    # 因此必须先用 ${line#*:} 去掉 "pref:" 再裁剪前导空白；旧代码用 ${line#*: }（冒号+空格）
-    # 对制表符不生效，spec 会退化成整行，恢复逻辑实际从未生效。
     while IFS= read -r line; do
         [ -n "$line" ] || continue
         pref=${line%%:*}
@@ -94,7 +95,7 @@ if ! nft -f "$TMP"; then
     while IFS= read -r route; do
         [ -n "$route" ] || continue
         ip -4 route show table "$PROXY_ROUTE_TABLE" | grep -Fqx "$route" || ip -4 route add table "$PROXY_ROUTE_TABLE" $route 2>/dev/null || true
-done < "$OLD_ROUTE"
+    done < "$OLD_ROUTE"
     if [ -s "$OLD_TUN_STATE" ]; then install -o root -g root -m 0600 "$OLD_TUN_STATE" "$TUN_STATE_FILE"; else rm -f "$TUN_STATE_FILE"; fi
     if [ -s "$OLD_TPROXY_STATE" ]; then install -o root -g root -m 0600 "$OLD_TPROXY_STATE" "$TPROXY_STATE_FILE"; else rm -f "$TPROXY_STATE_FILE"; fi
     exit 1
