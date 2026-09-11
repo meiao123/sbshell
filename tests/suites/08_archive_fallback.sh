@@ -31,4 +31,8 @@ assert_grep '"main"' "$SBSHELL_SRC/sbshall.sh" "sbshall.sh 使用 main 作为最
 assert_grep 'main/openwrt/' "$SBSHELL_SRC/openwrt/menu.sh" "OpenWrt 更新路径直接指向 main"
 assert_grep 'main/debian/' "$SBSHELL_SRC/debian/menu.sh" "Debian 更新路径直接指向 main"
 
+suite_begin "HTTP and HTTPS config URLs are accepted"
+assert_grep 'https\?://\[\^\[:space:\]\]\+' "$SBSHELL_SRC/openwrt/manual_input.sh" "manual_input.sh 接受 HTTP/HTTPS URL"
+assert_grep -- '--proto' "$SBSHELL_SRC/openwrt/manual_input.sh" "manual_input.sh 使用显式协议白名单"
+assert_grep -- "=http,https" "$SBSHELL_SRC/openwrt/manual_input.sh" "配置下载同时允许 HTTP 与 HTTPS"
 suite_end
