@@ -28,15 +28,19 @@ detect_os() {
     else echo -e "${RED}不支持的操作系统。${RESET}" >&2; exit 1; fi
 }
 install_dependencies() {
+    local package
     local dependencies=(curl socat)
     if [[ "$PKG_MANAGER" == apt ]]; then dependencies+=(cron ufw git openssh-client); else dependencies+=(cronie firewalld git openssh-clients); fi
-    for pkg in "${dependencies[@]}"; do
-        if [[ "$PKG_MANAGER" == apt ]]; then
-            dpkg -s "$pkg" &>/dev/null || sudo apt-get update -qq && sudo apt-get install -y "$pkg" >/dev/null
-        else
-            rpm -q "$pkg" &>/dev/null || sudo yum install -y "$pkg" >/dev/null
-        fi
-    done
+    if [[ "$PKG_MANAGER" == apt ]]; then
+        sudo apt-get update -qq
+        for package in "${dependencies[@]}"; do
+            dpkg -s "$package" >/dev/null 2>&1 || sudo apt-get install -y "$package" >/dev/null
+        done
+    else
+        for package in "${dependencies[@]}"; do
+            rpm -q "$package" >/dev/null 2>&1 || sudo yum install -y "$package" >/dev/null
+        done
+    fi
 }
 configure_firewall() {
     local firewall_cmd firewall_service_name ssh_port
@@ -44,7 +48,9 @@ configure_firewall() {
     [[ "$ssh_port" =~ ^[0-9]+$ && "$ssh_port" -ge 1 && "$ssh_port" -le 65535 ]] || { echo -e "${RED}SSH 端口无效。${RESET}" >&2; exit 1; }
     if [[ "$OS_TYPE" == ubuntu || "$OS_TYPE" == debian ]]; then
         firewall_cmd=ufw; firewall_service_name=ufw
-        sudo "$firewall_cmd" status | grep -q inactive && echo y | sudo "$firewall_cmd" enable >/dev/null 2>&1 || true
+        if sudo "$firewall_cmd" status | grep -q inactive; then
+            echo y | sudo "$firewall_cmd" enable >/dev/null 2>&1 || true
+        fi
         sudo "$firewall_cmd" allow "$ssh_port"/tcp >/dev/null
         sudo "$firewall_cmd" allow 80/tcp >/dev/null
         sudo "$firewall_cmd" allow 443/tcp >/dev/null
@@ -58,8 +64,15 @@ configure_firewall() {
     fi
 }
 download_acme() {
-    [ -d "$ACME_INSTALL_PATH" ] && return 0
     local clone_dir="$TMP_DIR/acme.sh" allowed_signers="$TMP_DIR/allowed_signers"
+    if [ -x "$ACME_INSTALL_PATH/acme.sh" ]; then
+        export PATH="$ACME_INSTALL_PATH:$PATH"
+        ACME_CMD=$(command -v acme.sh || true)
+        if [ -n "$ACME_CMD" ]; then
+            return 0
+        fi
+    fi
+    rm -rf "$ACME_INSTALL_PATH"
     printf '%s\n' "$ACME_SIGNER" > "$allowed_signers"
     git clone --depth 1 --branch "$ACME_VERSION" "$ACME_REPO" "$clone_dir" >/dev/null 2>&1
     git -C "$clone_dir" config gpg.ssh.allowedSignersFile "$allowed_signers"
