@@ -251,7 +251,7 @@ touch "$CRON_FILE"; sed -i "/[[:space:]]$CRON_MARK\$/d" "$CRON_FILE"; printf '%s
 echo -e "${GREEN}UI 自动更新已设置。${NC}"
 }
 while true; do
-    echo -e "${CYAN}=========== Sbshell UI 管理菜单 ===========${NC}"
+    echo -e "${CYAN}======== Sbshell UI 管理菜单 ========${NC}"
     echo '1. 默认 UI'
     echo '2. zashboard'
     echo '3. metacubexd'
@@ -259,7 +259,7 @@ while true; do
     echo '5. 检查 UI'
     echo '6. 设置自动更新'
     echo '0. 退出'
-    echo -e "${CYAN}===================================${NC}"
+    echo -e "${CYAN}====================================${NC}"
     read -rp '请选择: ' choice
     case "$choice" in
         1) url=$(get_config_url || true); install_ui "${url:-$ZASHBOARD_URL}"; exit $?;;
