@@ -20,13 +20,17 @@ else
     exit 1
 fi
 
-install_dependency() {
-    if command -v "$1" >/dev/null 2>&1; then return 0; fi
-    if $is_openwrt; then opkg update && opkg install "$1"; else apt-get update && apt-get install -y "$1"; fi
+install_package() {
+    local package="$1"
+    if $is_openwrt; then opkg update && opkg install "$package"; else apt-get update && apt-get install -y "$package"; fi
 }
-install_dependency curl
-$is_openwrt && install_dependency bash
-install_dependency nft
+ensure_command() {
+    local command="$1" package="$2"
+    command -v "$command" >/dev/null 2>&1 || install_package "$package"
+}
+ensure_command curl curl
+ensure_command bash bash
+ensure_command nft nftables
 command -v curl >/dev/null 2>&1 || { echo -e "${RED}curl 安装失败。${NC}" >&2; exit 1; }
 command -v bash >/dev/null 2>&1 || { echo -e "${RED}bash 安装失败。${NC}" >&2; exit 1; }
 command -v nft >/dev/null 2>&1 || { echo -e "${RED}nft 安装失败。${NC}" >&2; exit 1; }
