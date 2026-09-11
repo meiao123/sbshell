@@ -34,7 +34,9 @@ run_test() {
         printf "============================================================\n"
         local total_duration_ms=0 min_time_ms=999999 max_time_ms=0 successful_runs=0
         for i in $(seq 1 "$NUM_TESTS"); do
-            local CACHE_BUST_URL="${TARGET_URL}?_t=$(date +%s%N)" CURL_FORMAT='%{time_connect},%{time_pretransfer},%{time_total}' response
+            local CACHE_BUST_URL CURL_FORMAT response
+            CACHE_BUST_URL="${TARGET_URL}?_t=$(date +%s%N)"
+            CURL_FORMAT='%{time_connect},%{time_pretransfer},%{time_total}'
             response=$(curl -fsS --connect-timeout "$CONNECT_TIMEOUT" -o /dev/null -w "$CURL_FORMAT" -H 'Cache-Control: no-cache' -H 'Pragma: no-cache' "$CACHE_BUST_URL" || true)
             if [ -z "$response" ]; then
                 printf "  第 %d/%d 次: %s❌ 测试失败 (无法连接或超时)%s\n" "$i" "$NUM_TESTS" "$COLOR_RED" "$COLOR_RESET"
