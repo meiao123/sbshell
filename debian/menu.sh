@@ -5,8 +5,8 @@ CYAN='\033[0;36m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; WH
 [ "$(id -u)" -eq 0 ] || exec sudo bash "$0" "$@"
 
 SCRIPT_DIR=/etc/sing-box/scripts
-INITIALIZED_FILE="$SCRIPT_DIR/.initialized"
-ROLE_FILE="$SCRIPT_DIR/.role"
+INITIALIZED_FILE=/etc/sing-box/.initialized
+ROLE_FILE=/etc/sing-box/.role
 BASE_REF=d9be5b66153ee2acaa8a3e040325d23c4f96ee53
 BASE_URL="https://raw.githubusercontent.com/meiao123/sbshell/$BASE_REF/debian"
 ROLE=''
@@ -50,7 +50,7 @@ uninstall_sbshell() {
     confirm_yes '第一次确认：确定要卸载 Sbshell 吗？' || { echo -e "${GREEN}已取消卸载。${NC}"; return 0; }
     confirm_yes '第二次确认：此操作将删除 Sbshell 管理脚本，确定继续吗？' || { echo -e "${GREEN}已取消卸载。${NC}"; return 0; }
     echo -e "${CYAN}正在卸载 Sbshell...${NC}"
-    rm -f /usr/local/bin/sb /etc/cron.d/sbshell-ui /etc/cron.d/sbshell-singbox /etc/sing-box/update-ui.sh /etc/sing-box/update-singbox.sh
+    rm -f /usr/local/bin/sb /etc/cron.d/sbshell-ui /etc/cron.d/sbshell-singbox /etc/sing-box/update-ui.sh /etc/sing-box/update-singbox.sh "$INITIALIZED_FILE" "$ROLE_FILE"
     if [ -f /etc/sing-box/scripts/menu.sh ]; then
         sed -i '/# sing-box 快捷方式/,/alias sb=/d' /root/.bashrc 2>/dev/null || true
     fi
@@ -61,9 +61,6 @@ uninstall_sbshell() {
 download_all_scripts() {
     local tmpdir backupdir script item rc=0
     tmpdir=$(mktemp -d /tmp/sbshell-download.XXXXXX); backupdir=$(mktemp -d /tmp/sbshell-backup.XXXXXX) || return 1
-    # 不要在此处使用 `trap ... RETURN` 清理临时目录：RETURN trap 在本函数返回后仍会对
-    # 同一调用链上每个父函数的返回再次触发，那时这里的 local 变量已被销毁，配合
-    # `set -u` 会以 "unbound variable" 中止整个脚本。统一使用显式清理 + 单一返回点。
     restore_scripts() {
         local item
         for item in "${SCRIPTS[@]}"; do
@@ -131,8 +128,6 @@ run_initialization() {
     touch "$INITIALIZED_FILE"
     chmod 0644 "$INITIALIZED_FILE"
 }
-# 统一写入 /root/.bashrc：脚本以 root 运行（sudo 可能保留调用者 HOME），
-# 而卸载路径只清理 /root/.bashrc，写 $HOME 会造成“装了但卸不掉”的别名残留。
 setup_alias() { local bashrc=/root/.bashrc; if ! grep -Fq 'alias sb=' "$bashrc" 2>/dev/null; then printf '\n# sing-box 快捷方式\nalias sb='"'bash /etc/sing-box/scripts/menu.sh'"'\n' >> "$bashrc"; fi; cat > /usr/local/bin/sb <<'EOF'
 #!/bin/bash
 exec sudo bash /etc/sing-box/scripts/menu.sh "$@"
@@ -144,7 +139,7 @@ show_server_menu() { echo -e "\n${CYAN}================= sbshell服务端管理�
 handle_server_choice() { local choice; read -rp '请选择操作: ' choice; case "$choice" in 1) run_systemctl 启动sing-box start;; 2) run_systemctl 停止sing-box stop;; 3) run_systemctl 重启sing-box restart;; 4) run_systemctl 设置开机自启 enable;; 5) journalctl -u sing-box --output cat -f;; 6) run_script 更新服务端配置文件 update_config.sh;; 7) if command -v sing-box >/dev/null 2>&1; then run_script 检查\ sing-box\ 更新 check_update.sh; else run_script 安装/更新\ sing-box install_singbox.sh; fi;; 8) run_script 更新脚本 update_scripts.sh;; 9) run_script 证书申请 setup.sh;; 10) run_script 更换XanMod内核 kernel.sh;; 11) run_script 网络优化 optimize.sh;; 12) run_script 手动配置防火墙 ufw.sh;; 13) uninstall_sbshell;; 0) exit 0;; *) echo -e "${RED}无效选择。${NC}";; esac; }
 main() {
     require_cmd curl
-    install -d -o root -g root -m 0755 "$SCRIPT_DIR"
+    install -d -o root -g root -m 0755 /etc/sing-box "$SCRIPT_DIR"
     cd "$SCRIPT_DIR"
     [ "${1:-}" = menu ] && shift || true
     if [ ! -f "$INITIALIZED_FILE" ]; then
