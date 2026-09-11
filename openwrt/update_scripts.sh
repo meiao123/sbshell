@@ -45,7 +45,7 @@ github_api_download() {
 github_archive_download() {
     local path="$1" ref="$2" output="$3" archive prefix entry
     command -v tar >/dev/null 2>&1 || return 1
-    archive=$(mktemp /tmp/sbshell-archive.XXXXXX.tar.gz) || return 1
+    archive=$(mktemp /tmp/sbshell-archive.XXXXXX) || return 1
     if ! curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
         --connect-timeout 10 --max-time 120 \
         "https://github.com/meiao123/sbshell/archive/$ref.tar.gz" -o "$archive"; then
