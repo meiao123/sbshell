@@ -9,6 +9,18 @@ TUN_STATE_FILE=/etc/sing-box/tun.state
 TABLE_LIST=$(mktemp /tmp/sbshell-nft-tables.XXXXXX) || exit 1
 trap 'rm -f "$TABLE_LIST"' EXIT
 
+wait_for_singbox_exit() {
+    local elapsed=0
+    while pidof sing-box >/dev/null 2>&1; do
+        elapsed=$((elapsed + 1))
+        if [ "$elapsed" -ge 10 ]; then
+            echo 'sing-box 仍在运行，防火墙清理已中止。' >&2
+            return 1
+        fi
+        sleep 1
+    done
+}
+
 # 精确匹配 fwmark/table，避免 "fwmark 0x1" 命中 "fwmark 0x10"。
 rule_pref_for_mark() {
     ip -4 rule show | awk -v m="0x$1" -v t="$2" '
@@ -90,6 +102,7 @@ clean_tproxy_routes() {
     return 0
 }
 
+wait_for_singbox_exit
 clean_owned_table sing-box-tun "$TUN_STATE_FILE" TUN || exit 1
 clean_tproxy_routes || exit 1
 clean_owned_table sing-box "$TPROXY_STATE_FILE" TProxy || exit 1
