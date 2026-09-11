@@ -115,4 +115,10 @@ assert_grep 'sing-box 已在运行，无需重复启动' "$SBSHELL_SRC/openwrt/s
 assert_grep 'pidof sing-box' "$SBSHELL_SRC/openwrt/stop_singbox.sh" "停止前检查 sing-box 状态"
 assert_grep 'sing-box 未运行，无需重复停止' "$SBSHELL_SRC/openwrt/stop_singbox.sh" "已停止时不重复调用服务"
 
+suite_begin "openwrt: uninstall removes Sbshell, sing-box and firewall state"
+assert_grep 'bash "\$SCRIPT_DIR/clean_nft.sh"' "$SBSHELL_SRC/openwrt/menu.sh" "卸载前清理 Sbshell 管理的防火墙"
+assert_grep 'opkg remove --purge sing-box' "$SBSHELL_SRC/openwrt/menu.sh" "卸载时通过 opkg 移除 sing-box"
+assert_grep 'rm -rf /etc/sing-box' "$SBSHELL_SRC/openwrt/menu.sh" "卸载时删除 sing-box 配置与脚本目录"
+assert_grep 'opkg remove --purge sing-box' "$SBSHELL_SRC/openwrt/menu.sh" "卸载路径执行完整软件包卸载"
+
 suite_end
