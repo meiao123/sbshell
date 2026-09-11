@@ -1,234 +1,105 @@
 #!/bin/bash
+set -Eeuo pipefail
 
-UI_DIR="/etc/sing-box/ui"
-BACKUP_DIR="/tmp/sing-box/ui_backup"
-TEMP_DIR="/tmp/sing-box-ui"
+[ "$(id -u)" -eq 0 ] || exec sudo bash "$0" "$@"
+UI_DIR=/etc/sing-box/ui
+BACKUP_DIR=/var/lib/sing-box/ui-backups
+ZASHBOARD_URL=https://github.com/Zephyruso/zashboard/archive/refs/heads/gh-pages.zip
+METACUBEXD_URL=https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip
+YACD_URL=https://github.com/MetaCubeX/Yacd-meta/archive/refs/heads/gh-pages.zip
 
-ZASHBOARD_URL="https://ghfast.top/https://github.com/Zephyruso/zashboard/archive/refs/heads/gh-pages.zip"
-METACUBEXD_URL="https://ghfast.top/https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip"
-YACD_URL="https://ghfast.top/https://github.com/MetaCubeX/Yacd-meta/archive/refs/heads/gh-pages.zip"
-
-# 创建备份目录
-mkdir -p "$BACKUP_DIR"
-mkdir -p "$TEMP_DIR"
-
-# 检查依赖并安装
-check_and_install_dependencies() {
-    if ! command -v busybox &> /dev/null; then
-        echo -e "\e[31mbusybox 未安装，正在安装...\e[0m"
-        sudo apt-get update
-        sudo apt-get install -y busybox
-        export PATH=$PATH:/bin/busybox
-        sudo chmod +x /bin/busybox
-    fi
+install_dependencies() {
+    command -v curl >/dev/null 2>&1 || { apt-get update; apt-get install -y curl; }
+    command -v unzip >/dev/null 2>&1 || { apt-get update; apt-get install -y unzip; }
+}
+valid_url() { [[ "$1" =~ ^https://[^[:space:]]+$ ]]; }
+get_config_url() {
+    [ -s /etc/sing-box/config.json ] || return 1
+    sed -n 's/.*"external_ui_download_url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' /etc/sing-box/config.json | head -n1
 }
 
-unzip_with_busybox() {
-    busybox unzip "$1" -d "$2" > /dev/null 2>&1
-}
+install_ui() {
+    local url="$1" tmp extract top backup
+    valid_url "$url" || { echo 'UI 地址必须使用 HTTPS。' >&2; return 1; }
+    tmp=$(mktemp -d /tmp/sbshell-ui.XXXXXX)
+    extract="$tmp/extract"
+    backup="$BACKUP_DIR/$(date +%Y%m%d%H%M%S).ui"
+    trap 'rm -rf "$tmp"' RETURN
+    mkdir -p "$extract" "$BACKUP_DIR"
 
-get_download_url() {
-    CONFIG_FILE="/etc/sing-box/config.json"
-    DEFAULT_URL="https://ghfast.top/https://github.com/Zephyruso/zashboard/archive/refs/heads/gh-pages.zip"
-    
-    if [ -f "$CONFIG_FILE" ]; then
-        URL=$(grep -oP '(?<="external_ui_download_url": ")[^"]*' "$CONFIG_FILE")
-        echo "${URL:-$DEFAULT_URL}"
-    else
-        echo "$DEFAULT_URL"
-    fi
-}
+    echo '正在下载 UI...'
+    curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 120 "$url" -o "$tmp/ui.zip"
+    unzip -q "$tmp/ui.zip" -d "$extract"
+    top=$(find "$extract" -mindepth 1 -maxdepth 1 -type d -print -quit)
+    [ -n "$top" ] || { echo 'UI 压缩包结构无效。' >&2; return 1; }
+    [ -f "$top/index.html" ] || { echo 'UI 压缩包缺少 index.html。' >&2; return 1; }
 
-backup_and_remove_ui() {
-    if [ -d "$UI_DIR" ]; then
-        echo -e "备份当前ui文件夹..."
-        mv "$UI_DIR" "$BACKUP_DIR/$(date +%Y%m%d%H%M%S)_ui"
-        echo -e "已备份至 $BACKUP_DIR"
-    fi
-}
-
-download_and_process_ui() {
-    local url="$1"
-    local temp_file="$TEMP_DIR/ui.zip"
-    
-    # 清理临时目录
-    rm -rf "${TEMP_DIR:?}"/*
-    
-    echo "正在下载面板..."
-    curl -L "$url" -o "$temp_file"
-    if [ $? -ne 0 ]; then
-        echo -e "\e[31m下载失败,正在还原备份...\e[0m"
-        [ -d "$BACKUP_DIR" ] && mv "$BACKUP_DIR/"* "$UI_DIR" 2>/dev/null
+    install -d -o root -g root -m 0755 /etc/sing-box
+    if [ -d "$UI_DIR" ]; then mv "$UI_DIR" "$backup"; fi
+    if ! mv "$top" "$UI_DIR"; then
+        [ ! -d "$backup" ] || mv "$backup" "$UI_DIR"
         return 1
     fi
-
-    # 解压文件
-    echo "解压中..."
-    if unzip_with_busybox "$temp_file" "$TEMP_DIR"; then
-        # 确保目标目录存在
-        mkdir -p "$UI_DIR"
-        rm -rf "${UI_DIR:?}"/*
-        mv "$TEMP_DIR"/*/* "$UI_DIR"
-        echo -e "\e[32m面板安装完成\e[0m"
-        return 0
-    else
-        echo -e "\e[31m解压失败,正在还原备份...\e[0m"
-        [ -d "$BACKUP_DIR" ] && mv "$BACKUP_DIR/"* "$UI_DIR" 2>/dev/null
-        return 1
-    fi
-}
-
-install_default_ui() {
-    echo "正在安装默认ui面板..."
-    DOWNLOAD_URL=$(get_download_url)
-    backup_and_remove_ui
-    download_and_process_ui "$DOWNLOAD_URL"
-}
-
-install_selected_ui() {
-    local url="$1"
-    backup_and_remove_ui
-    download_and_process_ui "$url"
+    chown -R root:root "$UI_DIR"
+    echo "UI 安装完成。"
 }
 
 check_ui() {
-    if [ -d "$UI_DIR" ] && [ "$(ls -A "$UI_DIR")" ]; then
-        echo -e "\e[32mui面板已安装\e[0m"
-    else
-        echo -e "\e[31mui面板未安装或为空\e[0m"
-    fi
+    if [ -f "$UI_DIR/index.html" ]; then echo 'UI 面板已安装。'; else echo 'UI 面板未安装或不完整。'; fi
 }
 
 setup_auto_update_ui() {
-    local schedule_choice
+    local choice schedule
     while true; do
-        echo "请选择自动更新频率："
-        echo "1. 每周一"
-        echo "2. 每月1号"
-        read -rp "请输入选项(1/2, 默认为1): " schedule_choice
-        schedule_choice=${schedule_choice:-1}
-
-        if [[ "$schedule_choice" =~ ^[12]$ ]]; then
-            break
-        else
-            echo -e "\e[31m输入无效,请输入1或2。\e[0m"
-        fi
+        echo '1. 每周一'; echo '2. 每月1号'
+        read -rp '请选择(1/2，默认1): ' choice
+        choice=${choice:-1}
+        case "$choice" in 1) schedule='0 0 * * 1'; break;; 2) schedule='0 0 1 * *'; break;; *) echo '无效选择。';; esac
     done
-
-    if crontab -l 2>/dev/null | grep -q '/etc/sing-box/update-ui.sh'; then
-        echo -e "\e[31m检测到已有自动更新任务。\e[0m"
-        read -rp "是否重新设置自动更新任务？(y/n): " confirm_reset
-        if [[ "$confirm_reset" =~ ^[Yy]$ ]]; then
-            crontab -l 2>/dev/null | grep -v '/etc/sing-box/update-ui.sh' | crontab -
-            echo "已删除旧的自动更新任务。"
-        else
-            echo -e "\e[36m保持已有的自动更新任务。返回菜单。\e[0m"
-            return
-        fi
-    fi
-
-    # 创建自动更新脚本
-    cat > /etc/sing-box/update-ui.sh <<EOF
+    cat > /etc/sing-box/update-ui.sh <<'EOF'
 #!/bin/bash
-
-CONFIG_FILE="/etc/sing-box/config.json"
-DEFAULT_URL="https://ghfast.top/https://github.com/Zephyruso/zashboard/archive/refs/heads/gh-pages.zip"
-URL=\$(grep -oP '(?<="external_ui_download_url": ")[^"]*' "\$CONFIG_FILE")
-URL="\${URL:-\$DEFAULT_URL}"
-
-TEMP_DIR="/tmp/sing-box-ui"
-UI_DIR="/etc/sing-box/ui"
-BACKUP_DIR="/tmp/sing-box/ui_backup"
-
-# 创建备份目录
-mkdir -p "\$BACKUP_DIR"
-mkdir -p "\$TEMP_DIR"
-
-# 备份当前ui文件夹
-if [ -d "\$UI_DIR" ]; then
-    mv "\$UI_DIR" "\$BACKUP_DIR/\$(date +%Y%m%d%H%M%S)_ui"
+set -Eeuo pipefail
+UI_DIR=/etc/sing-box/ui
+BACKUP_DIR=/var/lib/sing-box/ui-backups
+CONFIG_FILE=/etc/sing-box/config.json
+TMP=$(mktemp -d /tmp/sbshell-ui-auto.XXXXXX)
+trap 'rm -rf "$TMP"' EXIT
+mkdir -p "$BACKUP_DIR"
+URL=$(sed -n 's/.*"external_ui_download_url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$CONFIG_FILE" | head -n1)
+URL=${URL:-https://github.com/Zephyruso/zashboard/archive/refs/heads/gh-pages.zip}
+[[ "$URL" =~ ^https://[^[:space:]]+$ ]] || exit 1
+curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 120 "$URL" -o "$TMP/ui.zip"
+unzip -q "$TMP/ui.zip" -d "$TMP/extract"
+TOP=$(find "$TMP/extract" -mindepth 1 -maxdepth 1 -type d -print -quit)
+[ -n "$TOP" ] && [ -f "$TOP/index.html" ] || exit 1
+BACKUP="$BACKUP_DIR/$(date +%Y%m%d%H%M%S).ui"
+[ ! -d "$UI_DIR" ] || mv "$UI_DIR" "$BACKUP"
+if ! mv "$TOP" "$UI_DIR"; then
+    [ ! -d "$BACKUP" ] || mv "$BACKUP" "$UI_DIR"
+    exit 1
 fi
-
-# 下载并解压新ui
-curl -L "\$URL" -o "\$TEMP_DIR/ui.zip"
-if busybox unzip "\$TEMP_DIR/ui.zip" -d "\$TEMP_DIR"; then
-    mkdir -p "\$UI_DIR"
-    rm -rf "\${UI_DIR:?}"/*
-    mv "\$TEMP_DIR"/*/* "\$UI_DIR"
-else
-    echo "解压失败，正在还原备份..."
-    [ -d "\$BACKUP_DIR" ] && mv "\$BACKUP_DIR/"* "\$UI_DIR" 2>/dev/null
-fi
-
+chown -R root:root "$UI_DIR"
 EOF
-
-    chmod a+x /etc/sing-box/update-ui.sh
-
-    if [ "$schedule_choice" -eq 1 ]; then
-        (crontab -l 2>/dev/null; echo "0 0 * * 1 /etc/sing-box/update-ui.sh") | crontab -
-        echo -e "\e[32m定时更新任务已设置,每周一执行一次\e[0m"
-    else
-        (crontab -l 2>/dev/null; echo "0 0 1 * * /etc/sing-box/update-ui.sh") | crontab -
-        echo -e "\e[32m定时更新任务已设置,每月1号执行一次\e[0m"
-    fi
-
-    systemctl restart cron
+chmod 0755 /etc/sing-box/update-ui.sh
+chown root:root /etc/sing-box/update-ui.sh
+printf 'SHELL=/bin/sh\nPATH=/usr/sbin:/usr/bin:/sbin:/bin\n%s root /etc/sing-box/update-ui.sh\n' "$schedule" > /etc/cron.d/sbshell-ui
+chmod 0644 /etc/cron.d/sbshell-ui
+chown root:root /etc/cron.d/sbshell-ui
+systemctl restart cron
 }
 
-update_ui() {
-    check_and_install_dependencies  # 检查并安装依赖
-    while true; do
-        echo "请选择功能："
-        echo "1. 默认ui(依据配置文件）"
-        echo "2. 安装/更新自选ui"
-        echo "3. 检查是否存在ui面板"
-        echo "4. 设置定时自动更新面板"
-        read -r -p "请输入选项(1/2/3/4)或按回车键退出: " choice
-
-        if [ -z "$choice" ]; then
-            echo "退出程序。"
-            exit 0
-        fi
-
-        case "$choice" in
-            1)
-                install_default_ui
-                exit 0  # 更新结束后退出菜单
-                ;;
-            2)
-                echo "请选择面板安装："
-                echo "1. zashboard面板"
-                echo "2. metacubexd面板"
-                echo "3. yacd面板"
-                read -r -p "请输入选项(1/2/3): " ui_choice
-
-                case "$ui_choice" in
-                    1)
-                        install_selected_ui "$ZASHBOARD_URL"
-                        ;;
-                    2)
-                        install_selected_ui "$METACUBEXD_URL"
-                        ;;
-                    3)
-                        install_selected_ui "$YACD_URL"
-                        ;;
-                    *)
-                        echo -e "\e[31m无效选项,返回上级菜单。\e[0m"
-                        ;;
-                esac
-                exit 0  # 更新结束后退出菜单
-                ;;
-            3)
-                check_ui
-                ;;
-            4)
-                setup_auto_update_ui
-                ;;
-            *)
-                echo -e "\e[31m无效选项,返回主菜单\e[0m"
-                ;;
-        esac
-    done
-}
-
-update_ui
+install_dependencies
+while true; do
+    echo '1. 默认 UI（依据配置文件）'; echo '2. zashboard'; echo '3. metacubexd'; echo '4. yacd'; echo '5. 检查 UI'; echo '6. 设置自动更新'; echo '0. 退出'
+    read -rp '请选择: ' choice
+    case "$choice" in
+        1) url=$(get_config_url || true); install_ui "${url:-$ZASHBOARD_URL}"; exit $?;;
+        2) install_ui "$ZASHBOARD_URL"; exit $?;;
+        3) install_ui "$METACUBEXD_URL"; exit $?;;
+        4) install_ui "$YACD_URL"; exit $?;;
+        5) check_ui;;
+        6) setup_auto_update_ui; echo '自动更新已设置。';;
+        0) exit 0;;
+        *) echo '无效选择。';;
+    esac
+done
