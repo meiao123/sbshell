@@ -27,7 +27,8 @@ valid_subscription() {
     return 0
 }
 
-MODE=$(grep -oP '(?<=^MODE=).*' "$MODE_FILE" 2>/dev/null || true)
+# 用 sed 解析 MODE（grep -oP 是 GNU 专有的 PCRE 扩展，换到 busybox grep 的系统上会失败）。
+MODE=$(sed -n 's/^MODE=//p' "$MODE_FILE" 2>/dev/null | head -n1)
 while true; do
     read -rp '请输入后端地址(回车使用默认值可留空): ' BACKEND_URL
     BACKEND_URL=${BACKEND_URL:-$(get_default BACKEND_URL)}

@@ -20,10 +20,10 @@ TUN_TEMPLATE_URL=https://tpl.test/template.json
 EOF
 fixture_write template.json "$VALID_CLIENT_CONFIG"
 
-if grep -rn 'grep -oP' "$SBSHELL_SRC/openwrt" >/dev/null 2>&1; then
-    fail "openwrt 目录里仍有 grep -oP"
+if grep -rn 'grep -oP' "$SBSHELL_SRC/openwrt" "$SBSHELL_SRC/debian" >/dev/null 2>&1; then
+    fail "仍有脚本使用 grep -oP（busybox grep 不支持 PCRE）"
 else
-    pass "openwrt 目录里已无 grep -oP"
+    pass "两平台脚本都没有使用 grep -oP"
 fi
 
 output=$(printf '\n\n\ny\n' | (
