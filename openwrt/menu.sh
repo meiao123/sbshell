@@ -4,7 +4,7 @@ CYAN='\033[0;36m'; GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[1;33m'; NC
 [ "$(id -u)" -eq 0 ] || exec sudo bash "$0" "$@"
 SCRIPT_DIR=/etc/sing-box/scripts
 INITIALIZED_FILE="$SCRIPT_DIR/.initialized"
-BASE_REF=d9be5b66153ee2acaa8a3e040325d23c4f96ee53
+BASE_REF=security-release-2026-09-11
 BASE_URL="https://raw.githubusercontent.com/meiao123/sbshell/$BASE_REF/openwrt"
 SCRIPTS=(check_environment.sh install_singbox.sh manual_input.sh manual_update.sh auto_update.sh configure_tproxy.sh configure_tun.sh start_singbox.sh stop_singbox.sh clean_nft.sh set_defaults.sh commands.sh switch_mode.sh manage_autostart.sh check_config.sh update_scripts.sh update_ui.sh menu.sh)
 install -d -o root -g root -m 0755 "$SCRIPT_DIR"
@@ -25,9 +25,6 @@ uninstall_sbshell() {
 update_scripts() {
     local tmp backup s item rc=0
     tmp=$(mktemp -d /tmp/sbshell-openwrt.XXXXXX); backup=$(mktemp -d /tmp/sbshell-openwrt-backup.XXXXXX) || return 1
-    # 不要在此处使用 `trap ... RETURN` 清理临时目录：RETURN trap 在本函数返回后仍会对
-    # 同一调用链上每个父函数的返回再次触发，那时 local 变量已被销毁，配合 `set -u`
-    # 会以 "unbound variable" 中止整个脚本。统一使用显式清理 + 单一返回点。
     restore_scripts() {
         local item
         for item in "${SCRIPTS[@]}"; do
@@ -66,9 +63,6 @@ update_scripts() {
     return "$rc"
 }
 run() { bash "$SCRIPT_DIR/$1"; }
-# 注意：本函数被 `initialize || exit 1` 调用时，bash 会在整个函数体内关闭 errexit，
-# 因此每一步都必须显式判断失败，否则安装/切模式/下配置/启动失败都会被吞掉，
-# 而 .initialized 仍会被写入，用户得到一个“看似初始化成功”的空壳环境。
 initialize() {
     update_scripts || { echo -e "${RED}脚本更新失败，现有安装保持不变。${NC}" >&2; return 1; }
     run check_environment.sh || return 1
