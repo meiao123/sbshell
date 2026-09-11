@@ -16,13 +16,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
           python3 - <<'PY'
           from pathlib import Path
           import re
-
-          def rw(path, fn):
-              p = Path(path)
-              p.write_text(fn(p.read_text()))
 
           def remove_function(text):
               return re.sub(r'(?ms)^resolve_release_ref \{.*?^\}\n\n', '', text)
@@ -34,7 +33,8 @@ jobs:
           Path('sbshall.sh').write_text(s)
 
           for path in ['openwrt/menu.sh', 'openwrt/update_scripts.sh', 'debian/menu.sh', 'debian/update_scripts.sh']:
-              s = Path(path).read_text()
+              p = Path(path)
+              s = p.read_text()
               s = re.sub(r'(?m)^BASE_REF=[0-9a-f]{40}\n', '', s, count=1)
               s = re.sub(r'(?m)^RELEASE_DECL_URL=.*\n', '', s)
               s = remove_function(s).replace('resolve_release_ref\n', '').replace('"$BASE_REF"', '"main"')
@@ -42,7 +42,7 @@ jobs:
                   s = re.sub(r'^BASE_URL=.*$', 'BASE_URL="$REPO_RAW/main/openwrt"', s, count=1, flags=re.M)
               else:
                   s = re.sub(r'^BASE_URL=.*$', 'BASE_URL="https://raw.githubusercontent.com/meiao123/sbshell/main/debian"', s, count=1, flags=re.M)
-              Path(path).write_text(s)
+              p.write_text(s)
 
           p = Path('.github/workflows/shell-static-check.yml')
           s = p.read_text()
