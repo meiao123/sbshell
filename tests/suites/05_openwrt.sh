@@ -52,7 +52,6 @@ suite_begin "openwrt: autostart installs a boot-time firewall init script (P0-4)
 reset_stub_state
 reset_singbox_dir
 reset_openwrt_dirs
-reset_fixtures
 install_repo_scripts openwrt
 printf 'MODE=TProxy\n' > /etc/sing-box/mode.conf
 printf '%s\n' "$VALID_CLIENT_CONFIG" > /etc/sing-box/config.json
@@ -95,5 +94,12 @@ suite_begin "openwrt: UI initialization and menu separator"
 assert_grep "run update_ui.sh <<< '1'" "$SBSHELL_SRC/openwrt/menu.sh" "首次初始化自动安装默认 UI"
 assert_grep '===============================================' "$SBSHELL_SRC/openwrt/menu.sh" "管理菜单提示前显示分隔线"
 assert_no_grep 'rmdir "\$backup"' "$SBSHELL_SRC/openwrt/update_ui.sh" "首次安装 UI 时不再 rmdir 已删除的备份目录"
+
+suite_begin "openwrt: uninstall menu behavior"
+assert_grep "^    echo '11\. 卸载Sbshell'$" "$SBSHELL_SRC/openwrt/menu.sh" "卸载 Sbshell 选项使用与其他选项相同的颜色"
+uninstall_block=$(sed -n '/^uninstall_sbshell()/,/^}/p' "$SBSHELL_SRC/openwrt/menu.sh")
+confirm_count=$(printf '%s\n' "$uninstall_block" | grep -c '^[[:space:]]*confirm_yes ' || true)
+assert_eq "$confirm_count" "1" "卸载 Sbshell 仅执行一次确认"
+assert_no_grep '第二次确认：' "$SBSHELL_SRC/openwrt/menu.sh" "卸载流程移除第二次确认提示"
 
 suite_end
