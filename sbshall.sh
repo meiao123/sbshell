@@ -47,7 +47,7 @@ fi
 # 内置的发布提交（兜底）：提交无法包含自身 SHA，所以任何写死的引用都必然指向"上一版"，
 # 只信它会出现「装好加固版后点一次更新就回退到修复前版本」的一跳回退（见 docs/security-hardening.md）。
 # 因此下面按 main 上的 `RELEASE` 声明解析真正的发布提交，只有解析失败才用这个常量。
-RELEASE_REF=4e3a090ae5e4d50e35caf78720919153bc272c35
+RELEASE_REF=7dfddbae21d224349bb4ba4ac2d81bd541d39b9d
 REPO_RAW="https://raw.githubusercontent.com/meiao123/sbshell"
 RELEASE_DECL_URL="$REPO_RAW/refs/heads/main/RELEASE"
 resolve_release_ref() {
