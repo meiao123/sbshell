@@ -1,45 +1,55 @@
 #!/bin/bash
+set -Eeuo pipefail
 
-# 定义颜色
-CYAN='\033[0;36m'
-RED='\033[0;31m'
-NC='\033[0m' # 无颜色
-
-# 手动输入的配置文件
+CYAN='\033[0;36m'; GREEN='\033[0;32m'; RED='\033[0;31m'; NC='\033[0m'
 MANUAL_FILE="/etc/sing-box/manual.conf"
+CONFIG_FILE="/etc/sing-box/config.json"
+UPDATE_SCRIPT="/etc/sing-box/update-singbox.sh"
+CRON_FILE="/etc/cron.d/sbshell-singbox"
 
-# 创建定时更新脚本
-cat > /etc/sing-box/update-singbox.sh <<EOF
+[ -r "$MANUAL_FILE" ] || { echo -e "${RED}未找到手动配置文件。${NC}" >&2; exit 1; }
+
+cat > "$UPDATE_SCRIPT" <<'EOF'
 #!/bin/bash
+set -Eeuo pipefail
+MANUAL_FILE="/etc/sing-box/manual.conf"
+CONFIG_FILE="/etc/sing-box/config.json"
+CONFIG_DIR="/etc/sing-box"
 
-# 读取手动输入的配置参数
-BACKEND_URL=\$(grep BACKEND_URL $MANUAL_FILE | cut -d'=' -f2-)
-SUBSCRIPTION_URL=\$(grep SUBSCRIPTION_URL $MANUAL_FILE | cut -d'=' -f2-)
-TEMPLATE_URL=\$(grep TEMPLATE_URL $MANUAL_FILE | cut -d'=' -f2-)
+get_value() { grep -m1 "^$1=" "$MANUAL_FILE" | cut -d'=' -f2-; }
+BACKEND_URL=$(get_value BACKEND_URL)
+SUBSCRIPTION_URL=$(get_value SUBSCRIPTION_URL)
+TEMPLATE_URL=$(get_value TEMPLATE_URL)
 
-# 构建完整的配置文件URL
-FULL_URL="\${BACKEND_URL}/config/\${SUBSCRIPTION_URL}&file=\${TEMPLATE_URL}"
-
-# 备份现有配置文件
-[ -f "/etc/sing-box/config.json" ] && cp /etc/sing-box/config.json /etc/sing-box/config.json.backup
-
-# 下载并验证新配置文件
-if curl -L --connect-timeout 10 --max-time 30 "\$FULL_URL" -o /etc/sing-box/config.json; then
-    if ! sing-box check -c /etc/sing-box/config.json; then
-        echo "新配置文件验证失败，恢复备份..."
-        [ -f "/etc/sing-box/config.json.backup" ] && cp /etc/sing-box/config.json.backup /etc/sing-box/config.json
-    fi
+if [ -n "$BACKEND_URL" ] && [ -n "$SUBSCRIPTION_URL" ]; then
+    FULL_URL="${BACKEND_URL%/}/config/${SUBSCRIPTION_URL}&file=${TEMPLATE_URL}"
 else
-    echo "下载配置文件失败，恢复备份..."
-    [ -f "/etc/sing-box/config.json.backup" ] && cp /etc/sing-box/config.json.backup /etc/sing-box/config.json
+    FULL_URL="$TEMPLATE_URL"
 fi
+[[ "$FULL_URL" =~ ^https://[^[:space:]]+$ ]] || { echo "invalid HTTPS config URL" >&2; exit 1; }
 
-# 重启 sing-box 服务
-systemctl restart sing-box
+tmp=$(mktemp "$CONFIG_DIR/.config.json.XXXXXX")
+backup=$(mktemp "$CONFIG_DIR/.config.json.backup.XXXXXX")
+cleanup() { rm -f "$tmp" "$backup"; }
+trap cleanup EXIT
+[ -f "$CONFIG_FILE" ] && cp -p "$CONFIG_FILE" "$backup"
+
+curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 60 "$FULL_URL" -o "$tmp" || { echo "config download failed" >&2; exit 1; }
+[ -s "$tmp" ] || { echo "downloaded config is empty" >&2; exit 1; }
+sing-box check -c "$tmp" || { echo "config validation failed" >&2; exit 1; }
+install -o root -g root -m 0644 "$tmp" "$CONFIG_FILE"
+
+if ! systemctl restart sing-box; then
+    echo "service restart failed; restoring previous config" >&2
+    if [ -s "$backup" ]; then
+        install -o root -g root -m 0644 "$backup" "$CONFIG_FILE"
+        systemctl restart sing-box || true
+    fi
+    exit 1
+fi
 EOF
-
-chmod a+x /etc/sing-box/update-singbox.sh
-
+chmod 0755 "$UPDATE_SCRIPT"
+chown root:root "$UPDATE_SCRIPT"
 
 while true; do
     echo -e "${CYAN}请选择操作:${NC}"
@@ -52,46 +62,21 @@ while true; do
         while true; do
             read -rp "请输入更新间隔小时数 (1-23小时,默认为12小时): " interval_choice
             interval_choice=${interval_choice:-12}
-
-            if [[ "$interval_choice" =~ ^[1-9]$|^1[0-9]$|^2[0-3]$ ]]; then
-                break
-            else
-                echo -e "${RED}输入无效,请输入1到23之间的小时数。${NC}"
-            fi
+            if [[ "$interval_choice" =~ ^([1-9]|1[0-9]|2[0-3])$ ]]; then break; fi
+            echo -e "${RED}输入无效，请输入1到23之间的小时数。${NC}"
         done
-
-        
-        if crontab -l 2>/dev/null | grep -q '/etc/sing-box/update-singbox.sh'; then
-            echo -e "${RED}检测到已有自动更新任务。${NC}"
-            read -rp "是否重新设置自动更新任务？(y/n): " confirm_reset
-            if [[ "$confirm_reset" =~ ^[Yy]$ ]]; then
-                crontab -l 2>/dev/null | grep -v '/etc/sing-box/update-singbox.sh' | crontab -
-                echo "已删除旧的自动更新任务。"
-            else
-                echo -e "${CYAN}保持已有的自动更新任务。返回菜单。${NC}"
-                exit 0
-            fi
-        fi
-
-        # 添加新的定时任务
-        (crontab -l 2>/dev/null; echo "0 */$interval_choice * * * /etc/sing-box/update-singbox.sh") | crontab -
-        systemctl restart cron
-
-        echo "定时更新任务已设置，每 $interval_choice 小时执行一次"
+        printf '0 */%s * * * root %s\n' "$interval_choice" "$UPDATE_SCRIPT" | sudo tee "$CRON_FILE" >/dev/null
+        sudo chmod 0644 "$CRON_FILE"
+        sudo chown root:root "$CRON_FILE"
+        sudo systemctl restart cron
+        echo -e "${GREEN}定时更新任务已设置，每 $interval_choice 小时执行一次。${NC}"
         break
-
     elif [[ "$menu_choice" == "2" ]]; then
-        # 取消自动更新任务
-        if crontab -l 2>/dev/null | grep -q '/etc/sing-box/update-singbox.sh'; then
-            crontab -l 2>/dev/null | grep -v '/etc/sing-box/update-singbox.sh' | crontab -
-            systemctl restart cron
-            echo -e "${CYAN}自动更新任务已取消。${NC}"
-        else
-            echo -e "${CYAN}没有找到自动更新任务。${NC}"
-        fi
+        sudo rm -f "$CRON_FILE"
+        sudo systemctl restart cron
+        echo -e "${GREEN}自动更新任务已取消。${NC}"
         break
-
     else
-        echo -e "${RED}输入无效, 请输入1或2。${NC}"
+        echo -e "${RED}输入无效，请输入1或2。${NC}"
     fi
 done
