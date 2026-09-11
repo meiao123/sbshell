@@ -123,5 +123,8 @@ assert_grep '继续清理 Sbshell 文件' "$SBSHELL_SRC/openwrt/menu.sh" "sing-b
 assert_grep 'rm -rf /etc/sing-box' "$SBSHELL_SRC/openwrt/menu.sh" "卸载时删除 sing-box 配置与脚本目录"
 assert_grep 'sing-box 软件包当前无法卸载.*继续清理' "$SBSHELL_SRC/openwrt/menu.sh" "sing-box 卸载失败时只告警并继续"
 assert_no_grep 'opkg remove --purge sing-box' "$SBSHELL_SRC/openwrt/menu.sh" "不再调用 OpenWrt 不支持的 --purge"
+assert_grep '/etc/init.d/sing-box stop' "$SBSHELL_SRC/openwrt/menu.sh" "卸载前先请求停止 sing-box"
+assert_grep 'pidof sing-box' "$SBSHELL_SRC/openwrt/menu.sh" "卸载停止后检查 sing-box 进程状态"
+assert_grep 'sleep ' "$SBSHELL_SRC/openwrt/menu.sh" "卸载等待 sing-box 完全退出后再清理防火墙"
 
 suite_end
