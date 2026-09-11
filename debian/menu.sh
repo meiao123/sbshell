@@ -50,7 +50,7 @@ uninstall_sbshell() {
     confirm_yes '第二次确认：此操作将删除 Sbshell 管理脚本，确定继续吗？' || { echo -e "${GREEN}已取消卸载。${NC}"; return 0; }
 
     echo -e "${CYAN}正在卸载 Sbshell...${NC}"
-    rm -f /usr/local/bin/sb /etc/cron.d/sbshell-ui /etc/cron.d/sbshell-auto-update /etc/sing-box/update-ui.sh
+    rm -f /usr/local/bin/sb /etc/cron.d/sbshell-ui /etc/cron.d/sbshell-singbox /etc/sing-box/update-ui.sh /etc/sing-box/update-singbox.sh
     if [ -f /etc/sing-box/scripts/menu.sh ]; then
         sed -i '/# sing-box 快捷方式/,/alias sb=/d' /root/.bashrc 2>/dev/null || true
     fi
