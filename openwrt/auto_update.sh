@@ -16,7 +16,9 @@ CONFIG_FILE=/etc/sing-box/config.json
 LOCK_DIR=/tmp/sbshell-config.lock
 LOCK_TIMEOUT=900
 TMP=$(mktemp -d /tmp/sbshell-auto.XXXXXX)
-cleanup() { rm -rf "$TMP"; rmdir "$LOCK_DIR" 2>/dev/null || true; }
+# 锁目录里含 pid 文件，`rmdir` 只能删空目录，会永久残留锁并让后续取锁者空转到
+# LOCK_TIMEOUT（900s），因此必须用 rm -rf。
+cleanup() { rm -rf "$TMP" "$LOCK_DIR"; }
 trap cleanup EXIT INT TERM
 acquire_lock() {
   while ! mkdir "$LOCK_DIR" 2>/dev/null; do
