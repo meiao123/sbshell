@@ -40,9 +40,15 @@ else
     : > "$OLD_TUN_STATE"
 fi
 
+# 以 tproxy.state 的所有权为准，而不是“表是否存在”（表可能被外部工具删除，
+# 而 ip rule/route 仍在，此时也必须按 state 清理）。
+TPROXY_OWNED=0
+if [ -f "$TPROXY_STATE_FILE" ] && grep -q '^OWNER=sbshell$' "$TPROXY_STATE_FILE"; then
+    TPROXY_OWNED=1
+    cp "$TPROXY_STATE_FILE" "$OLD_TPROXY_STATE"
+fi
 if nft list table inet sing-box > "$OLD_TPROXY_TABLE" 2>/dev/null; then
-    if [ -f "$TPROXY_STATE_FILE" ] && grep -q '^OWNER=sbshell$' "$TPROXY_STATE_FILE"; then
-        cp "$TPROXY_STATE_FILE" "$OLD_TPROXY_STATE"
+    if [ "$TPROXY_OWNED" -eq 1 ]; then
         nft delete table inet sing-box
     else
         echo '检测到非 Sbshell 管理的 inet sing-box 表，拒绝覆盖。' >&2
@@ -51,8 +57,8 @@ if nft list table inet sing-box > "$OLD_TPROXY_TABLE" 2>/dev/null; then
     fi
 else
     : > "$OLD_TPROXY_TABLE"
-    : > "$OLD_TPROXY_STATE"
 fi
+[ "$TPROXY_OWNED" -eq 1 ] || : > "$OLD_TPROXY_STATE"
 
 if [ -s "$OLD_TPROXY_STATE" ]; then
     old_pref=$(sed -n 's/^RULE_PREF=//p' "$TPROXY_STATE_FILE" | head -n1)
