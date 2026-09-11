@@ -10,7 +10,10 @@ RULE_PREF=10010
 # 对 "default dev pppoe-wan scope link"（PPPoE）或 "default dev wg0 scope link"（WireGuard）
 # 会取到字面量 "link"，随后 `ip route add local default dev link table 100` 必然失败。
 INTERFACE=$(ip route show default | awk '{for (i = 1; i < NF; i++) if ($i == "dev") { print $(i + 1); exit }}')
-MODE=$(sed -n 's/^MODE=//p' /etc/sing-box/mode.conf 2>/dev/null | head -n1)
+# 注意：`sed … | head -n1` 在 `set -o pipefail` 下会把 sed 的退出码传播出来，
+# mode.conf 缺失时整个赋值失败并在 errexit 下中止，**到不了下一行的 `|| exit 0`**。
+# 这里显式吞掉 sed 的失败，保持“没有 mode.conf 就静默退出 0”的本意。
+MODE=$( { sed -n 's/^MODE=//p' /etc/sing-box/mode.conf 2>/dev/null || true; } | head -n1)
 [ "$MODE" = TProxy ] || exit 0
 [ -n "$INTERFACE" ] || { echo '无法确定默认网卡。' >&2; exit 1; }
 command -v nft >/dev/null 2>&1 || { echo '缺少 nft。' >&2; exit 1; }
