@@ -15,6 +15,9 @@ MANUAL_FILE=/etc/sing-box/manual.conf
 CONFIG_FILE=/etc/sing-box/config.json
 LOCK_DIR=/tmp/sbshell-config.lock
 LOCK_TIMEOUT=900
+TMP=$(mktemp -d /tmp/sbshell-auto.XXXXXX)
+cleanup() { rm -rf "$TMP"; rmdir "$LOCK_DIR" 2>/dev/null || true; }
+trap cleanup EXIT INT TERM
 acquire_lock() {
   while ! mkdir "$LOCK_DIR" 2>/dev/null; do
     owner=$(cat "$LOCK_DIR/pid" 2>/dev/null || true)
@@ -24,10 +27,8 @@ acquire_lock() {
     sleep 1
 done
   printf '%s\n' "$$" > "$LOCK_DIR/pid"
-  trap 'rm -rf "$LOCK_DIR"; rm -rf "$TMP"' EXIT INT TERM
 }
 acquire_lock
-TMP=$(mktemp -d /tmp/sbshell-auto.XXXXXX)
 read_value() { sed -n "s/^$1=//p" "$MANUAL_FILE" | head -n1; }
 B=$(read_value BACKEND_URL); S=$(read_value SUBSCRIPTION_URL); T=$(read_value TEMPLATE_URL)
 case "$B" in https://*) ;; *) echo '无效的后端 HTTPS 地址。' >&2; exit 1;; esac
