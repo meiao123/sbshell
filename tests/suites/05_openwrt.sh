@@ -102,4 +102,17 @@ confirm_count=$(printf '%s\n' "$uninstall_block" | grep -c '^[[:space:]]*confirm
 assert_eq "$confirm_count" "1" "卸载 Sbshell 仅执行一次确认"
 assert_no_grep '第二次确认：' "$SBSHELL_SRC/openwrt/menu.sh" "卸载流程移除第二次确认提示"
 
+suite_begin "openwrt: startup, opkg lock and config download UX"
+assert_grep 'mkdir -p /var/lock' "$SBSHELL_SRC/openwrt/install_singbox.sh" "opkg 操作前确保锁目录存在"
+assert_grep 'max-time 30' "$SBSHELL_SRC/openwrt/manual_input.sh" "配置下载超时为 30 秒"
+assert_grep 'curl_pid=' "$SBSHELL_SRC/openwrt/manual_input.sh" "配置下载使用后台进程记录 PID"
+assert_grep '配置文件下载中' "$SBSHELL_SRC/openwrt/manual_input.sh" "配置下载显示进度状态"
+assert_grep '配置文件下载超时' "$SBSHELL_SRC/openwrt/manual_input.sh" "配置下载超时显示明确告警"
+assert_grep "run update_ui.sh --default" "$SBSHELL_SRC/openwrt/menu.sh" "初始化默认 UI 在主菜单前完成"
+assert_grep 'SBSHELL_INIT_UI' "$SBSHELL_SRC/openwrt/update_ui.sh" "初始化 UI 使用非交互安装入口"
+assert_grep 'pidof sing-box' "$SBSHELL_SRC/openwrt/start_singbox.sh" "重复执行启动选项先检查 sing-box 状态"
+assert_grep 'sing-box 已在运行，无需重复启动' "$SBSHELL_SRC/openwrt/start_singbox.sh" "sing-box 已运行时不重复应用防火墙"
+assert_grep 'pidof sing-box' "$SBSHELL_SRC/openwrt/stop_singbox.sh" "停止前检查 sing-box 状态"
+assert_grep 'sing-box 未运行，无需重复停止' "$SBSHELL_SRC/openwrt/stop_singbox.sh" "已停止时不重复调用服务"
+
 suite_end
