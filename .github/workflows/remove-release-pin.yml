@@ -16,16 +16,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          case "${GITHUB_EVENT_NAME}:${GITHUB_SHA}" in
-            push:*) ;;
-          esac
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git fetch origin main
-          git fetch --depth=1 origin 27cab46aec8bc57e2f6abf194b2ca4d9e2008a29
           git reset --hard origin/main
 
           BASE_COMMIT=27cab46aec8bc57e2f6abf194b2ca4d9e2008a29
+          git cat-file -e "$BASE_COMMIT^{commit}"
           for f in sbshall.sh openwrt/menu.sh openwrt/update_scripts.sh debian/menu.sh debian/update_scripts.sh .github/workflows/shell-static-check.yml README.md docs/security-hardening.md tests/suites/08_archive_fallback.sh; do
             git show "$BASE_COMMIT:$f" > "$f"
           done
