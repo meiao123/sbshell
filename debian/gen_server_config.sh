@@ -154,9 +154,11 @@ sing-box check -c "$TMP_CONFIG" || { echo -e "${RED}生成的配置未通过 sin
 if [ -f "$CONFIG_FILE" ]; then
     backup="$CONFIG_FILE.bak.$(date +%Y%m%d%H%M%S)"
     cp -a "$CONFIG_FILE" "$backup"
+    chown root:sing-box "$backup" 2>/dev/null || true
+    chmod 0640 "$backup"
     echo -e "${YELLOW}已备份原配置到 $backup${NC}"
 fi
-install -o root -g root -m 0644 "$TMP_CONFIG" "$CONFIG_FILE"
+install -o root -g sing-box -m 0640 "$TMP_CONFIG" "$CONFIG_FILE"
 
 echo -e "${GREEN}服务端配置已生成: $CONFIG_FILE（所有凭据均为本机随机生成）${NC}"
 echo -e "${CYAN}请把以下参数填入客户端：${NC}"
