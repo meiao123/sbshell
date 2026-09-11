@@ -1,189 +1,69 @@
 #!/bin/bash
+set -Eeuo pipefail
 
-# 定义颜色
 CYAN='\033[0;36m'
 GREEN='\033[0;32m'
 RED='\033[0;31m'
-NC='\033[0m' # 无颜色
+NC='\033[0m'
 
-# 脚本下载目录
 SCRIPT_DIR="/etc/sing-box/scripts"
-TEMP_DIR="/tmp/sing-box"
-
-# 脚本的URL基础路径
-BASE_URL="https://ghfast.top/https://raw.githubusercontent.com/qljsyph/sbshell/refs/heads/main/debian"
-# 初始下载菜单脚本的URL
+TEMP_DIR=$(mktemp -d /tmp/sing-box-update.XXXXXX)
+trap 'rm -rf "$TEMP_DIR"' EXIT
+BASE_URL="https://raw.githubusercontent.com/qljsyph/sbshell/main/debian"
 MENU_SCRIPT_URL="$BASE_URL/menu.sh"
 
-# 提示用户正在检测版本
-echo -e "${CYAN}正在检测版本，请耐心等待...${NC}"
-
-# 确保脚本目录和临时目录存在并设置权限
-sudo mkdir -p "$SCRIPT_DIR"
-sudo mkdir -p "$TEMP_DIR"
-sudo chown "$(whoami)":"$(whoami)" "$SCRIPT_DIR"
-sudo chown "$(whoami)":"$(whoami)" "$TEMP_DIR"
-
-# 下载远程脚本到临时目录
-wget -q -O "$TEMP_DIR/menu.sh" "$MENU_SCRIPT_URL"
-
-# 检查下载是否成功
-if ! [ -f "$TEMP_DIR/menu.sh" ]; then
-    echo -e "${RED}下载远程脚本失败，请检查网络连接。${NC}"
-    exit 1
-fi
-
-# 获取本地和远程脚本版本
-LOCAL_VERSION=$(grep '^# 版本:' "$SCRIPT_DIR/menu.sh" | awk '{print $3}')
-REMOTE_VERSION=$(grep '^# 版本:' "$TEMP_DIR/menu.sh" | awk '{print $3}')
-
-# 检查远程版本是否为空
-if [ -z "$REMOTE_VERSION" ]; then
-    echo -e "${RED}远程版本获取失败，请检查网络连接。${NC}"
-    read -rp "是否重试？(y/n): " retry_choice
-    if [[ "$retry_choice" =~ ^[Yy]$ ]]; then
-        wget -q -O "$TEMP_DIR/menu.sh" "$MENU_SCRIPT_URL"
-        REMOTE_VERSION=$(grep '^# 版本:' "$TEMP_DIR/menu.sh" | awk '{print $3}')
-        if [ -z "$REMOTE_VERSION" ]; then
-            echo -e "${RED}远程版本获取失败，请检查网络连接后再试。返回菜单。${NC}"
-            rm -rf "$TEMP_DIR"
-            exit 1
-        fi
-    else
-        echo -e "${RED}请检查网络连接后再试。返回菜单。${NC}"
-        rm -rf "$TEMP_DIR"
-        exit 1
-    fi
-fi
-
-# 输出检测到的版本
-echo -e "${CYAN}检测到的版本：本地版本 $LOCAL_VERSION,远程版本 $REMOTE_VERSION${NC}"
-
-# 比较版本号
-if [ "$LOCAL_VERSION" == "$REMOTE_VERSION" ]; then
-    echo -e "${GREEN}脚本版本为最新，无需升级。${NC}"
-    read -rp "是否强制更新？(y/n): " force_update
-    if [[ "$force_update" =~ ^[Yy]$ ]]; then
-        echo -e "${CYAN}正在强制更新...${NC}"
-    else
-        echo -e "${CYAN}返回菜单。${NC}"
-        rm -rf "$TEMP_DIR"
-        exit 0
-    fi
-else
-    echo -e "${RED}检测到新版本，准备升级。${NC}"
-fi
-
-# 脚本列表
 SCRIPTS=(
-    "check_environment.sh"
-    "set_network.sh"
-    "check_update.sh"
-    "install_singbox.sh"
-    "manual_input.sh"
-    "manual_update.sh"
-    "auto_update.sh"
-    "configure_tproxy.sh"
-    "configure_tun.sh"
-    "start_singbox.sh"
-    "stop_singbox.sh"
-    "clean_nft.sh"
-    "set_defaults.sh"
-    "commands.sh"
-    "switch_mode.sh"
-    "manage_autostart.sh"
-    "check_config.sh"
-    "update_scripts.sh"
-    "update_ui.sh"
-    "delaytest.sh"
-    "update_config.sh"
-    "setup.sh"
-    "ufw.sh"
-    "kernel.sh"
-    "optimize.sh"  
-    "menu.sh"
+    "check_environment.sh" "set_network.sh" "check_update.sh" "install_singbox.sh"
+    "manual_input.sh" "manual_update.sh" "auto_update.sh" "configure_tproxy.sh"
+    "configure_tun.sh" "start_singbox.sh" "stop_singbox.sh" "clean_nft.sh"
+    "set_defaults.sh" "commands.sh" "switch_mode.sh" "manage_autostart.sh"
+    "check_config.sh" "update_scripts.sh" "update_ui.sh" "delaytest.sh"
+    "update_config.sh" "setup.sh" "ufw.sh" "kernel.sh" "optimize.sh" "menu.sh"
 )
 
-# 下载并设置单个脚本，带重试逻辑
-download_script() {
-    local SCRIPT="$1"
-    local RETRIES=3
-    local RETRY_DELAY=5
+sudo install -d -o root -g root -m 0755 "$SCRIPT_DIR"
 
-    for ((i=1; i<=RETRIES; i++)); do
-        if wget -q -O "$SCRIPT_DIR/$SCRIPT" "$BASE_URL/$SCRIPT"; then
-            chmod +x "$SCRIPT_DIR/$SCRIPT"
-            return 0
-        else
-            sleep "$RETRY_DELAY"
-        fi
-    done
-
-    echo -e "${RED}下载 $SCRIPT 失败，请检查网络连接。${NC}"
-    return 1
+download_verified() {
+    local name="$1" dest="$2"
+    curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+        --connect-timeout 10 --max-time 60 "$BASE_URL/$name" -o "$dest"
+    [ -s "$dest" ] || { echo -e "${RED}$name 下载为空。${NC}" >&2; return 1; }
+    bash -n "$dest"
 }
 
-# 并行下载脚本
-parallel_download_scripts() {
-    local pids=()
-    for SCRIPT in "${SCRIPTS[@]}"; do
-        download_script "$SCRIPT" &
-        pids+=("$!")
-    done
+LOCAL_VERSION=$(grep -m1 '^# 版本:' "$SCRIPT_DIR/menu.sh" 2>/dev/null | awk '{print $3}' || true)
+download_verified menu.sh "$TEMP_DIR/menu.sh"
+REMOTE_VERSION=$(grep -m1 '^# 版本:' "$TEMP_DIR/menu.sh" | awk '{print $3}' || true)
+[ -n "$REMOTE_VERSION" ] || { echo -e "${RED}远程版本获取失败。${NC}" >&2; exit 1; }
 
-    for pid in "${pids[@]}"; do
-        wait "$pid"
-    done
-}
+echo -e "${CYAN}检测到的版本：本地版本 ${LOCAL_VERSION:-未知}，远程版本 $REMOTE_VERSION${NC}"
+if [ "$LOCAL_VERSION" = "$REMOTE_VERSION" ]; then
+    read -rp "脚本版本已是最新，是否强制更新？(y/n): " force_update
+    [[ "$force_update" =~ ^[Yy]$ ]] || exit 0
+fi
 
-# 常规更新
-function regular_update() {
-    echo -e "${CYAN}正在清理缓存，请耐心等待...${NC}"
-    rm -f "$SCRIPT_DIR"/*.sh
-    echo -e "${CYAN}正在进行常规更新，请耐心等待...${NC}"
-    parallel_download_scripts
-    echo -e "${CYAN}脚本常规更新完成。${NC}"
-}
+echo -e "${CYAN}正在下载并验证全部脚本...${NC}"
+for script in "${SCRIPTS[@]}"; do
+    download_verified "$script" "$TEMP_DIR/$script" || {
+        echo -e "${RED}脚本 $script 校验失败，现有安装保持不变。${NC}" >&2
+        exit 1
+    }
+done
 
-# 重置更新
-function reset_update() {
-    echo -e "${RED}即将停止 sing-box 并重置所有内容，请稍候...${NC}"
-    sudo bash "$SCRIPT_DIR/clean_nft.sh"
-    sudo rm -rf /etc/sing-box
-    echo -e "${CYAN}sing-box 文件夹已删除。${NC}"
-    echo -e "${CYAN}正在重新拉取脚本，请耐心等待...${NC}"
-    bash <(curl -s "$MENU_SCRIPT_URL")
-}
+# 所有文件下载并通过 shell 语法检查后才一次性安装，避免半更新状态。
+for script in "${SCRIPTS[@]}"; do
+    sudo install -o root -g root -m 0755 "$TEMP_DIR/$script" "$SCRIPT_DIR/$script"
+done
 
-# 提示用户并确认选择
-echo -e "${CYAN}请选择更新方式：${NC}"
-echo -e "${GREEN}1. 常规更新${NC}"
-echo -e "${GREEN}2. 重置更新${NC}"
-read -rp "请选择操作: " update_choice
+# 防止旧版本遗留的脚本继续存在。
+sudo find "$SCRIPT_DIR" -maxdepth 1 -type f -name '*.sh' -printf '%f\n' | while IFS= read -r old; do
+    case " ${SCRIPTS[*]} " in
+        *" $old "*) ;;
+        *) sudo rm -f -- "$SCRIPT_DIR/$old" ;;
+    esac
+done
 
-case $update_choice in
-    1)
-        echo -e "${RED}常规更新只更新脚本内容,再次执行菜单内容才会执行新脚本。${NC}"
-        read -rp "是否继续常规更新？(y/n): " confirm
-        if [[ "$confirm" =~ ^[Yy]$ ]]; then
-            regular_update
-        else
-            echo -e "${CYAN}常规更新已取消。${NC}"
-        fi
-        ;;
-    2)
-        echo -e "${RED}即将停止 sing-box 并重置所有内容,并初始化引导设置。${NC}"
-        read -rp "是否继续重置更新？(y/n): " confirm
-        if [[ "$confirm" =~ ^[Yy]$ ]]; then
-            reset_update
-        else
-            echo -e "${CYAN}重置更新已取消。${NC}"
-        fi
-        ;;
-    *)
-        echo -e "${RED}无效的选择。${NC}"
-        ;;
-esac
+sudo chown root:root "$SCRIPT_DIR"/*.sh
+sudo chmod 0755 "$SCRIPT_DIR"/*.sh
 
-# 清理临时目录
-rm -rf "$TEMP_DIR"
+echo -e "${GREEN}所有管理脚本已完成原子式验证和更新。${NC}"
