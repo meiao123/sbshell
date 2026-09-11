@@ -21,7 +21,10 @@ REPO_ENTRY="deb [signed-by=$KEYRING] https://deb.xanmod.org $CODENAME main"
 printf '%s\n' "$REPO_ENTRY" > "$REPO_LIST"
 chmod 0644 "$REPO_LIST"; chown root:root "$REPO_LIST"
 apt-get update
-cpu_flags=$(awk -F: '$1 == "flags" {print $2; exit}' /proc/cpuinfo)
+# /proc/cpuinfo 中该行是 "flags\t\t: ..."，用 -F: 切分时 $1 会带制表符，
+# 因此必须按行首匹配（'/^flags/'），不能用 '$1 == "flags"'。
+cpu_flags=$(awk -F: '/^flags/ {print $2; exit}' /proc/cpuinfo)
+[ -n "${cpu_flags// /}" ] || { echo -e "${RED}无法读取 /proc/cpuinfo 的 CPU 指令集信息。${NC}" >&2; exit 1; }
 has_flags() { local f; for f in "$@"; do grep -qw -- "$f" <<< "$cpu_flags" || return 1; done; }
 if has_flags avx512f avx512bw avx512cd avx512dq avx512vl; then
     level=4
