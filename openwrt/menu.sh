@@ -8,7 +8,7 @@ BASE_REF=fdbceb9b2e69ee8e48ea3ba5efd054a267b6816f
 BASE_URL="https://raw.githubusercontent.com/meiao123/sbshell/$BASE_REF/openwrt"
 SCRIPTS=(check_environment.sh install_singbox.sh manual_input.sh manual_update.sh auto_update.sh configure_tproxy.sh configure_tun.sh start_singbox.sh stop_singbox.sh clean_nft.sh set_defaults.sh commands.sh switch_mode.sh manage_autostart.sh check_config.sh update_scripts.sh update_ui.sh menu.sh)
 install -d -o root -g root -m 0755 "$SCRIPT_DIR"
-confirm_yes() { local prompt="$1" answer; while true; do read -r -p "$prompt [y/n]: " answer; case "$answer" in [Yy]) return 0;; [Nn]) return 1;; *) echo -e "${YELLOW}请输入 y 或 n。${NC}";; esac; done; }
+confirm_yes() { local prompt="$1" answer; while true; do read -r -p "$prompt [y/n]: " answer || { echo -e "${YELLOW}无法读取输入（EOF），已取消。${NC}" >&2; return 1; }; case "$answer" in [Yy]) return 0;; [Nn]) return 1;; *) echo -e "${YELLOW}请输入 y 或 n。${NC}";; esac; done; }
 uninstall_sbshell() {
     echo -e "${YELLOW}此操作仅卸载 Sbshell 管理脚本及其快捷方式。${NC}"
     echo -e "${YELLOW}不会删除 sing-box 程序、配置文件、服务或现有代理配置。${NC}"
@@ -24,15 +24,15 @@ uninstall_sbshell() {
 }
 update_scripts() {
     local tmp backup s item rc=0
-    tmp=$(mktemp -d /tmp/sbshell-openwrt.XXXXXX); backup=$(mktemp -d /tmp/sbshell-openwrt-backup.XXXXXX) || return 1
+    # 两个 mktemp 都要检查（原因同 debian/menu.sh）。
+    tmp=$(mktemp -d /tmp/sbshell-openwrt.XXXXXX) || return 1
+    backup=$(mktemp -d /tmp/sbshell-openwrt-backup.XXXXXX) || { rm -rf "$tmp"; return 1; }
+    # 只回滚确实备份成功的脚本（见 debian/menu.sh 的说明）。
+    backed_up=()
     restore_scripts() {
         local item
-        for item in "${SCRIPTS[@]}"; do
-            if [ -f "$backup/$item" ]; then
-                install -o root -g root -m 0755 "$backup/$item" "$SCRIPT_DIR/$item"
-            else
-                rm -f "$SCRIPT_DIR/$item"
-            fi
+        for item in "${backed_up[@]}"; do
+            install -o root -g root -m 0755 "$backup/$item" "$SCRIPT_DIR/$item" || true
         done
     }
     for s in "${SCRIPTS[@]}"; do
@@ -49,8 +49,17 @@ update_scripts() {
     done
     if [ "$rc" -eq 0 ]; then
         for s in "${SCRIPTS[@]}"; do
-            if [ -f "$SCRIPT_DIR/$s" ]; then cp -a "$SCRIPT_DIR/$s" "$backup/$s"; fi
+            if [ -f "$SCRIPT_DIR/$s" ]; then
+                if ! cp -a "$SCRIPT_DIR/$s" "$backup/$s"; then
+                    echo -e "${RED}备份 $s 失败，已中止更新（现有安装保持不变）。${NC}" >&2
+                    rc=1
+                    break
+                fi
+                backed_up+=("$s")
+            fi
         done
+    fi
+    if [ "$rc" -eq 0 ]; then
         for s in "${SCRIPTS[@]}"; do
             if ! install -o root -g root -m 0755 "$tmp/$s" "$SCRIPT_DIR/$s"; then
                 restore_scripts

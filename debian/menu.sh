@@ -36,7 +36,13 @@ run_systemctl() {
 confirm_yes() {
     local prompt="$1" answer
     while true; do
-        read -r -p "$prompt [y/n]: " answer
+        # stdin 到 EOF（Ctrl-D 或非 tty）时 read 返回非 0；本函数总是被 `||` 调用，
+        # 函数体内 errexit 失效 —— 不处理的话空答案会不断命中 `*)` 分支，
+        # 变成 100% CPU 的死循环（实测 2 秒输出 13 万行）。
+        if ! read -r -p "$prompt [y/n]: " answer; then
+            echo -e "${YELLOW}无法读取输入（EOF），已取消。${NC}" >&2
+            return 1
+        fi
         case "$answer" in
             [Yy]) return 0;;
             [Nn]) return 1;;
@@ -60,15 +66,17 @@ uninstall_sbshell() {
 }
 download_all_scripts() {
     local tmpdir backupdir script item rc=0
-    tmpdir=$(mktemp -d /tmp/sbshell-download.XXXXXX); backupdir=$(mktemp -d /tmp/sbshell-backup.XXXXXX) || return 1
+    # 两个 mktemp 都必须检查：本函数总在 `||` 上下文里被调用，errexit 失效，
+    # 空变量会让 `"$tmpdir/$script"` 折叠成 /脚本名（写到文件系统根目录）。
+    tmpdir=$(mktemp -d /tmp/sbshell-download.XXXXXX) || return 1
+    backupdir=$(mktemp -d /tmp/sbshell-backup.XXXXXX) || { rm -rf "$tmpdir"; return 1; }
+    # 只回滚“确实备份成功”的脚本：备份失败与“原本不存在”必须区分，
+    # 否则备份目录写满时 cp 失败 + 后续 install 失败会把健康脚本直接删掉。
+    backed_up=()
     restore_scripts() {
         local item
-        for item in "${SCRIPTS[@]}"; do
-            if [ -f "$backupdir/$item" ]; then
-                install -o root -g root -m 0755 "$backupdir/$item" "$SCRIPT_DIR/$item"
-            else
-                rm -f "$SCRIPT_DIR/$item"
-            fi
+        for item in "${backed_up[@]}"; do
+            install -o root -g root -m 0755 "$backupdir/$item" "$SCRIPT_DIR/$item" || true
         done
     }
     for script in "${SCRIPTS[@]}"; do
@@ -86,9 +94,16 @@ download_all_scripts() {
     if [ "$rc" -eq 0 ]; then
         for script in "${SCRIPTS[@]}"; do
             if [ -f "$SCRIPT_DIR/$script" ]; then
-                cp -a "$SCRIPT_DIR/$script" "$backupdir/$script"
+                if ! cp -a "$SCRIPT_DIR/$script" "$backupdir/$script"; then
+                    echo -e "${RED}备份 $script 失败，已中止更新（现有安装保持不变）。${NC}" >&2
+                    rc=1
+                    break
+                fi
+                backed_up+=("$script")
             fi
         done
+    fi
+    if [ "$rc" -eq 0 ]; then
         for script in "${SCRIPTS[@]}"; do
             if ! install -o root -g root -m 0755 "$tmpdir/$script" "$SCRIPT_DIR/$script"; then
                 restore_scripts
