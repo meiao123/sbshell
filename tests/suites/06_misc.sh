@@ -128,17 +128,36 @@ fi
 if [ -f "$SBSHELL_SRC/.gitattributes" ]; then pass ".gitattributes 存在（强制脚本用 LF）"; else fail "缺少 .gitattributes"; fi
 if grep -q 'eol=lf' "$SBSHELL_SRC/.gitattributes" 2>/dev/null; then pass ".gitattributes 指定 eol=lf"; else fail ".gitattributes 未指定 eol=lf"; fi
 
-# 引用“是否存在”只能联网验证：默认离线跳过，SBSHELL_ONLINE=1 时用 git ls-remote 校验。
+# 引用“是否存在”只能联网验证：默认离线跳过，SBSHELL_ONLINE=1 时校验。
+# 不能用 `git ls-remote <repo> <sha>`：ls-remote 只匹配引用名，对提交 SHA 恒为 rc=2，
+# 会把合法的 SHA 固定误判为不存在。首选直接请求 raw URL（脚本真正消费的路径）；
+# 没有 curl 时用一次性 `git init` + `git fetch --depth=1`——必须放在临时仓库里，
+# 因为 --depth 获取会把当前仓库变成 shallow 并截断历史（实测会让随后的祖先判断失真）。
 if [ "${SBSHELL_ONLINE:-0}" = 1 ]; then
     for ref in $(printf '%s\n' "${refs[@]}" | sort -u); do
-        if git ls-remote --exit-code https://github.com/meiao123/sbshell "$ref" >/dev/null 2>&1; then
+        rc=0
+        if command -v curl >/dev/null 2>&1; then
+            curl -fsS --max-time 20 -o /dev/null \
+                "https://raw.githubusercontent.com/meiao123/sbshell/$ref/debian/menu.sh" || rc=$?
+        elif command -v git >/dev/null 2>&1; then
+            tmp_repo=$(mktemp -d)
+            git -C "$tmp_repo" init -q
+            git -C "$tmp_repo" fetch --depth=1 --no-tags \
+                https://github.com/meiao123/sbshell "$ref" >/dev/null 2>&1 || rc=$?
+            rm -rf "$tmp_repo"
+        else
+            rc=127
+        fi
+        if [ "$rc" -eq 0 ]; then
             pass "发布引用 $ref 在远端存在"
+        elif [ "$rc" -eq 127 ]; then
+            pass "无 git/curl：跳过 $ref 的联网校验（CI 由 workflow 的 raw URL 步骤负责）"
         else
             fail "发布引用 $ref 在远端不存在（安装/自更新会 404）"
         fi
     done
 else
-    pass "离线模式：跳过引用存在性检查（CI 里由 workflow 的 git ls-remote 步骤负责）"
+    pass "离线模式：跳过引用存在性检查（CI 里由 workflow 的 raw URL 步骤负责）"
 fi
 
 suite_begin "configure scripts: a missing mode.conf must be a silent no-op (P2)"

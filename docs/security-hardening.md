@@ -80,7 +80,7 @@ README.md                 模板地址
 
 | 问题 | 位置 | 修复 |
 | --- | --- | --- |
-| 自更新引用指向**已被删除的分支** → 一键安装与更新全部 404 | `sbshall.sh`、两个 `menu.sh`、两个 `update_scripts.sh` | 引用改为存在的**不可变提交 SHA**；CI 增加 `git ls-remote --exit-code` 校验；离线套件要求 40 位 SHA |
+| 自更新引用指向**已被删除的分支** → 一键安装与更新全部 404 | `sbshall.sh`、两个 `menu.sh`、两个 `update_scripts.sh` | 引用改为存在的**不可变提交 SHA**；CI 用 raw URL 校验引用是否存在（`git ls-remote` 只匹配引用名、对 SHA 恒判失败；`git fetch --depth=1` 判定正确但会把检出变成 shallow 仓库）；离线套件要求 40 位 SHA |
 | `configure_tun.sh` 先拆除后校验，早期失败无恢复 | 两平台 `configure_tun.sh` | `nft -c` 提前到所有破坏性操作之前；恢复块抽成 `restore_prev()` + `trap … ERR` |
 | `clean_nft.sh` 吞掉 `nft delete` 失败并删掉 state、谎报已清理 | 两平台 `clean_nft.sh` | 用 `nft list tables` 判定存在性；删除失败/无法判定即中止并保留 state；清理后复核规则与路由 |
 | `INTERFACE=$5` 在 dev-only 默认路由上取到 `link` | 四个 `configure_*.sh` | 按 `dev` 关键字取网卡（PPPoE/WireGuard 机器上 TProxy 从此可用） |
