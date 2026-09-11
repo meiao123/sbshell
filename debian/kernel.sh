@@ -1,9 +1,9 @@
 #!/bin/bash
 set -Eeuo pipefail
-GREEN='\033[0;32m'; RED='\033[0;31m'; NC='\033[0m'
+GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[1;33m'; NC='\033[0m'
 [ "$(id -u)" -eq 0 ] || exec sudo bash "$0" "$@"
-command -v apt-get >/dev/null || { echo "仅支持 Debian/Ubuntu/Armbian。" >&2; exit 1; }
-command -v curl >/dev/null || apt-get update && apt-get install -y curl
+command -v apt-get >/dev/null 2>&1 || { echo '仅支持 Debian/Ubuntu/Armbian。' >&2; exit 1; }
+command -v curl >/dev/null 2>&1 || { apt-get update; apt-get install -y curl; }
 apt-get update
 apt-get install -y gpg ca-certificates
 install -d -o root -g root -m 0755 /etc/apt/keyrings
@@ -20,12 +20,23 @@ chmod 0644 "$REPO_LIST"; chown root:root "$REPO_LIST"
 apt-get update
 cpu_flags=$(awk -F: '$1 == "flags" {print $2; exit}' /proc/cpuinfo)
 has_flags() { local f; for f in "$@"; do grep -qw -- "$f" <<< "$cpu_flags" || return 1; done; }
-if has_flags avx512f avx512bw avx512cd avx512dq avx512vl; then level=4
-elif has_flags avx avx2 bmi1 bmi2 f16c fma abm movbe xsave; then level=3
-elif has_flags cx16 lahf popcnt sse4_1 sse4_2 ssse3; then level=2
-elif has_flags lm cmov cx8 fpu fxsr mmx syscall sse2; then level=1
-else echo -e "${RED}无法确定 CPU 指令集级别。${NC}" >&2; exit 1; fi
+if has_flags avx512f avx512bw avx512cd avx512dq avx512vl; then
+    level=4
+elif has_flags avx avx2 bmi1 bmi2 f16c fma abm movbe xsave; then
+    level=3
+elif has_flags cx16 lahf popcnt sse4_1 sse4_2 ssse3; then
+    level=2
+elif has_flags lm cmov cx8 fpu fxsr mmx syscall sse2; then
+    level=1
+else
+    echo -e "${RED}无法确定 CPU 指令集级别。${NC}" >&2; exit 1
+fi
+
 case "$level" in
-1) pkg=linux-xanmod-lts-x64v1;; 2) pkg=linux-xanmod-lts-x64v2;; 3) pkg=linux-xanmod-lts-x64v3;; 4) pkg=linux-xanmod-lts-x64v4;; esac
+    1) pkg=linux-xanmod-lts-x64v1 ;;
+    2) pkg=linux-xanmod-lts-x64v2 ;;
+    3) pkg=linux-xanmod-lts-x64v3 ;;
+    4) pkg=linux-xanmod-lts-x64v3; echo -e "${YELLOW}检测到 x86-64-v4；XanMod 当前没有 v4 LTS 包，按官方建议使用 v3。${NC}" ;;
+esac
 apt-get install -y "$pkg"
 echo -e "${GREEN}$pkg 安装完成。请确认默认启动项后再重启系统。${NC}"
