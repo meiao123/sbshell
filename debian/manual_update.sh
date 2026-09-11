@@ -1,7 +1,6 @@
 #!/bin/bash
 set -Eeuo pipefail
 
-CYAN='\033[0;36m'
 GREEN='\033[0;32m'
 RED='\033[0;31m'
 NC='\033[0m'
@@ -9,8 +8,12 @@ MANUAL_FILE="/etc/sing-box/manual.conf"
 DEFAULTS_FILE="/etc/sing-box/defaults.conf"
 CONFIG_FILE="/etc/sing-box/config.json"
 TMP_DIR="/tmp/sbshell-config"
+LOCK_FILE="/run/lock/sbshell-config.lock"
 
 [ "$(id -u)" -eq 0 ] || exec sudo bash "$0" "$@"
+install -d -o root -g root -m 0755 /run/lock
+exec 9>"$LOCK_FILE"
+flock -x 9
 
 read_value() {
     local key="$1" file="$2"
@@ -62,9 +65,9 @@ else
     valid_url "$BACKEND_URL" && [ -n "$SUBSCRIPTION_URL" ] && valid_url "$TEMPLATE_URL" || { echo -e "${RED}manual.conf 配置无效。${NC}"; exit 1; }
 fi
 
-FULL_URL="${BACKEND_URL}/config/${SUBSCRIPTION_URL}&file=${TEMPLATE_URL}"
+FULL_URL="${BACKEND_URL%/}/config/${SUBSCRIPTION_URL}&file=${TEMPLATE_URL}"
 TMP_CONFIG="$TMP_DIR/config.json"
-BACKUP="${CONFIG_FILE}.backup"
+BACKUP="$CONFIG_FILE.backup"
 
 if ! curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 60 "$FULL_URL" -o "$TMP_CONFIG"; then
     echo -e "${RED}配置下载失败。${NC}"; exit 1
@@ -72,7 +75,7 @@ fi
 if ! sing-box check -c "$TMP_CONFIG"; then
     echo -e "${RED}新配置验证失败，保留现有配置。${NC}"; exit 1
 fi
-[ ! -f "$CONFIG_FILE" ] || install -o root -g root -m 0644 "$CONFIG_FILE" "$BACKUP"
+if [ -f "$CONFIG_FILE" ]; then install -o root -g root -m 0644 "$CONFIG_FILE" "$BACKUP"; fi
 install -o root -g root -m 0644 "$TMP_CONFIG" "$CONFIG_FILE"
 if ! systemctl restart sing-box; then
     [ ! -f "$BACKUP" ] || install -o root -g root -m 0644 "$BACKUP" "$CONFIG_FILE"
