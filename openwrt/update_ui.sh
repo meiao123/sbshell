@@ -13,8 +13,13 @@ YACD_URL=https://github.com/MetaCubeX/Yacd-meta/archive/6945744f5ab10d3d639d6eb7
 command -v curl >/dev/null 2>&1 || { opkg update; opkg install curl; }
 command -v unzip >/dev/null 2>&1 || { opkg update; opkg install unzip; }
 command -v zipinfo >/dev/null 2>&1 || { opkg update; opkg install unzip; }
-valid_url() { [[ "$1" =~ ^https://[^[:space:]]+$ ]]; }
+valid_url() { [[ "$1" =~ ^https://[^[:space:]]+$/ ]]; }
 get_config_url() { sed -n 's/.*"external_ui_download_url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' /etc/sing-box/config.json 2>/dev/null | head -n1; }
+release_ui_lock() {
+    [ -d "$UI_LOCK_DIR" ] || return 0
+    owner=$(cat "$UI_LOCK_DIR/pid" 2>/dev/null || true)
+    [ "$owner" = "$$" ] && rm -rf "$UI_LOCK_DIR"
+}
 acquire_ui_lock() {
     while ! mkdir "$UI_LOCK_DIR" 2>/dev/null; do
         owner=$(cat "$UI_LOCK_DIR/pid" 2>/dev/null || true)
@@ -22,9 +27,9 @@ acquire_ui_lock() {
         now=$(date +%s); created=$(stat -c %Y "$UI_LOCK_DIR" 2>/dev/null || echo 0)
         if [ "$created" -gt 0 ] && [ $((now - created)) -ge "$LOCK_TIMEOUT" ]; then rm -rf "$UI_LOCK_DIR"; continue; fi
         sleep 1
-done
+    done
     printf '%s\n' "$$" > "$UI_LOCK_DIR/pid"
-    trap 'rm -rf "$UI_LOCK_DIR"' EXIT INT TERM
+    trap 'release_ui_lock' EXIT INT TERM
 }
 validate_archive() {
     local zip="$1" entry mode size total=0 count=0
@@ -61,7 +66,7 @@ prune_backups() {
     for backup in $backups; do i=$((i + 1)); [ "$i" -le 3 ] || rm -rf -- "$backup"; done
 }
 install_ui() {
-    local url="$1" tmp top backup
+    local url="$1" tmp top backup failed_ui
     acquire_ui_lock
     valid_url "$url" || { echo 'UI 地址必须使用 HTTPS。' >&2; return 1; }
     tmp=$(mktemp -d /tmp/sbshell-ui.XXXXXX)
@@ -79,8 +84,20 @@ install_ui() {
     else
         rmdir "$backup"; backup=''
     fi
-    if ! mv "$top" "$UI_DIR"; then [ -z "$backup" ] || mv "$backup" "$UI_DIR"; cleanup_ui_tmp; return 1; fi
-    chown -R root:root "$UI_DIR"
+    if ! mv "$top" "$UI_DIR"; then
+        [ -z "$backup" ] || mv "$backup" "$UI_DIR"
+        cleanup_ui_tmp
+        return 1
+    fi
+    if ! chown -R root:root "$UI_DIR"; then
+        failed_ui="$tmp/failed-ui"
+        mv "$UI_DIR" "$failed_ui" || true
+        if [ -n "$backup" ] && [ -d "$backup" ]; then
+            mv "$backup" "$UI_DIR" || true
+        fi
+        cleanup_ui_tmp
+        return 1
+    fi
     prune_backups
     cleanup_ui_tmp
     echo 'UI 安装完成。'
@@ -100,6 +117,11 @@ BACKUP_DIR=/etc/sing-box/ui-backups
 CONFIG_FILE=/etc/sing-box/config.json
 LOCK_DIR=/tmp/sbshell-ui.lock
 LOCK_TIMEOUT=900
+release_ui_lock() {
+  [ -d "$LOCK_DIR" ] || return 0
+  owner=$(cat "$LOCK_DIR/pid" 2>/dev/null || true)
+  [ "$owner" = "$$" ] && rm -rf "$LOCK_DIR"
+}
 acquire_lock() {
   while ! mkdir "$LOCK_DIR" 2>/dev/null; do
     owner=$(cat "$LOCK_DIR/pid" 2>/dev/null || true)
@@ -107,9 +129,9 @@ acquire_lock() {
     now=$(date +%s); created=$(stat -c %Y "$LOCK_DIR" 2>/dev/null || echo 0)
     if [ "$created" -gt 0 ] && [ $((now - created)) -ge "$LOCK_TIMEOUT" ]; then rm -rf "$LOCK_DIR"; continue; fi
     sleep 1
-done
+  done
   printf '%s\n' "$$" > "$LOCK_DIR/pid"
-  trap 'rm -rf "$LOCK_DIR"; rm -rf "$TMP"' EXIT INT TERM
+  trap 'release_ui_lock; rm -rf "$TMP"' EXIT INT TERM
 }
 acquire_lock
 TMP=$(mktemp -d /tmp/sbshell-ui-auto.XXXXXX)
@@ -152,7 +174,12 @@ top=$(archive_top "$TMP/ui.zip" "$TMP/extract")
 backup=$(mktemp -d "$BACKUP_DIR/.ui-backup.XXXXXX"); rm -rf "$backup"
 [ ! -d "$UI_DIR" ] || mv "$UI_DIR" "$backup"
 if ! mv "$top" "$UI_DIR"; then [ ! -d "$backup" ] || mv "$backup" "$UI_DIR"; exit 1; fi
-chown -R root:root "$UI_DIR"
+if ! chown -R root:root "$UI_DIR"; then
+  failed_ui="$TMP/failed-ui"
+  mv "$UI_DIR" "$failed_ui" || true
+  [ ! -d "$backup" ] || mv "$backup" "$UI_DIR" || true
+  exit 1
+fi
 i=0; backups=$(ls -1dt "$BACKUP_DIR"/.ui-backup.* 2>/dev/null || true); for backup in $backups; do i=$((i + 1)); [ "$i" -le 3 ] || rm -rf -- "$backup"; done
 EOF
 chmod 0755 /etc/sing-box/update-ui.sh; chown root:root /etc/sing-box/update-ui.sh
