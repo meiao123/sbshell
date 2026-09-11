@@ -118,7 +118,7 @@ install_ui() {
     if [ -d "$UI_DIR" ]; then
         mv "$UI_DIR" "$backup" || { cleanup_ui_tmp; return 1; }
     else
-        rmdir "$backup"; backup=''
+        backup=''
     fi
     if ! mv "$top" "$UI_DIR"; then
         [ -z "$backup" ] || mv "$backup" "$UI_DIR"
@@ -258,5 +258,5 @@ while true; do
         6) setup_auto_update_ui; echo '自动更新已设置。';;
         0) exit 0;;
         *) echo '无效选择。';;
-    esac
+esac
 done
