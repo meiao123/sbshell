@@ -50,10 +50,35 @@ fi
 RELEASE_REF=7dfddbae21d224349bb4ba4ac2d81bd541d39b9d
 REPO_RAW="https://raw.githubusercontent.com/meiao123/sbshell"
 RELEASE_DECL_URL="$REPO_RAW/refs/heads/main/RELEASE"
+github_api_download() {
+    local path="$1" ref="$2" output="$3" response encoded
+    command -v base64 >/dev/null 2>&1 || return 1
+    response=$(curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+        --connect-timeout 10 --max-time 30 \
+        "https://api.github.com/repos/meiao123/sbshell/contents/$path?ref=$ref") || return 1
+    encoded=$(printf '%s' "$response" | sed -n 's/.*"content"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1) || return 1
+    [ -n "$encoded" ] || return 1
+    encoded=${encoded//\\n/}
+    encoded=${encoded//\\r/}
+    printf '%s' "$encoded" | base64 -d > "$output" || { rm -f "$output"; return 1; }
+    [ -s "$output" ]
+}
+download_repo_file() {
+    local path="$1" ref="$2" output="$3"
+    if curl --fail --silent --location --proto '=https' --tlsv1.2 \
+        --connect-timeout 10 --max-time 60 "$REPO_RAW/$ref/$path" -o "$output" && [ -s "$output" ]; then
+        return 0
+    fi
+    rm -f "$output"
+    github_api_download "$path" "$ref" "$output"
+}
 resolve_release_ref() {
-    local declared=''
-    declared=$(curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
-        --connect-timeout 10 --max-time 20 "$RELEASE_DECL_URL" 2>/dev/null | tr -d '\r\n') || declared=''
+    local tmp='/tmp/sbshell-release-ref' declared=''
+    rm -f "$tmp"
+    if download_repo_file 'RELEASE' 'main' "$tmp"; then
+        declared=$(tr -d '\r\n' < "$tmp")
+    fi
+    rm -f "$tmp"
     case "$declared" in
         *[!0-9a-f]*) ;;
         *) if [ "${#declared}" -eq 40 ]; then RELEASE_REF=$declared; fi ;;
@@ -96,14 +121,13 @@ command -v nft >/dev/null 2>&1 || { echo -e "${RED}nft 安装失败。${NC}" >&2
 resolve_release_ref
 DEBIAN_MAIN_SCRIPT_URL="$REPO_RAW/$RELEASE_REF/debian/menu.sh"
 OPENWRT_MAIN_SCRIPT_URL="$REPO_RAW/$RELEASE_REF/openwrt/menu.sh"
-
 install -d -o root -g root -m 0755 "$SCRIPT_DIR"
 tmp=$(mktemp /tmp/sbshell-menu.XXXXXX)
 trap 'rm -f "$tmp"' EXIT
 if $is_openwrt; then
-    curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 60 "$OPENWRT_MAIN_SCRIPT_URL" -o "$tmp"
+    download_repo_file "openwrt/menu.sh" "$RELEASE_REF" "$tmp"
 else
-    curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 60 "$DEBIAN_MAIN_SCRIPT_URL" -o "$tmp"
+    download_repo_file "debian/menu.sh" "$RELEASE_REF" "$tmp"
 fi
 [ -s "$tmp" ] || { echo -e "${RED}主脚本下载为空。${NC}" >&2; exit 1; }
 bash -n "$tmp"
