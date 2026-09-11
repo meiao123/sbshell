@@ -59,7 +59,7 @@ TMP_DIR=$(mktemp -d /tmp/sbshell-config.XXXXXX) || exit 1
 trap 'rm -rf "$TMP_DIR"' EXIT
 
 read_value() { awk -F= -v k="$1" '$1 == k {sub(/^[^=]*=/, ""); print; exit}' "$2" 2>/dev/null || true; }
-valid_url() { [[ "$1" =~ ^https://[^[:space:]]+$ ]]; }
+valid_url() { [[ "$1" =~ ^https?://[^[:space:]]+$ ]]; }
 valid_subscription() {
     local value="$1"
     [ -z "$value" ] && return 0
@@ -77,7 +77,7 @@ build_full_url() {
 }
 validate_endpoints() {
     if [ -n "$BACKEND_URL" ]; then
-        valid_url "$BACKEND_URL" || { echo -e "${RED}后端地址必须是 HTTPS URL。${NC}" >&2; return 1; }
+        valid_url "$BACKEND_URL" || { echo -e "${RED}后端地址必须是 HTTP 或 HTTPS URL。${NC}" >&2; return 1; }
         [ -n "$SUBSCRIPTION_URL" ] || { echo -e "${RED}使用后端地址时订阅地址不能为空。${NC}" >&2; return 1; }
     fi
     valid_subscription "$SUBSCRIPTION_URL" || { echo -e "${RED}订阅地址包含非法字符。${NC}" >&2; return 1; }
@@ -162,7 +162,7 @@ acquire_lock
 if [ -f "$MANUAL_FILE" ]; then cp -a "$MANUAL_FILE" "$TMP_DIR/manual.backup"; fi
 if [ -f "$CONFIG_FILE" ]; then cp -a "$CONFIG_FILE" "$TMP_DIR/config.backup"; fi
 
-curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 60 "$FULL_URL" -o "$TMP_DIR/config.json" || { echo '配置下载失败。' >&2; exit 1; }
+curl --fail --silent --show-error --location --proto '=http,https' --tlsv1.2 --connect-timeout 10 --max-time 60 "$FULL_URL" -o "$TMP_DIR/config.json" || { echo '配置下载失败。' >&2; exit 1; }
 sing-box check -c "$TMP_DIR/config.json" || { echo '配置验证失败。' >&2; exit 1; }
 
 if [ "$PROMPT_FLAG" -eq 1 ]; then install -o root -g root -m 0600 "$TMP_DIR/manual.conf" "$MANUAL_FILE"; fi
