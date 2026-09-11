@@ -10,12 +10,17 @@ MODE=$(sed -n 's/^MODE=//p' /etc/sing-box/mode.conf 2>/dev/null | head -n1)
 [ "$MODE" = TProxy ] || exit 0
 [ -n "$INTERFACE" ] || { echo '未找到默认网卡。' >&2; exit 1; }
 command -v nft >/dev/null 2>&1 || { echo '缺少 nft。' >&2; exit 1; }
-RESERVED='{ 127.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 169.254.0.0/16, 172.16.0.0/12, 192.0.0.0/24, 192.0.2.0/24, 198.51.100.0/24, 192.168.0.0/16, 203.0.113.0/24, 224.0.0.0/4, 240.0.0.0/4, 255.255.255.255/32 }'
+RESERVED='{ 127.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/24, 192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24, 224.0.0.0/4, 240.0.0.0/4, 255.255.255.255/32 }'
 BYPASS='{ 192.168.0.0/16, 10.0.0.0/8 }'
 TMP=$(mktemp /tmp/sbshell-tproxy.XXXXXX)
 OLD_TABLE=$(mktemp /tmp/sbshell-tproxy-table.XXXXXX)
+OLD_TUN_TABLE=$(mktemp /tmp/sbshell-tun-table.XXXXXX)
+OLD_TUN_STATE=$(mktemp /tmp/sbshell-tun-state.XXXXXX)
 STATE_FILE=/etc/sing-box/tproxy.state
-trap 'rm -f "$TMP" "$OLD_TABLE"' EXIT
+TUN_STATE_FILE=/etc/sing-box/tun.state
+trap 'rm -f "$TMP" "$OLD_TABLE" "$OLD_TUN_TABLE" "$OLD_TUN_STATE"' EXIT
+mkdir -p /etc/sing-box
+
 cat > "$TMP" <<EOF
 table inet sing-box {
  set RESERVED_IPSET { type ipv4_addr; flags interval; auto-merge; elements = $RESERVED }
@@ -41,7 +46,20 @@ table inet sing-box {
 }
 EOF
 nft -c -f "$TMP"
-mkdir -p /etc/sing-box
+
+if nft list table inet sing-box-tun > "$OLD_TUN_TABLE" 2>/dev/null; then
+    if [ -f "$TUN_STATE_FILE" ] && grep -q '^OWNER=sbshell$' "$TUN_STATE_FILE"; then
+        cp "$TUN_STATE_FILE" "$OLD_TUN_STATE"
+        nft delete table inet sing-box-tun
+    else
+        echo '检测到非 Sbshell 管理的 inet sing-box-tun 表，拒绝覆盖。' >&2
+        exit 1
+    fi
+else
+    : > "$OLD_TUN_TABLE"
+    : > "$OLD_TUN_STATE"
+fi
+
 if [ -f "$STATE_FILE" ] && grep -q '^OWNER=sbshell$' "$STATE_FILE"; then
     nft list table inet sing-box > "$OLD_TABLE" 2>/dev/null || true
     nft list table inet sing-box >/dev/null 2>&1 && nft delete table inet sing-box || true
@@ -59,6 +77,13 @@ rollback() {
     if [ "$ROUTE_CREATED" -eq 1 ]; then ip -4 route del local default dev "$INTERFACE" table "$PROXY_ROUTE_TABLE" 2>/dev/null || true; fi
     if [ "$RULE_CREATED" -eq 1 ]; then ip -4 rule del pref "$ACTUAL_RULE_PREF" fwmark "$PROXY_FWMARK" lookup "$PROXY_ROUTE_TABLE" 2>/dev/null || true; fi
     if [ -s "$OLD_TABLE" ]; then nft list table inet sing-box >/dev/null 2>&1 && nft delete table inet sing-box || true; nft -f "$OLD_TABLE" 2>/dev/null || true; fi
+    nft list table inet sing-box-tun >/dev/null 2>&1 && nft delete table inet sing-box-tun || true
+    if [ -s "$OLD_TUN_TABLE" ]; then
+        nft -f "$OLD_TUN_TABLE" 2>/dev/null || true
+        [ ! -s "$OLD_TUN_STATE" ] || install -o root -g root -m 0600 "$OLD_TUN_STATE" "$TUN_STATE_FILE"
+    else
+        rm -f "$TUN_STATE_FILE"
+    fi
 }
 
 ACTUAL_RULE_PREF=$(ip -4 rule show | awk -v mark="$PROXY_FWMARK" -v table="$PROXY_ROUTE_TABLE" '$0 ~ ("fwmark 0x" mark) && $0 ~ ("lookup " table) {sub(/:.*/, ""); print; exit}')
@@ -82,10 +107,13 @@ if ! nft -f "$TMP"; then
 fi
 cat > "$STATE_FILE" <<EOF
 OWNER=sbshell
+MODE=TProxy
+TUN_TABLE_CREATED=0
 INTERFACE=$INTERFACE
 RULE_PREF=$ACTUAL_RULE_PREF
 RULE_CREATED=$RULE_CREATED
 ROUTE_CREATED=$ROUTE_CREATED
 EOF
 chown root:root "$STATE_FILE"; chmod 0600 "$STATE_FILE"
+rm -f "$TUN_STATE_FILE"
 echo 'TProxy 模式防火墙规则已安全应用。'
