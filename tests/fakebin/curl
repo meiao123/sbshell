@@ -20,6 +20,18 @@ printf '%s\n' "$url" >> "$S/curl.log"
 
 name="${url%%\?*}"
 name="${name##*/}"
+# 后端订阅 URL 的真实配置模板藏在 `file=` 查询参数里；仅看路径 basename
+# 会得到订阅 token（如 tk），导致行为测试错误地得到 404。这里优先解析 file=。
+file_url=''
+case "$url" in
+    *'&file='*) file_url="${url#*&file=}" ;;
+    *'?'*'file='*) file_url="${url#*file=}" ;;
+esac
+if [ -n "$file_url" ]; then
+    name="${file_url%%\&*}"
+    name="${name##*/}"
+    name="${name%%\?*}"
+fi
 [ -n "$name" ] || name=index
 
 src=''
