@@ -44,19 +44,17 @@ nft -c -f "$TMP"
 if ! nft -f "$TMP"; then
     nft list table inet sing-box-tun >/dev/null 2>&1 && nft delete table inet sing-box-tun || true
     nft -f "$OLD_NFT" 2>/dev/null || true
-    # Restore policy routing state exactly as it existed before this run.
-    ip -4 rule flush 2>/dev/null || true
+    # Restore only entries that were present before this run; never flush global policy state.
     while IFS= read -r line; do
         [ -n "$line" ] || continue
         spec=${line#*: }
         pref=${line%%:*}
         [ -n "$spec" ] || continue
-        ip -4 rule add pref "$pref" $spec 2>/dev/null || true
+        ip -4 rule show | grep -Fq "$spec" || ip -4 rule add pref "$pref" $spec 2>/dev/null || true
 done < "$OLD_RULE"
-    ip -4 route flush table "$PROXY_ROUTE_TABLE" 2>/dev/null || true
     while IFS= read -r route; do
         [ -n "$route" ] || continue
-        ip -4 route add table "$PROXY_ROUTE_TABLE" $route 2>/dev/null || true
+        ip -4 route show table "$PROXY_ROUTE_TABLE" | grep -Fqx "$route" || ip -4 route add table "$PROXY_ROUTE_TABLE" $route 2>/dev/null || true
 done < "$OLD_ROUTE"
     exit 1
 fi
