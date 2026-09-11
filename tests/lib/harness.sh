@@ -42,7 +42,14 @@ reset_stub_state() {
     unset SBSHELL_NFT_FAIL SBSHELL_SINGBOX_FAIL SBSHELL_NO_IPV6 SBSHELL_IPV4_FORWARD SBSHELL_IPV6_FORWARD
 }
 
-reset_singbox_dir() { rm -rf /etc/sing-box; mkdir -p /etc/sing-box/scripts; }
+# 脚本（以及新加的 getent group sing-box 逻辑）要求存在 sing-box 服务组；
+# 测试环境必须显式创建，否则 suite 04 单独运行会失败（也会掩盖真实的组依赖问题）。
+ensure_singbox_user() {
+    getent group sing-box >/dev/null 2>&1 || groupadd --system sing-box 2>/dev/null || true
+    id sing-box >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin \
+        -g sing-box sing-box 2>/dev/null || true
+}
+reset_singbox_dir() { rm -rf /etc/sing-box; mkdir -p /etc/sing-box/scripts; ensure_singbox_user; }
 reset_openwrt_dirs() {
     rm -rf /etc/rc.d /etc/crontabs
     mkdir -p /etc/rc.d /etc/crontabs

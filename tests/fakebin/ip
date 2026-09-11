@@ -8,6 +8,9 @@ log() { printf '%s\n' "$*" >> "$S/ip.log" 2>/dev/null || true; }
 IFACE=${SBSHELL_TEST_IFACE:-eth0}
 ADDR=${SBSHELL_TEST_ADDR:-192.0.2.10/24}
 GW=${SBSHELL_TEST_GW:-192.0.2.1}
+# 默认路由形态可注入：用于覆盖 dev-only 默认路由（PPPoE `default dev pppoe-wan scope link`、
+# WireGuard `default dev wg0 scope link`）这类"字段 5 不是网卡"的形态。
+DEFAULT_ROUTE=${SBSHELL_TEST_DEFAULT_ROUTE:-default via $GW dev $IFACE proto static}
 
 args=()
 for a in "$@"; do
@@ -22,14 +25,14 @@ sub="${1:-} ${2:-}"
 case "$sub" in
     "route show")
         if [ "${3:-}" = "default" ]; then
-            echo "default via $GW dev $IFACE proto static"
+            printf '%s\n' "$DEFAULT_ROUTE"
             exit 0
         fi
         if [ "${3:-}" = "table" ]; then
             cat "$S/ip_routes_${4:-}" 2>/dev/null
             exit 0
         fi
-        echo "default via $GW dev $IFACE proto static"
+        printf '%s\n' "$DEFAULT_ROUTE"
         exit 0
         ;;
     "route add"|"route del")
@@ -71,8 +74,14 @@ case "$sub" in
                 *) shift ;;
             esac
         done
-        printf '%s:\tfrom all fwmark 0x%s lookup %s\n' "$pref" "$mark" "$tbl" >> "$RULES"
-        log "rule add pref=$pref mark=$mark table=$tbl"
+        # 兼容两种调用形态：`fwmark 1`（脚本主流程）与 `fwmark 0x1`（回滚时按 ip rule show 输出恢复）。
+        case "$mark" in
+            0x*) mark_hex="${mark#0x}" ;;
+            '') mark_hex='' ;;
+            *) mark_hex="$mark" ;;
+        esac
+        printf '%s:\tfrom all fwmark 0x%s lookup %s\n' "$pref" "$mark_hex" "$tbl" >> "$RULES"
+        log "rule add pref=$pref mark=$mark_hex table=$tbl"
         exit 0
         ;;
     "rule del")

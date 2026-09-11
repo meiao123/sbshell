@@ -8,7 +8,8 @@ log() { printf '%s\n' "$*" >> "$S/nft.log" 2>/dev/null || true; }
 
 case "${1:-}" in
     -c)
-        # nft -c -f FILE -> 语法检查
+        # nft -c -f FILE -> 语法检查（可用 SBSHELL_NFT_CHECK_FAIL=1 注入失败）
+        [ "${SBSHELL_NFT_CHECK_FAIL:-0}" = 1 ] && { log "check FAIL"; echo "nft: check failed" >&2; exit 1; }
         shift
         while [ $# -gt 0 ]; do case "$1" in -f) shift;; *) shift;; esac; done
         log "check"
@@ -30,8 +31,18 @@ case "${1:-}" in
         exit 0
         ;;
     list)
+        [ "${SBSHELL_NFT_LIST_FAIL:-0}" = 1 ] && { log "list FAIL"; echo "nft: list failed" >&2; exit 1; }
         if [ "${2:-}" = "ruleset" ]; then
             cat "$S"/nft/* 2>/dev/null
+            exit 0
+        fi
+        if [ "${2:-}" = "tables" ]; then
+            # `nft list tables` 输出形如 "table inet sing-box"
+            for f in "$S"/nft/*; do
+                [ -f "$f" ] || continue
+                b=$(basename "$f")
+                printf 'table %s %s\n' "${b%%__*}" "${b#*__}"
+            done
             exit 0
         fi
         fam="${3:-}"; name="${4:-}"
@@ -42,6 +53,11 @@ case "${1:-}" in
     delete)
         fam="${3:-}"; name="${4:-}"
         p=$(table_path "$fam" "$name")
+        if [ -n "${SBSHELL_NFT_DELETE_FAIL:-}" ] && [ "${SBSHELL_NFT_DELETE_FAIL}" = "$name" ]; then
+            log "delete FAIL $fam/$name"
+            echo "nft: delete failed for $name" >&2
+            exit 1
+        fi
         if [ -f "$p" ]; then rm -f "$p"; log "delete $fam/$name"; exit 0; fi
         exit 1
         ;;

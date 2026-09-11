@@ -40,6 +40,18 @@ jobs:
             echo "jq empty $f"
             jq empty "$f"
           done
+      - name: Verify the pinned release ref exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          # 2026-09-11 的事故：BASE_REF/RELEASE_REF 指向的分支被删除，
+          # 一键安装与脚本自更新全部 404，而离线行为测试无法发现。
+          refs=$(grep -hoE '(BASE_REF|RELEASE_REF)=[^ ]+' sbshall.sh debian/menu.sh debian/update_scripts.sh openwrt/menu.sh openwrt/update_scripts.sh | cut -d= -f2 | sort -u)
+          for ref in $refs; do
+            echo "checking ref: $ref"
+            git ls-remote --exit-code origin "$ref" >/dev/null || {
+              echo "::error::发布引用不存在: $ref（请固定到存在的提交 SHA）"; exit 1; }
+          done
       - name: Run ShellCheck (errors, blocking)
         uses: ludeeus/action-shellcheck@2.0.0
         with:

@@ -92,4 +92,47 @@ if nft_table_exists sing-box-tun; then pass "TUN 表已回滚恢复"; else fail 
 if nft_table_exists sing-box; then fail "失败的 TProxy 表不应残留"; else pass "没有残留的 TProxy 表"; fi
 assert_file /etc/sing-box/tun.state "tun.state 已回滚恢复"
 
+suite_begin "firewall: dev-only default route resolves the real interface (P1/F5)"
+
+setup_mode_case
+set_mode TProxy
+SBSHELL_TEST_DEFAULT_ROUTE="default dev pppoe-wan scope link" run_with_timeout bash "$SCRIPTS/configure_tproxy.sh" >/tmp/pppoe.out 2>&1
+assert_rc "$?" 0 "dev-only 默认路由（PPPoE）下仍能应用 TProxy"
+assert_eq "$(sed -n 's/^INTERFACE=//p' /etc/sing-box/tproxy.state)" "pppoe-wan" "state 记录真实网卡而不是 link"
+if ip_route_table 100 | grep -q "local default dev pppoe-wan"; then
+    pass "table 100 路由使用真实网卡"
+else
+    fail "table 100 路由错误: $(ip_route_table 100)"
+fi
+
+suite_begin "firewall: a failed re-apply restores the previous policy rule/route (F3)"
+
+setup_mode_case
+set_mode TProxy
+run_with_timeout bash "$SCRIPTS/configure_tproxy.sh" >/dev/null 2>&1
+SBSHELL_NFT_FAIL=sing-box run_with_timeout bash "$SCRIPTS/configure_tproxy.sh" >/dev/null 2>&1
+assert_not_rc "$?" 0 "注入 nft 失败时以非 0 退出"
+if ip_rules | grep -q "fwmark 0x1 lookup 100"; then pass "旧策略规则已恢复"; else fail "旧策略规则丢失（state 会说谎）"; fi
+if ip_route_table 100 | grep -q "local default dev eth0"; then pass "旧 table100 路由已恢复"; else fail "旧 table100 路由丢失"; fi
+
+suite_begin "firewall: validate before teardown, and clean_nft must not lie (F1/F2)"
+
+setup_mode_case
+set_mode TProxy
+run_with_timeout bash "$SCRIPTS/configure_tproxy.sh" >/dev/null 2>&1
+set_mode TUN
+SBSHELL_NFT_CHECK_FAIL=1 run_with_timeout bash "$SCRIPTS/configure_tun.sh" >/dev/null 2>&1
+assert_not_rc "$?" 0 "nft -c 失败时以非 0 退出"
+if nft_table_exists sing-box; then pass "TProxy 表未被拆除（先校验后拆除）"; else fail "TProxy 表被拆掉了"; fi
+if ip_rules | grep -q "fwmark 0x1 lookup 100"; then pass "策略规则未被拆除"; else fail "策略规则被拆掉了"; fi
+if [ -f /etc/sing-box/tproxy.state ]; then pass "tproxy.state 未被删除"; else fail "tproxy.state 被删除"; fi
+
+setup_mode_case
+set_mode TProxy
+run_with_timeout bash "$SCRIPTS/configure_tproxy.sh" >/dev/null 2>&1
+SBSHELL_NFT_DELETE_FAIL=sing-box run_with_timeout bash "$SCRIPTS/clean_nft.sh" >/tmp/cleanfail.out 2>&1
+assert_not_rc "$?" 0 "nft delete 失败时 clean_nft 以非 0 退出"
+if [ -f /etc/sing-box/tproxy.state ]; then pass "清理失败时保留 state（旧代码会删掉，表成永久孤儿）"; else fail "state 被误删"; fi
+assert_no_grep "TProxy 防火墙状态已清理" /tmp/cleanfail.out "不再谎报 TProxy 已清理"
+
 suite_end

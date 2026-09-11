@@ -101,14 +101,16 @@ assert_grep 'allow 8388/tcp' "$SBSHELL_STUB_STATE/ufw.log" "放行 sing-box 的 
 
 suite_begin "supply chain: script updates must not use mutable main refs (P2-4)"
 
+refs=()
 for f in sbshall.sh debian/menu.sh debian/update_scripts.sh openwrt/menu.sh openwrt/update_scripts.sh; do
     ref=$(grep -oE '(BASE_REF|RELEASE_REF)=[^ ]+' "$SBSHELL_SRC/$f" | head -n1 | cut -d= -f2)
+    refs+=("$ref")
+    # 必须是不可变的提交 SHA：分支名可被移动（2026-09-11 那次事故就是引用的分支被删除，
+    # 导致一键安装与自更新全部 404，而当时套件只做字符串形状检查，放过了它）。
     if [[ "$ref" =~ ^[0-9a-f]{40}$ ]]; then
-        pass "$f 固定到 commit SHA"
-    elif [[ "$ref" == security-release-* ]]; then
-        pass "$f 使用固定发布分支（建议进一步固定为 commit SHA）"
+        pass "$f 固定到不可变 commit SHA"
     else
-        fail "$f 的发布引用可疑: '$ref'"
+        fail "$f 的发布引用不是不可变提交: '$ref'"
     fi
     if grep -qE 'raw\.githubusercontent\.com/[^" ]*/main/' "$SBSHELL_SRC/$f"; then
         fail "$f 仍从 main 分支下载脚本"
@@ -125,5 +127,78 @@ fi
 
 if [ -f "$SBSHELL_SRC/.gitattributes" ]; then pass ".gitattributes 存在（强制脚本用 LF）"; else fail "缺少 .gitattributes"; fi
 if grep -q 'eol=lf' "$SBSHELL_SRC/.gitattributes" 2>/dev/null; then pass ".gitattributes 指定 eol=lf"; else fail ".gitattributes 未指定 eol=lf"; fi
+
+# 引用“是否存在”只能联网验证：默认离线跳过，SBSHELL_ONLINE=1 时用 git ls-remote 校验。
+if [ "${SBSHELL_ONLINE:-0}" = 1 ]; then
+    for ref in $(printf '%s\n' "${refs[@]}" | sort -u); do
+        if git ls-remote --exit-code https://github.com/meiao123/sbshell "$ref" >/dev/null 2>&1; then
+            pass "发布引用 $ref 在远端存在"
+        else
+            fail "发布引用 $ref 在远端不存在（安装/自更新会 404）"
+        fi
+    done
+else
+    pass "离线模式：跳过引用存在性检查（CI 里由 workflow 的 git ls-remote 步骤负责）"
+fi
+
+suite_begin "configure scripts: a missing mode.conf must be a silent no-op (P2)"
+
+reset_stub_state
+reset_singbox_dir
+install_repo_scripts debian
+for s in configure_tproxy.sh configure_tun.sh; do
+    rm -f /etc/sing-box/mode.conf
+    run_with_timeout bash "$SCRIPTS/$s" >/tmp/mode-missing.out 2>&1
+    assert_rc "$?" 0 "$s 缺少 mode.conf 时静默退出 0（旧代码因 pipefail 以 rc=2 中止）"
+done
+
+suite_begin "menu: confirm_yes must not spin on stdin EOF (B6)"
+
+awk '/^confirm_yes\(\)/{p=1} p{print} p&&/^\}$/{exit}' "$SCRIPTS/menu.sh" > /tmp/confirm_yes_fn.sh
+cat > /tmp/confirm_yes_test.sh <<'EOS'
+set -Eeuo pipefail
+CYAN=""; GREEN=""; RED=""; YELLOW=""; NC=""
+. /tmp/confirm_yes_fn.sh
+confirm_yes "确定要卸载吗？" || exit 1
+EOS
+start=$(date +%s)
+printf '' | timeout 5 bash /tmp/confirm_yes_test.sh > /tmp/confirm_yes.out 2>&1
+rc=$?
+elapsed=$(( $(date +%s) - start ))
+assert_not_rc "$rc" 0 "EOF 时 confirm_yes 返回非 0（视为取消）"
+[ "$elapsed" -le 5 ] && pass "EOF 时立即返回（${elapsed}s）" || fail "仍在循环（${elapsed}s）"
+assert_eq "$(wc -l < /tmp/confirm_yes.out)" "1" "只输出一行提示（旧实现会刷屏死循环）"
+
+suite_begin "debian cron updater keeps the credential file at 0640 (B3)"
+
+cat > /etc/sing-box/manual.conf <<'EOS'
+BACKEND_URL=https://backend.test
+SUBSCRIPTION_URL=tk?token=demo
+TEMPLATE_URL=https://tpl.test/template.json
+EOS
+printf '1\n12\n' | run_with_timeout bash "$SCRIPTS/auto_update.sh" >/dev/null 2>&1
+assert_file /etc/sing-box/update-singbox.sh "生成 cron 更新脚本"
+assert_grep 'm 0640' /etc/sing-box/update-singbox.sh "生成的 cron 更新脚本使用 0640"
+if grep -qE 'install .*-m 0644 "\$TMP_CONFIG"' /etc/sing-box/update-singbox.sh; then
+    fail "生成的 cron 更新脚本仍以 0644 写配置（本地任意用户可读凭据）"
+else
+    pass "生成的 cron 更新脚本不再以 0644 写配置"
+fi
+
+suite_begin "update_ui: refuse to install when the archive cannot be validated (B5)"
+
+shim=$(mktemp -d)
+printf '#!/bin/bash\necho "zipinfo: unavailable" >&2\nexit 127\n' > "$shim/zipinfo"
+chmod +x "$shim/zipinfo"
+awk '/^validate_archive\(\)/{p=1} p{print} p&&/^\}$/{exit}' "$SCRIPTS/update_ui.sh" > /tmp/va.sh
+printf 'not-a-real-zip\n' > /tmp/ui-fake.zip
+cat > /tmp/va_test.sh <<'EOS'
+set -uo pipefail
+. /tmp/va.sh
+validate_archive /tmp/ui-fake.zip
+EOS
+PATH="$shim:$PATH" bash /tmp/va_test.sh > /tmp/va.out 2>&1
+assert_not_rc "$?" 0 "zipinfo 不可用时拒绝（旧代码空转返回 0）"
+rm -rf "$shim"
 
 suite_end

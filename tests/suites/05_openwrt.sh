@@ -35,7 +35,18 @@ for f in "$SBSHELL_SRC"/openwrt/*.sh; do cp "$f" "$SBSHELL_FIXTURES/"; done
 output=$(printf '\n' | SBSHELL_OPKG_FAIL=1 run_with_timeout bash "$SCRIPTS/menu.sh" 2>&1)
 rc=$?
 assert_not_rc "$rc" 0 "安装失败时初始化以非 0 结束"
-if [ -f /etc/sing-box/.initialized ]; then fail "安装失败却写入了 .initialized"; else pass "失败时没有写入 .initialized"; fi
+# .initialized 的路径以代码为准：openwrt/menu.sh 用的是 $SCRIPT_DIR/.initialized，
+# 而 debian 版用的是 /etc/sing-box/.initialized。之前这里写死 debian 的路径，
+# 导致断言恒为“没有写入”，即使失败被吞掉（P1-3.7 回归）也发现不了。
+init_path=$(sed -n 's/^INITIALIZED_FILE=//p' "$SBSHELL_SRC/openwrt/menu.sh" | head -n1)
+init_path=${init_path//\"/}
+init_path=${init_path//\$SCRIPT_DIR//etc/sing-box/scripts}
+[ -n "$init_path" ] || init_path=/etc/sing-box/scripts/.initialized
+if [ -f "$init_path" ]; then
+    fail "安装失败却写入了 $init_path（旧代码 errexit 在函数内被关闭）"
+else
+    pass "失败时没有写入 $init_path"
+fi
 
 suite_begin "openwrt: autostart installs a boot-time firewall init script (P0-4)"
 reset_stub_state
