@@ -12,25 +12,33 @@ command -v nft >/dev/null 2>&1 || { echo '缺少 nft。' >&2; exit 1; }
 NFT_DIR=/etc/sing-box/tun
 NFT_FILE="$NFT_DIR/nftables.conf"
 TMP=$(mktemp /tmp/sbshell-tun.XXXXXX)
-OLD_NFT=$(mktemp /tmp/sbshell-tun-ruleset.XXXXXX)
+OLD_TABLE=$(mktemp /tmp/sbshell-tproxy-table.XXXXXX)
 OLD_RULE=$(mktemp /tmp/sbshell-tun-rule.XXXXXX)
 OLD_ROUTE=$(mktemp /tmp/sbshell-tun-route.XXXXXX)
 STATE_FILE=/etc/sing-box/tproxy.state
-trap 'rm -f "$TMP" "$OLD_NFT" "$OLD_RULE" "$OLD_ROUTE"' EXIT
+trap 'rm -f "$TMP" "$OLD_TABLE" "$OLD_RULE" "$OLD_ROUTE"' EXIT
 mkdir -p "$NFT_DIR"
 
-# Snapshot everything before any destructive operation.
-nft list ruleset > "$OLD_NFT" 2>/dev/null || true
+# Snapshot only the Sbshell-owned firewall table plus policy-routing state.
+if [ -f "$STATE_FILE" ] && grep -q '^OWNER=sbshell$' "$STATE_FILE"; then
+    nft list table inet sing-box > "$OLD_TABLE" 2>/dev/null || true
+else
+    : > "$OLD_TABLE"
+fi
 ip -4 rule show > "$OLD_RULE" 2>/dev/null || true
 ip -4 route show table "$PROXY_ROUTE_TABLE" > "$OLD_ROUTE" 2>/dev/null || true
 
-# Only remove a TProxy rule/table that was explicitly created by Sbshell.
 if [ -f "$STATE_FILE" ] && grep -q '^OWNER=sbshell$' "$STATE_FILE"; then
     nft list table inet sing-box >/dev/null 2>&1 && nft delete table inet sing-box || true
-    grep -q '^RULE_CREATED=1$' "$STATE_FILE" && ip -4 rule del fwmark "$PROXY_FWMARK" lookup "$PROXY_ROUTE_TABLE" 2>/dev/null || true
+    if grep -q '^RULE_CREATED=1$' "$STATE_FILE"; then
+        old_pref=$(sed -n 's/^RULE_PREF=//p' "$STATE_FILE" | head -n1)
+        [ -n "$old_pref" ] && ip -4 rule del pref "$old_pref" fwmark "$PROXY_FWMARK" lookup "$PROXY_ROUTE_TABLE" 2>/dev/null || true
+    fi
     OLD_INTERFACE=$(sed -n 's/^INTERFACE=//p' "$STATE_FILE" | head -n1)
     [ -n "$OLD_INTERFACE" ] || OLD_INTERFACE="$INTERFACE"
-    grep -q '^ROUTE_CREATED=1$' "$STATE_FILE" && ip -4 route del local default dev "$OLD_INTERFACE" table "$PROXY_ROUTE_TABLE" 2>/dev/null || true
+    if grep -q '^ROUTE_CREATED=1$' "$STATE_FILE"; then
+        ip -4 route del local default dev "$OLD_INTERFACE" table "$PROXY_ROUTE_TABLE" 2>/dev/null || true
+    fi
 fi
 
 cat > "$TMP" <<'EOF'
@@ -43,8 +51,8 @@ EOF
 nft -c -f "$TMP"
 if ! nft -f "$TMP"; then
     nft list table inet sing-box-tun >/dev/null 2>&1 && nft delete table inet sing-box-tun || true
-    nft -f "$OLD_NFT" 2>/dev/null || true
-    # Restore only entries that were present before this run; never flush global policy state.
+    [ ! -s "$OLD_TABLE" ] || nft -f "$OLD_TABLE" 2>/dev/null || true
+    # Restore only previously existing routing entries that were absent after rollback.
     while IFS= read -r line; do
         [ -n "$line" ] || continue
         spec=${line#*: }
