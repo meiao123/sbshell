@@ -4,9 +4,11 @@ set -Eeuo pipefail
 [ "$(id -u)" -eq 0 ] || exec sudo bash "$0" "$@"
 UI_DIR=/etc/sing-box/ui
 BACKUP_DIR=/var/lib/sing-box/ui-backups
-ZASHBOARD_URL=https://github.com/Zephyruso/zashboard/archive/refs/heads/gh-pages.zip
-METACUBEXD_URL=https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip
-YACD_URL=https://github.com/MetaCubeX/Yacd-meta/archive/refs/heads/gh-pages.zip
+UI_LOCK=/run/lock/sbshell-ui.lock
+ZASHBOARD_URL=https://github.com/Zephyruso/zashboard/archive/15575961dc84cc614c66c3e9bd20e70b862b6734/gh-pages.zip
+METACUBEXD_URL=https://github.com/MetaCubeX/metacubexd/archive/28a9589f6239bbafc24e87bbf5e5b4997fe42e59/gh-pages.zip
+YACD_URL=https://github.com/MetaCubeX/Yacd-meta/archive/6945744f5ab10d3d639d6eb76f3a67167da77b34/gh-pages.zip
+install -d -o root -g root -m 0755 /run/lock
 
 install_dependencies() {
     command -v curl >/dev/null 2>&1 || { apt-get update; apt-get install -y curl; }
@@ -17,37 +19,59 @@ get_config_url() {
     [ -s /etc/sing-box/config.json ] || return 1
     sed -n 's/.*"external_ui_download_url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' /etc/sing-box/config.json | head -n1
 }
-
+archive_top() {
+    local zip="$1" extract="$2" entry top candidate count=0
+    while IFS= read -r entry; do
+        [ -n "$entry" ] || continue
+        case "$entry" in
+            /*|../*|*/../*|*\\*) echo 'UI 压缩包包含不安全路径。' >&2; return 1;;
+        esac
+        count=$((count + 1))
+        [ "$count" -le 10000 ] || { echo 'UI 压缩包条目过多。' >&2; return 1; }
+    done < <(unzip -Z1 "$zip")
+    unzip -q -o "$zip" -d "$extract"
+    find "$extract" -type l -delete
+    [ "$(du -sk "$extract" | awk '{print $1}')" -le 204800 ] || { echo 'UI 解压后体积超过 200 MiB。' >&2; return 1; }
+    [ "$(find "$extract" -type f | wc -l)" -le 10000 ] || { echo 'UI 文件数量超过限制。' >&2; return 1; }
+    top=''
+    for candidate in "$extract"/*; do
+        [ -e "$candidate" ] || continue
+        [ -d "$candidate" ] || { echo 'UI 压缩包顶层结构无效。' >&2; return 1; }
+        [ -z "$top" ] || { echo 'UI 压缩包包含多个顶层目录。' >&2; return 1; }
+        top="$candidate"
+    done
+    [ -n "$top" ] && [ -f "$top/index.html" ] || { echo 'UI 压缩包结构无效。' >&2; return 1; }
+    printf '%s\n' "$top"
+}
 install_ui() {
     local url="$1" tmp extract top backup
+    exec 9>"$UI_LOCK"
+    flock -x 9
     valid_url "$url" || { echo 'UI 地址必须使用 HTTPS。' >&2; return 1; }
     tmp=$(mktemp -d /tmp/sbshell-ui.XXXXXX)
     extract="$tmp/extract"
-    backup="$BACKUP_DIR/$(date +%Y%m%d%H%M%S).ui"
     trap 'rm -rf "$tmp"' RETURN
     mkdir -p "$extract" "$BACKUP_DIR"
 
     echo '正在下载 UI...'
-    curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 120 "$url" -o "$tmp/ui.zip"
-    unzip -q "$tmp/ui.zip" -d "$extract"
-    top=$(find "$extract" -mindepth 1 -maxdepth 1 -type d -print -quit)
-    [ -n "$top" ] || { echo 'UI 压缩包结构无效。' >&2; return 1; }
-    [ -f "$top/index.html" ] || { echo 'UI 压缩包缺少 index.html。' >&2; return 1; }
+    curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 120 --max-filesize 52428800 "$url" -o "$tmp/ui.zip"
+    [ "$(wc -c < "$tmp/ui.zip")" -le 52428800 ] || { echo 'UI 压缩包超过 50 MiB。' >&2; return 1; }
+    top=$(archive_top "$tmp/ui.zip" "$extract") || return 1
 
     install -d -o root -g root -m 0755 /etc/sing-box
-    if [ -d "$UI_DIR" ]; then mv "$UI_DIR" "$backup"; fi
+    backup=$(mktemp -d "$BACKUP_DIR/.ui-backup.XXXXXX")
+    rm -rf "$backup"
+    if [ -d "$UI_DIR" ]; then mv "$UI_DIR" "$backup"; else rmdir "$backup"; backup=''; fi
     if ! mv "$top" "$UI_DIR"; then
-        [ ! -d "$backup" ] || mv "$backup" "$UI_DIR"
+        [ -z "$backup" ] || mv "$backup" "$UI_DIR"
         return 1
     fi
     chown -R root:root "$UI_DIR"
-    echo "UI 安装完成。"
+    echo 'UI 安装完成。'
 }
-
 check_ui() {
     if [ -f "$UI_DIR/index.html" ]; then echo 'UI 面板已安装。'; else echo 'UI 面板未安装或不完整。'; fi
 }
-
 setup_auto_update_ui() {
     local choice schedule
     while true; do
@@ -62,22 +86,42 @@ set -Eeuo pipefail
 UI_DIR=/etc/sing-box/ui
 BACKUP_DIR=/var/lib/sing-box/ui-backups
 CONFIG_FILE=/etc/sing-box/config.json
+LOCK_FILE=/run/lock/sbshell-ui.lock
+install -d -o root -g root -m 0755 /run/lock
+exec 9>"$LOCK_FILE"
+flock -x 9
 TMP=$(mktemp -d /tmp/sbshell-ui-auto.XXXXXX)
 trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$BACKUP_DIR"
-URL=$(sed -n 's/.*"external_ui_download_url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$CONFIG_FILE" | head -n1)
-URL=${URL:-https://github.com/Zephyruso/zashboard/archive/refs/heads/gh-pages.zip}
+archive_top() {
+  local zip="$1" extract="$2" entry top candidate count=0
+  while IFS= read -r entry; do
+    [ -n "$entry" ] || continue
+    case "$entry" in /*|../*|*/../*|*\\*) exit 1;; esac
+    count=$((count + 1)); [ "$count" -le 10000 ] || exit 1
+  done < <(unzip -Z1 "$zip")
+  unzip -q -o "$zip" -d "$extract"
+  find "$extract" -type l -delete
+  [ "$(du -sk "$extract" | awk '{print $1}')" -le 204800 ] || exit 1
+  [ "$(find "$extract" -type f | wc -l)" -le 10000 ] || exit 1
+  top=''
+  for candidate in "$extract"/*; do
+    [ -e "$candidate" ] || continue
+    [ -d "$candidate" ] || exit 1
+    [ -z "$top" ] || exit 1
+    top="$candidate"
+  done
+  [ -n "$top" ] && [ -f "$top/index.html" ] || exit 1
+  printf '%s\n' "$top"
+}
+URL=$(sed -n 's/.*"external_ui_download_url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$CONFIG_FILE" 2>/dev/null | head -n1)
+URL=${URL:-https://github.com/Zephyruso/zashboard/archive/15575961dc84cc614c66c3e9bd20e70b862b6734/gh-pages.zip}
 [[ "$URL" =~ ^https://[^[:space:]]+$ ]] || exit 1
-curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 120 "$URL" -o "$TMP/ui.zip"
-unzip -q "$TMP/ui.zip" -d "$TMP/extract"
-TOP=$(find "$TMP/extract" -mindepth 1 -maxdepth 1 -type d -print -quit)
-[ -n "$TOP" ] && [ -f "$TOP/index.html" ] || exit 1
-BACKUP="$BACKUP_DIR/$(date +%Y%m%d%H%M%S).ui"
-[ ! -d "$UI_DIR" ] || mv "$UI_DIR" "$BACKUP"
-if ! mv "$TOP" "$UI_DIR"; then
-    [ ! -d "$BACKUP" ] || mv "$BACKUP" "$UI_DIR"
-    exit 1
-fi
+curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 120 --max-filesize 52428800 "$URL" -o "$TMP/ui.zip"
+top=$(archive_top "$TMP/ui.zip" "$TMP/extract")
+backup=$(mktemp -d "$BACKUP_DIR/.ui-backup.XXXXXX"); rm -rf "$backup"
+[ ! -d "$UI_DIR" ] || mv "$UI_DIR" "$backup"
+if ! mv "$top" "$UI_DIR"; then [ ! -d "$backup" ] || mv "$backup" "$UI_DIR"; exit 1; fi
 chown -R root:root "$UI_DIR"
 EOF
 chmod 0755 /etc/sing-box/update-ui.sh
