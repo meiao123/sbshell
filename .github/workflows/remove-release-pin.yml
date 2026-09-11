@@ -17,105 +17,86 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          BASE_COMMIT=27cab46aec8bc57e2f6abf194b2ca4d9e2008a29
+          git fetch origin main
+          git fetch origin "$BASE_COMMIT"
+          git reset --hard origin/main
+
+          for f in sbshall.sh openwrt/menu.sh openwrt/update_scripts.sh debian/menu.sh debian/update_scripts.sh .github/workflows/shell-static-check.yml README.md docs/security-hardening.md tests/suites/08_archive_fallback.sh; do
+            git show "$BASE_COMMIT:$f" > "$f"
+          done
+
           python3 - <<'PY'
           from pathlib import Path
           import re
 
-          root = Path('.')
+          def read(p): return Path(p).read_text()
+          def write(p, s): Path(p).write_text(s)
 
-          def replace_once(path: str, pattern: str, replacement: str) -> None:
-              p = root / path
-              s = p.read_text()
-              ns, n = re.subn(pattern, replacement, s, flags=re.S)
-              if n != 1:
-                  raise SystemExit(f'{path}: expected one replacement, got {n}')
-              p.write_text(ns)
-
-          replace_once(
-              'sbshall.sh',
-              r'RELEASE_REF=7dfddbae21d224349bb4ba4ac2d81bd541d39b9d\n.*?\nresolve_release_ref \{.*?\n\}\n',
-              ''
-          )
-          p = root / 'sbshall.sh'
-          s = p.read_text()
+          # sbshall.sh
+          s = read('sbshall.sh')
+          s = re.sub(r'(?m)^RELEASE_REF=7dfddbae21d224349bb4ba4ac2d81bd541d39b9d\n', '', s, count=1)
+          s = re.sub(r'(?ms)^resolve_release_ref \{.*?^\}\n\n', '', s, count=1)
           s = s.replace('resolve_release_ref\n', '')
           s = s.replace('"$RELEASE_REF"', '"main"')
           s = s.replace('审核发布引用: $RELEASE_REF', '代码引用: main')
-          p.write_text(s)
+          write('sbshall.sh', s)
 
-          replace_once(
-              'openwrt/menu.sh',
-              r'BASE_REF=7dfddbae21d224349bb4ba4ac2d81bd541d39b9d\n\n# 允许外部传入镜像源.*?\n\}\n\n',
-              lambda m: m.group(0).split('\n', 3)[0] + '\n\n# 允许外部传入镜像源，默认提供 ghfast 加速\nexport REPO_RAW="${REPO_RAW:-https://ghfast.top/https://raw.githubusercontent.com/meiao123/sbshell}"\n\n' if False else ''
-          )
-          p = root / 'openwrt/menu.sh'
-          s = p.read_text()
-          # 保留已经存在的 REPO_RAW 定义，只去掉 release resolver 与固定 SHA。
-          s = re.sub(r'BASE_REF=7dfddbae21d224349bb4ba4ac2d81bd541d39b9d\n', '', s, count=1)
-          s = re.sub(r'\nresolve_release_ref \{.*?\n\}\n', '\n', s, count=1, flags=re.S)
-          s = s.replace('resolve_release_ref\n', '')
-          s = re.sub(r'BASE_URL="\$REPO_RAW/\$BASE_REF/openwrt"\n', 'BASE_URL="$REPO_RAW/main/openwrt"\n', s, count=1)
-          p.write_text(s)
+          def clean_release(s):
+              s = re.sub(r'(?m)^BASE_REF=7dfddbae21d224349bb4ba4ac2d81bd541d39b9d\n', '', s, count=1)
+              s = re.sub(r'(?m)^RELEASE_DECL_URL=.*\n', '', s)
+              s = re.sub(r'(?ms)^resolve_release_ref \{.*?^\}\n\n', '', s, count=1)
+              s = s.replace('resolve_release_ref\n', '')
+              s = s.replace('"$BASE_REF"', '"main"')
+              return s
 
-          p = root / 'openwrt/update_scripts.sh'
-          s = p.read_text()
-          s = re.sub(r'BASE_REF=7dfddbae21d224349bb4ba4ac2d81bd541d39b9d\n', '', s, count=1)
-          s = re.sub(r'BASE_URL="\$REPO_RAW/\$BASE_REF/openwrt"', 'BASE_URL="$REPO_RAW/main/openwrt"', s, count=1)
-          s = re.sub(r'RELEASE_DECL_URL=.*?\nresolve_release_ref \{.*?\n\}\n', '', s, count=1, flags=re.S)
-          s = s.replace('resolve_release_ref\n', '')
-          s = s.replace('"$BASE_REF"', '"main"')
-          p.write_text(s)
+          for p in ['openwrt/menu.sh', 'openwrt/update_scripts.sh', 'debian/menu.sh', 'debian/update_scripts.sh']:
+              s = clean_release(read(p))
+              if p.startswith('openwrt/'):
+                  s = re.sub(r'^BASE_URL=.*$', 'BASE_URL="$REPO_RAW/main/openwrt"', s, count=1, flags=re.M)
+              else:
+                  s = re.sub(r'^BASE_URL=.*$', 'BASE_URL="https://raw.githubusercontent.com/meiao123/sbshell/main/debian"', s, count=1, flags=re.M)
+              write(p, s)
 
-          p = root / 'debian/menu.sh'
-          s = p.read_text()
-          s = re.sub(r'# 内置的发布提交（兜底）.*?resolve_release_ref \{.*?\n\}\n', '', s, count=1, flags=re.S)
-          s = s.replace('BASE_REF=7dfddbae21d224349bb4ba4ac2d81bd541d39b9d\n', '')
-          s = s.replace('BASE_URL="https://raw.githubusercontent.com/meiao123/sbshell/$BASE_REF/debian"', 'BASE_URL="https://raw.githubusercontent.com/meiao123/sbshell/main/debian"')
-          s = s.replace('resolve_release_ref\n', '')
-          s = s.replace('"$BASE_REF"', '"main"')
-          p.write_text(s)
-
-          p = root / 'debian/update_scripts.sh'
-          s = p.read_text()
-          s = re.sub(r'BASE_REF=7dfddbae21d224349bb4ba4ac2d81bd541d39b9d\n', '', s, count=1)
-          s = s.replace('BASE_URL="https://raw.githubusercontent.com/meiao123/sbshell/$BASE_REF/debian"', 'BASE_URL="https://raw.githubusercontent.com/meiao123/sbshell/main/debian"')
-          s = re.sub(r'# 内置的发布提交.*?resolve_release_ref \{.*?\n\}\n', '', s, count=1, flags=re.S)
-          s = s.replace('# 提权之后、真正下载之前解析发布提交。\nresolve_release_ref\n', '')
-          p.write_text(s)
-
-          # CI: 删除旧 RELEASE 形状/可下载校验，改为 main-only 静态约束。
-          p = root / '.github/workflows/shell-static-check.yml'
-          s = p.read_text()
+          # CI: replace release-pin validation with main-only invariants.
+          p = '.github/workflows/shell-static-check.yml'
+          s = read(p)
           start = s.index('      - name: Verify the pinned release ref exists\n')
           end = s.index('      - name: Run ShellCheck (errors, blocking)\n', start)
-          new_step = '''      - name: Verify update source is main\n        shell: bash\n        run: |\n          set -euo pipefail\n          ! grep -REq '(^|[^A-Za-z_])(BASE_REF|RELEASE_REF|RELEASE_DECL_URL|resolve_release_ref|RELEASE)([^A-Za-z_]|$)' \\\n            sbshall.sh debian/menu.sh debian/update_scripts.sh openwrt/menu.sh openwrt/update_scripts.sh\n          grep -q 'main/openwrt/' openwrt/menu.sh\n          grep -q 'main/debian/' debian/menu.sh\n          grep -q '"main"' sbshall.sh\n\n'''
-          p.write_text(s[:start] + new_step + s[end:])
+          new = '''      - name: Verify update source is main\n        shell: bash\n        run: |\n          set -euo pipefail\n          ! grep -REq '(^|[^A-Za-z_])(BASE_REF|RELEASE_REF|RELEASE_DECL_URL|resolve_release_ref|RELEASE)([^A-Za-z_]|$)' \\\n            sbshall.sh debian/menu.sh debian/update_scripts.sh openwrt/menu.sh openwrt/update_scripts.sh\n          grep -q 'main/openwrt/' openwrt/menu.sh\n          grep -q 'main/debian/' debian/menu.sh\n          grep -q '"main"' sbshall.sh\n\n'''
+          write(p, s[:start] + new + s[end:])
 
-          # Documentation: main is intentionally the live update source now.
-          p = root / 'docs/security-hardening.md'
-          s = p.read_text()
+          # Behaviour test.
+          p = 'tests/suites/08_archive_fallback.sh'
+          s = read(p)
+          if 'release pin has been removed' not in s:
+              s += '''\nsuite_begin "release pin has been removed; main is the only update source"\nfor f in sbshall.sh openwrt/menu.sh openwrt/update_scripts.sh debian/menu.sh debian/update_scripts.sh; do\n    if grep -Eq 'RELEASE|RELEASE_REF|resolve_release_ref' "$SBSHELL_SRC/$f"; then\n        fail "$f 仍依赖 RELEASE 发布指针"\n    else\n        pass "$f 不再依赖 RELEASE 发布指针"\n    fi\ndone\nassert_grep '"main"' "$SBSHELL_SRC/sbshall.sh" "sbshall.sh 使用 main 作为最新代码来源"\nassert_grep 'main/openwrt/' "$SBSHELL_SRC/openwrt/menu.sh" "OpenWrt 更新路径直接指向 main"\nassert_grep 'main/debian/' "$SBSHELL_SRC/debian/menu.sh" "Debian 更新路径直接指向 main"\nsuite_end\n'''
+          write(p, s)
+
+          # README.
+          p = 'README.md'
+          s = read(p)
+          line = '- **在线更新**：支持脚本在线更新，始终保持最新版本。\n'
+          if '不再使用 `RELEASE` 发布指针' not in s:
+              s = s.replace(line, line + '- **代码来源**：一键安装与脚本自更新直接使用 `main` 分支当前代码，不再使用 `RELEASE` 发布指针。\n')
+          write(p, s)
+
+          # Security-hardening documentation.
+          p = 'docs/security-hardening.md'
+          s = read(p)
           marker = '## 发布流程（固定发布提交）'
-          if marker in s:
-              before, rest = s.split(marker, 1)
-              next_marker = '## 第二轮复审（针对 `fdbceb9`）修复清单'
-              if next_marker in rest:
-                  _, after = rest.split(next_marker, 1)
-                  section = '''## 发布与更新流程（main 最新代码）\n\n脚本自更新与一键引导统一直接读取 `main` 分支，不再存在 `RELEASE` 发布指针。每次执行 README 中的一键命令时，入口脚本本身来自 `main`，随后按同一个 `main` 引用下载对应平台的管理脚本。GitHub 的分支文件视图指向该分支当前 HEAD，因此这里的语义就是“始终使用当前最新代码”。\n\n更新链路：\n\n```\nsbshall.sh\n    ↓\nmain/sbshall.sh\n    ↓\nmain/openwrt/*.sh 或 main/debian/*.sh\n```\n\n这套模型取消了“开发代码”和“发布指针”分离导致的旧版本回退问题。对应的行为测试会检查四个入口脚本都不再读取 `RELEASE`，并确认平台更新路径直接指向 `main`。\n\n'''
-                  p.write_text(before + section + next_marker + after)
-
-          # README: make the intended update semantics explicit.
-          p = root / 'README.md'
-          s = p.read_text()
-          needle = '- **在线更新**：支持脚本在线更新，始终保持最新版本。\n'
-          if '脚本在线更新直接使用 main 分支当前代码' not in s:
-              s = s.replace(needle, needle + '- **代码来源**：一键安装与脚本自更新直接使用 `main` 分支当前代码，不再使用 `RELEASE` 发布指针。\n')
-          p.write_text(s)
+          next_marker = '## 第二轮复审（针对 `fdbceb9`）修复清单'
+          if marker in s and next_marker in s:
+              before = s.split(marker, 1)[0]
+              after = s.split(next_marker, 1)[1]
+              section = '''## 发布与更新流程（main 最新代码）\n\n脚本自更新与一键引导统一直接读取 `main` 分支，不再存在 `RELEASE` 发布指针。每次执行 README 中的一键命令时，入口脚本本身来自 `main`，随后按同一个 `main` 引用下载对应平台的管理脚本。\n\n更新链路：\n\n```\nsbshall.sh\n    ↓\nmain/sbshall.sh\n    ↓\nmain/openwrt/*.sh 或 main/debian/*.sh\n```\n\n这套模型取消了“开发代码”和“发布指针”分离导致的旧版本回退问题。对应行为测试会检查更新入口不再读取 `RELEASE`，并确认平台更新路径直接指向 `main`。\n\n'''
+              write(p, before + section + next_marker + after)
           PY
 
-          rm -f RELEASE
+          rm -f RELEASE .github/workflows/remove-release-pin.yml
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A
           git diff --cached --check
           git commit -m 'chore: remove legacy RELEASE pin'
-          git push
+          git push origin HEAD:main
