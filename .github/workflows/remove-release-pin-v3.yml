@@ -44,15 +44,6 @@ jobs:
                   s = re.sub(r'^BASE_URL=.*$', 'BASE_URL="https://raw.githubusercontent.com/meiao123/sbshell/main/debian"', s, count=1, flags=re.M)
               p.write_text(s)
 
-          p = Path('.github/workflows/shell-static-check.yml')
-          s = p.read_text()
-          marker = '      - name: Verify the pinned release ref exists\n'
-          if marker in s:
-              a = s.index(marker)
-              b = s.index('      - name: Run ShellCheck (errors, blocking)\n', a)
-              replacement = '''      - name: Verify update source is main\n        shell: bash\n        run: |\n          set -euo pipefail\n          ! grep -REq '(^|[^A-Za-z_])(BASE_REF|RELEASE_REF|RELEASE_DECL_URL|resolve_release_ref|RELEASE)([^A-Za-z_]|$)' \\\n            sbshall.sh debian/menu.sh debian/update_scripts.sh openwrt/menu.sh openwrt/update_scripts.sh\n          grep -q 'main/openwrt/' openwrt/menu.sh\n          grep -q 'main/debian/' debian/menu.sh\n          grep -q '"main"' sbshall.sh\n\n'''
-              p.write_text(s[:a] + replacement + s[b:])
-
           p = Path('tests/suites/08_archive_fallback.sh')
           s = p.read_text()
           if 'release pin has been removed' not in s:
