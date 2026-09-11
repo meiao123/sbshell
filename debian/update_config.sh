@@ -1,11 +1,12 @@
 #!/bin/bash
 set -Eeuo pipefail
-CYAN='\033[0;36m'; RED='\033[0;31m'; NC='\033[0m'
+CYAN='\033[0;36m'; GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[1;33m'; NC='\033[0m'
 CONFIG_DIR=/etc/sing-box
 CONFIG_FILE="$CONFIG_DIR/config.json"
 CONFIG_URL_FILE="$CONFIG_DIR/config.url"
+SCRIPT_DIR="$CONFIG_DIR/scripts"
+GENERATOR="$SCRIPT_DIR/gen_server_config.sh"
 LOCK_FILE=/run/lock/sbshell-config.lock
-DEFAULT_CONFIG_URL=https://raw.githubusercontent.com/meiao123/sbshell/main/config_template/server/config.json
 
 [ "$(id -u)" -eq 0 ] || exec sudo bash "$0" "$@"
 [ -d "$CONFIG_DIR" ] || { echo -e "${RED}sing-box 配置目录不存在，请先安装。${NC}" >&2; exit 1; }
@@ -13,15 +14,32 @@ install -d -o root -g root -m 0755 /run/lock
 exec 9>"$LOCK_FILE"
 flock -x 9
 
+# 使用本地随机凭据生成配置。仓库里的服务端模板带的是公开固定凭据，
+# 只能当字段参考，不能作为真实部署的默认值。
+generate_locally() {
+    [ -x "$GENERATOR" ] || [ -f "$GENERATOR" ] || {
+        echo -e "${RED}未找到 $GENERATOR，请先执行菜单中的“更新脚本”。${NC}" >&2
+        exit 1
+    }
+    exec bash "$GENERATOR"
+}
+
 config_url=''
 if [ -s "$CONFIG_URL_FILE" ]; then
     config_url=$(<"$CONFIG_URL_FILE")
     echo '当前配置链接已保存。'
-    read -rp '是否更换配置链接? (y/N): ' change_url
-    [[ "$change_url" =~ ^[Yy]$ ]] && read -rp '请输入新的配置链接: ' config_url
+    read -rp '是否更换配置链接? 输入 y 更换，回车继续使用当前链接: ' change_url
+    if [[ "$change_url" =~ ^[Yy]$ ]]; then
+        read -rp '请输入新的配置链接（直接回车保留原链接）: ' new_url
+        # 旧代码会把 config_url 置空并直接以“必须使用 HTTPS”中断整个更新。
+        [ -z "$new_url" ] || config_url="$new_url"
+    fi
 else
-    read -rp '首次使用,请输入配置链接 [回车使用默认]: ' config_url
-    config_url=${config_url:-$DEFAULT_CONFIG_URL}
+    echo -e "${CYAN}首次配置服务端：直接回车将用本机随机凭据生成配置，也可输入配置链接。${NC}"
+    read -rp '配置链接 [回车=本地生成]: ' config_url
+fi
+if [ -z "$config_url" ]; then
+    generate_locally
 fi
 [[ "$config_url" =~ ^https://[^[:space:]]+$ ]] || { echo -e "${RED}配置链接必须使用 HTTPS。${NC}" >&2; exit 1; }
 

@@ -35,7 +35,7 @@
       "listen": "::",
       "listen_port": 80,
       "method": "2022-blake3-aes-128-gcm",
-      "password": "hztQCU1ZB8CAuPMVFJiCJw==",
+      "password": "REPLACE_ME_generate_with_sing-box_generate_rand_base64_16",
       "multiplex": {
           "enabled": true
       }
@@ -47,22 +47,22 @@
       "listen_port":443,
       "users":[
           {
-              "uuid":"625a08bb-d372-4f7c-a2d4-6a50ca3393ce",
+              "uuid":"REPLACE_ME_generate_with_sing-box_generate_uuid",
               "flow":"xtls-rprx-vision"
           }
       ],
       "tls":{
           "enabled":true,
-          "server_name":"updates.cdn-apple.com",
+          "server_name":"www.example.com",
           "reality":{
               "enabled":true,
               "handshake":{
-                  "server":"updates.cdn-apple.com",
+                  "server":"www.example.com",
                   "server_port":443
               },
-              "private_key":"mAQVEs96AtDg1V_b2POFVP8n-Uu6hBe0_1Zt-DtRzGE",
+              "private_key":"REPLACE_ME_generate_with_sing-box_generate_reality-keypair",
               "short_id":[
-                  "a118b9425a7e2dc5"
+                  "REPLACE_ME"
               ]
           }
       }
@@ -74,7 +74,7 @@
       "listen_port": 52021,
       "users": [
         {
-          "password": "c36d52aa-12b0-420c-a409-02f0410f6ac4"
+          "password": "REPLACE_ME_generate_with_sing-box_generate_rand_base64_16"
         }
       ],
       "tls": {
@@ -82,8 +82,8 @@
         "alpn": [
           "h3"
         ],
-        "certificate_path": "/etc/ssl/yu.ykszckj.com/yu.ykszckj.com.crt",
-        "key_path": "/etc/ssl/yu.ykszckj.com/yu.ykszckj.com.key"
+        "certificate_path": "/etc/ssl/example.com/example.com.crt",
+        "key_path": "/etc/ssl/example.com/example.com.key"
       }
     }
   ],
@@ -146,12 +146,6 @@
     "auto_detect_interface": true,
     "default_domain_resolver": {
       "server": "cloudflare"
-    }
-  },
-  "experimental": {
-    "cache_file": {
-      "enabled": true,
-      "path": "/etc/sing-box/cache.db"
     }
   },
   "log": {
