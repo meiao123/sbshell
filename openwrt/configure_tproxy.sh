@@ -75,6 +75,8 @@ if [ -f "$STATE_FILE" ] && grep -q '^OWNER=sbshell$' "$STATE_FILE"; then
     fi
     OLD_INTERFACE=$(sed -n 's/^INTERFACE=//p' "$STATE_FILE" | head -n1); [ -n "$OLD_INTERFACE" ] || OLD_INTERFACE="$INTERFACE"
     if [ "$prior_route_created" -eq 1 ]; then ip -4 route del local default dev "$OLD_INTERFACE" table "$PROXY_ROUTE_TABLE" 2>/dev/null || true; fi
+    # 之前就是 Sbshell 管理的同一张表：先删除再重建，避免 nft add 的对象已存在错误。
+    nft delete table inet sing-box 2>/dev/null || true
 else
     : > "$OLD_TABLE"
     prior_rule_created=0
@@ -97,7 +99,6 @@ rollback() {
     fi
 }
 
-# 精确匹配 fwmark/table，避免 "fwmark 0x1" 命中 "fwmark 0x10"。
 rule_pref_for_mark() {
     ip -4 rule show | awk -v m="0x$1" -v t="$2" '
         {
@@ -132,12 +133,8 @@ if ! nft -f "$TMP"; then
     exit 1
 fi
 
-# 若规则/路由在进入事务前已经由 Sbshell 创建并仍可复用，状态记录 0，
-# 表示本次调用无需重新创建；这样重复应用与首次应用具有稳定、可解释的 ownership 语义。
-if [ "$ACTUAL_RULE_PREF" != "$RULE_PREF" ] || [ "$RULE_CREATED" -eq 0 ]; then
-    if [ "$prior_rule_created" -eq 1 ]; then RULE_CREATED=0; fi
-fi
-if [ "$ROUTE_CREATED" -eq 0 ] && [ "$prior_route_created" -eq 1 ]; then ROUTE_CREATED=0; fi
+if [ "$prior_rule_created" -eq 1 ]; then RULE_CREATED=0; fi
+if [ "$prior_route_created" -eq 1 ] && [ "$ROUTE_CREATED" -eq 0 ]; then ROUTE_CREATED=0; fi
 cat > "$STATE_FILE" <<EOF
 OWNER=sbshell
 MODE=TProxy
