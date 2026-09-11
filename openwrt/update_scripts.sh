@@ -77,22 +77,6 @@ download_repo_file() {
     rm -f "$output"
     github_archive_download "$path" "$ref" "$output"
 }
-resolve_release_ref() {
-    local tmp='/tmp/sbshell-release-ref' declared=''
-    rm -f "$tmp"
-    if download_repo_file 'RELEASE' 'main' "$tmp"; then
-        declared=$(tr -d '\r\n' < "$tmp")
-    fi
-    rm -f "$tmp"
-    case "$declared" in
-        *[!0-9a-f]*) ;;
-        *) if [ "${#declared}" -eq 40 ]; then
-               BASE_REF=$declared
-               BASE_URL="$REPO_RAW/$BASE_REF/openwrt"
-           fi ;;
-    esac
-    return 0
-}
 TMP_DIR=$(mktemp -d /tmp/sbshell-update.XXXXXX)
 BACKUP_DIR=$(mktemp -d /tmp/sbshell-update-backup.XXXXXX)
 trap 'rm -rf "$TMP_DIR" "$BACKUP_DIR"' EXIT

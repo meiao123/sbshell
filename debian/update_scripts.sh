@@ -3,22 +3,8 @@ set -Eeuo pipefail
 GREEN='\033[0;32m'; RED='\033[0;31m'; NC='\033[0m'
 SCRIPT_DIR=/etc/sing-box/scripts
 BASE_URL="https://raw.githubusercontent.com/meiao123/sbshell/main/debian"
-# 内置的发布提交（兜底）：提交无法包含自身 SHA，写死的引用必然指向"上一版"，只信它会出现
 # 「装好加固版后点一次更新就回退到修复前版本」的一跳回退（见 docs/security-hardening.md）。
 # 真正的发布提交按 main 上的 `RELEASE` 声明解析，只有解析失败才回退到这个常量。
-resolve_release_ref() {
-    local declared=''
-    declared=$(curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
-        --connect-timeout 10 --max-time 20 "$RELEASE_DECL_URL" 2>/dev/null | tr -d '\r\n') || declared=''
-    case "$declared" in
-        *[!0-9a-f]*) ;;
-        *) if [ "${#declared}" -eq 40 ]; then
-               BASE_REF=$declared
-               BASE_URL="https://raw.githubusercontent.com/meiao123/sbshell/$BASE_REF/debian"
-           fi ;;
-    esac
-    return 0
-}
 # 先提权再做任何事：`exec` 不会触发 EXIT trap，先建临时目录会在非 root 调用时泄漏
 # （并且提权后的实例还会再建一份）。
 [ "$(id -u)" -eq 0 ] || exec sudo bash "$0" "$@"
