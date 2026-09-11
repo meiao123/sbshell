@@ -1,5 +1,40 @@
 #!/bin/bash
+set -Eeuo pipefail
 
-nft list table inet sing-box >/dev/null 2>&1 && nft delete table inet sing-box
+[ "$(id -u)" -eq 0 ] || { echo '请以 root 运行。' >&2; exit 1; }
+TPROXY_STATE_FILE=/etc/sing-box/tproxy.state
+TUN_STATE_FILE=/etc/sing-box/tun.state
 
-echo "sing-box 服务已停止, sing-box 相关的防火墙规则已清理."
+clean_owned_table() {
+    local table="$1" state_file="$2" label="$3"
+    if nft list table inet "$table" >/dev/null 2>&1; then
+        if [ -f "$state_file" ] && grep -q '^OWNER=sbshell$' "$state_file"; then
+            nft delete table inet "$table"
+        else
+            echo "检测到非 Sbshell 管理的 inet $table 表，拒绝删除。" >&2
+            return 1
+        fi
+    fi
+    rm -f "$state_file"
+    echo "$label 防火墙状态已清理。"
+}
+
+clean_tproxy_routes() {
+    if [ -f "$TPROXY_STATE_FILE" ] && grep -q '^OWNER=sbshell$' "$TPROXY_STATE_FILE"; then
+        local pref interface
+        pref=$(sed -n 's/^RULE_PREF=//p' "$TPROXY_STATE_FILE" | head -n1)
+        interface=$(sed -n 's/^INTERFACE=//p' "$TPROXY_STATE_FILE" | head -n1)
+        if grep -q '^RULE_CREATED=1$' "$TPROXY_STATE_FILE" && [ -n "$pref" ]; then
+            ip -4 rule del pref "$pref" fwmark 1 lookup 100 2>/dev/null || true
+        fi
+        if grep -q '^ROUTE_CREATED=1$' "$TPROXY_STATE_FILE" && [ -n "$interface" ]; then
+            ip -4 route del local default dev "$interface" table 100 2>/dev/null || true
+        fi
+    fi
+}
+
+clean_owned_table sing-box-tun "$TUN_STATE_FILE" TUN
+clean_tproxy_routes
+clean_owned_table sing-box "$TPROXY_STATE_FILE" TProxy
+
+echo 'sing-box 服务已停止, Sbshell 管理的 TProxy/TUN 防火墙规则已清理.'
