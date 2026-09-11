@@ -28,25 +28,26 @@ while true; do
     case "$choice" in
         1|2)
             pkg=sing-box
-            oldpkg=sing-box-beta
-            [ "$choice" = 2 ] && { pkg=sing-box-beta; oldpkg=sing-box; }
-            clean_before_install=0
+            [ "$choice" = 2 ] && pkg=sing-box-beta
             (
                 cd "$TMP_DIR"
                 apt-get download "$pkg"
             )
             mapfile -t debs < <(find "$TMP_DIR" -type f -name "${pkg}_*.deb" -print)
             [ "${#debs[@]}" -eq 1 ] || { echo -e "${RED}未找到唯一的 $pkg deb 包。${NC}" >&2; exit 1; }
-            sudo apt-get remove --auto-remove "$oldpkg" -y
-            sudo dpkg -i "${debs[0]}"
+            if ! apt-get install -y "${debs[0]}"; then
+                echo -e "${RED}安装 $pkg 失败，未主动删除当前版本。${NC}" >&2
+                exit 1
+            fi
             rm -f -- "${debs[0]}"
-            clean_before_install=1
             break
             ;;
         '')
             echo '不进行版本切换'
             break
             ;;
-        *) echo -e "${RED}无效的选择。${NC}" ;;
+        *)
+            echo -e "${RED}无效的选择。${NC}"
+            ;;
     esac
 done
