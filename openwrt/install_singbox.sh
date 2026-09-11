@@ -6,7 +6,13 @@ opkg install kmod-nft-tproxy sing-box
 command -v sing-box >/dev/null 2>&1 || { echo 'sing-box 安装失败。' >&2; exit 1; }
 [ ! -f /etc/sing-box/config.json ] || sing-box check -c /etc/sing-box/config.json
 
-cat > /etc/init.d/sing-box <<'EOF'
+if [ -e /etc/init.d/sing-box ] && [ ! -f /etc/init.d/sing-box ]; then
+    echo 'sing-box init 脚本不是普通文件，拒绝覆盖。' >&2
+    exit 1
+fi
+
+if [ ! -e /etc/init.d/sing-box ]; then
+    cat > /etc/init.d/sing-box <<'EOF'
 #!/bin/sh /etc/rc.common
 START=99
 USE_PROCD=1
@@ -26,6 +32,10 @@ service_triggers() {
     procd_add_reload_trigger sing-box
 }
 EOF
-chmod 0755 /etc/init.d/sing-box
+    chmod 0755 /etc/init.d/sing-box
+else
+    echo '检测到已有 /etc/init.d/sing-box，保留包管理器提供的服务脚本。'
+fi
+
 /etc/init.d/sing-box enable
 /etc/init.d/sing-box restart
