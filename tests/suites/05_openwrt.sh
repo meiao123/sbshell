@@ -72,6 +72,10 @@ assert_grep 'install -o root -g root -m 0600.*\$CONFIG_FILE' "$SBSHELL_SRC/openw
 assert_grep 'chmod 0600.*tmp_config' "$SBSHELL_SRC/openwrt/manual_input.sh" "manual_input 临时 config 为 0600"
 assert_grep 'release_lock' "$SBSHELL_SRC/openwrt/manual_input.sh" "manual_input ownership-safe lock release"
 assert_grep 'release_lock' "$SBSHELL_SRC/openwrt/manual_update.sh" "manual_update ownership-safe lock release"
+assert_grep 'release_lock' "$SBSHELL_SRC/openwrt/auto_update.sh" "auto_update ownership-safe lock release"
+assert_grep 'release_ui_lock' "$SBSHELL_SRC/openwrt/update_ui.sh" "interactive UI updater ownership-safe lock release"
+assert_grep 'release_ui_lock' "$SBSHELL_SRC/openwrt/update_ui.sh" "scheduled UI updater ownership-safe lock release"
+assert_grep 'chown -R root:root.*failed_ui' "$SBSHELL_SRC/openwrt/update_ui.sh" "UI updater contains post-install rollback path"
 assert_grep 'update_scripts.sh' "$SBSHELL_SRC/openwrt/update_scripts.sh" "updater 能更新自身"
 assert_grep 'update_scripts.sh' "$SBSHELL_SRC/openwrt/menu.sh" "menu 保留自更新脚本"
 
