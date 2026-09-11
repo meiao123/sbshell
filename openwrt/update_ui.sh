@@ -13,7 +13,7 @@ YACD_URL=https://github.com/MetaCubeX/Yacd-meta/archive/6945744f5ab10d3d639d6eb7
 command -v curl >/dev/null 2>&1 || { opkg update; opkg install curl; }
 command -v unzip >/dev/null 2>&1 || { opkg update; opkg install unzip; }
 command -v zipinfo >/dev/null 2>&1 || { opkg update; opkg install unzip; }
-valid_url() { [[ "$1" =~ ^https://[^[:space:]]+$/ ]]; }
+valid_url() { [[ "$1" =~ ^https://[^[:space:]]+$ ]]; }
 get_config_url() { sed -n 's/.*"external_ui_download_url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' /etc/sing-box/config.json 2>/dev/null | head -n1; }
 release_ui_lock() {
     [ -d "$UI_LOCK_DIR" ] || return 0
