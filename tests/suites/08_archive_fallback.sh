@@ -19,4 +19,16 @@ done
 
 assert_grep '^REPO_RAW=' "$SBSHELL_SRC/openwrt/menu.sh" "openwrt/menu.sh 定义 REPO_RAW，避免 set -u 下变量未定义"
 
+suite_begin "release pin has been removed; main is the only update source"
+for f in sbshall.sh openwrt/menu.sh openwrt/update_scripts.sh debian/menu.sh; do
+    if grep -Eq 'RELEASE|RELEASE_REF|resolve_release_ref' "$SBSHELL_SRC/$f"; then
+        fail "$f 仍依赖 RELEASE 发布指针"
+    else
+        pass "$f 不再依赖 RELEASE 发布指针"
+    fi
+done
+assert_grep '"main"' "$SBSHELL_SRC/sbshall.sh" "sbshall.sh 使用 main 作为最新代码来源"
+assert_grep 'main/openwrt/' "$SBSHELL_SRC/openwrt/menu.sh" "OpenWrt 更新路径直接指向 main"
+assert_grep 'main/debian/' "$SBSHELL_SRC/debian/menu.sh" "Debian 更新路径直接指向 main"
+
 suite_end
