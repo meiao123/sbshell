@@ -5,7 +5,6 @@ SCRIPT_DIR="/etc/sing-box/scripts"
 MANUAL_FILE="/etc/sing-box/manual.conf"
 UPDATE_SCRIPT="/etc/sing-box/update-singbox.sh"
 CRON_FILE="/etc/cron.d/sbshell-singbox"
-LOCK_FILE="/run/lock/sbshell-config.lock"
 
 [ "$(id -u)" -eq 0 ] || exec sudo bash "$0" "$@"
 [ -f "$MANUAL_FILE" ] || { echo -e "${RED}未找到 manual.conf，请先配置订阅。${NC}"; exit 1; }
