@@ -80,7 +80,9 @@ CI 会校验 `RELEASE` 的形状以及该提交确实可下载。
 
 1. 在 `main` 上完成并评审改动（CI 会跑语法检查 + 容器化行为测试）；
 2. 取**将要发布的内容提交**的 40 位 SHA：`git rev-parse HEAD`；
-3. 把 `RELEASE` 更新为这个 SHA 并提交（该提交只改一行，它自己不再作为发布提交）；
+3. 把 `RELEASE` 更新为这个 SHA 并提交（该提交只改一行，它自己不再作为发布提交）；**同一提交里
+   把 5 个脚本的内置兜底常量也一起前移**到这个 SHA——兜底必须是"在目标平台确实能跑起来"的版本，
+   而不只是"较新"的版本（`91865d4` 的兜底在 busybox 上没有 `install`，见第三轮）；
 4. 用户重新执行 README 的一键引导、或在菜单里点一次更新即可拿到新版本：脚本会读 `main`
    上的 `RELEASE` 解析出第 2 步的提交，再按该不可变 SHA 下载全部脚本。
 
@@ -123,3 +125,29 @@ CI 会校验 `RELEASE` 的形状以及该提交确实可下载。
 发布流程补充：`BASE_REF`/`RELEASE_REF` 必须是**确实存在**的不可变提交；
 CI 的 `Verify the pinned release ref exists` 步骤与 `tests/suites/06_misc.sh`
 （`SBSHELL_ONLINE=1` 时）都会验证这一点 —— 2026-09-11 的事故正是引用被删除后无人发现。
+
+
+## 第三轮：真机回归（ImmortalWrt 的 busybox 没有 install）
+
+用户在 ImmortalWrt 上执行一键引导，第一步就中止：
+
+```text
+系统为 OpenWrt。
+/dev/fd/64: line 57: install: command not found
+```
+
+busybox 没有 `install` applet，而本仓库在两个平台上都用 GNU `install -d/-o/-g/-m`
+（建目录、落文件，并同时设置权限与所有者）。这行是**既有**代码，前两轮的 CI 都抓不到它：
+测试镜像装了 `coreutils`，`install` 一直存在。
+
+修复：OpenWrt 路径的每个脚本内联一个兜底 —— 仅当 `command -v install` 失败时定义
+`install()` 函数（用 `mkdir -p` + `chmod`、`cp -f` + `chmod`、`chown` 实现 `-d/-m/-o/-g`
+子集；函数末尾 `return 0`，使 `chown` 失败不会污染调用方的返回值）。系统上存在真正的
+`install` 时这段完全不生效，因此 Debian 路径零影响。覆盖：`sbshall.sh`（一键引导）与
+`openwrt/` 下 9 个脚本，外加 `openwrt/auto_update.sh` 用 heredoc 生成给 cron 的那一份
+（cron 里失败会静默不更新配置，比交互路径更隐蔽）。
+
+回归测试：`tests/suites/07_no_install.sh` 构造一个"PATH 里包含全部可执行文件、唯独没有
+`install`"的符号链接目录，然后断言 (a) 所有依赖 `install` 的 OpenWrt 脚本都自带兜底（含
+heredoc 生成的那份），(b) `set_defaults.sh` 在该环境下成功且 `defaults.conf` 为 0600、
+`/etc/sing-box` 为 0755，(c) 生成的 cron 更新脚本成功并把配置写成 0600。

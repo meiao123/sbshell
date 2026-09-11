@@ -1,5 +1,38 @@
 #!/bin/sh
 set -eu
+
+# --- busybox 兼容：ImmortalWrt/OpenWrt 的 busybox 常常没有 install applet ---
+# 真机实测（ImmortalWrt）：一键引导在第一步就中止
+#   /dev/fd/64: line 57: install: command not found
+# 本仓库大量依赖 GNU install 的 -d/-o/-g/-m，busybox 没有等价命令，因此这里在缺失时
+# 定义一个只覆盖本仓库用法的兜底实现；只要系统有真正的 install，这段完全不生效。
+if ! command -v install >/dev/null 2>&1; then
+    install() {
+        local d=0 m='' o='' g=''
+        while [ $# -gt 0 ]; do
+            case "$1" in
+                -d) d=1; shift ;;
+                -m) m="$2"; shift 2 ;;
+                -o) o="$2"; shift 2 ;;
+                -g) g="$2"; shift 2 ;;
+                -*) shift ;;
+                *) break ;;
+            esac
+        done
+        if [ "$d" -eq 1 ]; then
+            mkdir -p "$@" || return 1
+            [ -n "$m" ] && chmod "$m" "$@" 2>/dev/null
+        else
+            # 本仓库只用 `install [-m M] [-o U] [-g G] SRC DST`
+            [ $# -eq 2 ] || return 1
+            cp -f "$1" "$2" || return 1
+            [ -n "$m" ] && chmod "$m" "$2" 2>/dev/null
+            set -- "$2"
+        fi
+        [ -n "$o" ] && chown "$o${g:+:$g}" "$@" 2>/dev/null
+        return 0
+    }
+fi
 TPROXY_PORT=7895
 ROUTING_MARK=666
 PROXY_FWMARK=1

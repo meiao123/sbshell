@@ -24,7 +24,7 @@ tests/run.sh --local    # 在本地 Linux 主机以 root 直接运行
 | `fakebin/` | `nft` `ip` `systemctl` `sing-box` `curl` `sysctl` `ss` `pidof` `opkg` `logread` `ufw` `sshd` 等 stub |
 | `fakebin-busybox/` | 模拟 busybox `grep`（不支持 `-P`），用于 OpenWrt 兼容性测试 |
 | `rc.common` / `initd/` | 极简 `/etc/rc.common` 与 OpenWrt 风格 init 脚本 |
-| `suites/` | 6 个行为测试套件 |
+| `suites/` | 7 个行为测试套件 |
 
 状态都保存在 `$SBSHELL_STUB_STATE`（默认 `/tmp/sbshell-stub-state`），断言直接检查
 nft 表、ip rule/route、state 文件、锁目录、cron 文件等可观测结果。
@@ -39,6 +39,7 @@ nft 表、ip rule/route、state 文件、锁目录、cron 文件等可观测结�
 | `04_config_update.sh` | P1-3.2 空后端地址、P1-3.3 参数语义、P2-15 订阅校验、P2-1 服务端凭据本地生成、配置更新原子性 |
 | `05_openwrt.sh` | P0-4 开机防火墙恢复、P1-3.6 busybox grep、P1-3.7 initialize 失败传播、P2-13 kmod-tun |
 | `06_misc.sh` | P0-2 cpuinfo flags、P1-3.8 环境/优化/延迟测试、P2-6 ufw 端口、P2-4 固定发布引用 |
+| `07_no_install.sh` | 真机回归（ImmortalWrt）：busybox 没有 `install` applet 时，一键引导与 OpenWrt 脚本仍须可用（含生成的 cron 脚本） |
 
 ## 本地开发
 
