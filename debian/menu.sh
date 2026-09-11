@@ -32,6 +32,32 @@ run_systemctl() {
     systemctl "$action" sing-box >/dev/null 2>&1 || { echo -e "${RED}${message}失败。${NC}"; return 1; }
     echo -e "${GREEN}${message}成功。${NC}"
 }
+confirm_yes() {
+    local prompt="$1" answer
+    while true; do
+        read -r -p "$prompt [y/n]: " answer
+        case "$answer" in
+            [Yy]) return 0;;
+            [Nn]) return 1;;
+            *) echo -e "${YELLOW}请输入 y 或 n。${NC}";;
+        esac
+    done
+}
+uninstall_sbshell() {
+    echo -e "${YELLOW}此操作仅卸载 Sbshell 管理脚本及其快捷方式。${NC}"
+    echo -e "${YELLOW}不会删除 sing-box 程序、配置文件、systemd 服务或现有代理配置。${NC}"
+    confirm_yes '第一次确认：确定要卸载 Sbshell 吗？' || { echo -e "${GREEN}已取消卸载。${NC}"; return 0; }
+    confirm_yes '第二次确认：此操作将删除 Sbshell 管理脚本，确定继续吗？' || { echo -e "${GREEN}已取消卸载。${NC}"; return 0; }
+
+    echo -e "${CYAN}正在卸载 Sbshell...${NC}"
+    rm -f /usr/local/bin/sb /etc/cron.d/sbshell-ui /etc/cron.d/sbshell-auto-update /etc/sing-box/update-ui.sh
+    if [ -f /etc/sing-box/scripts/menu.sh ]; then
+        sed -i '/# sing-box 快捷方式/,/alias sb=/d' /root/.bashrc 2>/dev/null || true
+    fi
+    rm -rf "$SCRIPT_DIR"
+    echo -e "${GREEN}Sbshell 已卸载。sing-box 及其现有配置已保留。${NC}"
+    exit 0
+}
 
 download_all_scripts() {
     local tmpdir backupdir script
@@ -119,7 +145,7 @@ show_client_menu() {
     echo -e "${BOLD}${LIGHT_BLUE}--- 配置管理 ---${NC}"; echo -e "${LIGHT_BLUE} 1. 模式切换与配置${NC}"; echo -e "${LIGHT_BLUE} 2. 手动更新配置${NC}"; echo -e "${LIGHT_BLUE} 3. 自动更新配置${NC}"; echo -e "${LIGHT_BLUE} 4. 设置默认参数${NC}"
     echo -e "${BOLD}${LIGHT_PURPLE}--- 服务控制 ---${NC}"; echo -e "${LIGHT_PURPLE} 5. 启动sing-box${NC}"; echo -e "${LIGHT_PURPLE} 6. 停止sing-box${NC}"; echo -e "${LIGHT_PURPLE} 7. 管理自启动${NC}"
     echo -e "${BOLD}${YELLOW}--- 更新与维护 ---${NC}"; echo -e "${YELLOW} 8. 更新sing-box${NC}"; echo -e "${YELLOW} 9. 更新脚本${NC}"; echo -e "${YELLOW}10. 更新面板${NC}"
-    echo -e "${BOLD}${WHITE}--- 系统与网络 ---${NC}"; echo -e "${WHITE}11. 网络设置${NC}"; echo -e "${WHITE}12. 常用命令${NC}"; echo -e "${WHITE}13. 更换XanMod内核${NC}"; echo -e "${WHITE}14. 网络优化${NC}"; echo -e "${GREEN} 0. 退出${NC}"
+    echo -e "${BOLD}${WHITE}--- 系统与网络 ---${NC}"; echo -e "${WHITE}11. 网络设置${NC}"; echo -e "${WHITE}12. 常用命令${NC}"; echo -e "${WHITE}13. 更换XanMod内核${NC}"; echo -e "${WHITE}14. 网络优化${NC}"; echo -e "${RED}15. 卸载Sbshell${NC}"; echo -e "${GREEN} 0. 退出${NC}"
 }
 handle_client_choice() {
     local choice; read -rp '请选择操作: ' choice
@@ -128,12 +154,12 @@ handle_client_choice() {
       2) run_script '手动更新配置' manual_update.sh;; 3) run_script '自动更新配置' auto_update.sh;; 4) run_script '设置默认参数' set_defaults.sh;;
       5) run_script '启动sing-box' start_singbox.sh;; 6) run_script '停止sing-box' stop_singbox.sh;; 7) run_script '管理自启动' manage_autostart.sh;;
       8) if command -v sing-box >/dev/null 2>&1; then run_script '检查 sing-box 更新' check_update.sh; else run_script '安装/更新 sing-box' install_singbox.sh; fi;;
-      9) run_script '更新所有脚本' update_scripts.sh;; 10) run_script '更新控制面板' update_ui.sh;; 11) run_script '网络设置' set_network.sh;; 12) run_script '常用命令' commands.sh;; 13) run_script '更换XanMod内核' kernel.sh;; 14) run_script '网络优化' optimize.sh;; 0) exit 0;; *) echo -e "${RED}无效的选择。${NC}";;
+      9) run_script '更新所有脚本' update_scripts.sh;; 10) run_script '更新控制面板' update_ui.sh;; 11) run_script '网络设置' set_network.sh;; 12) run_script '常用命令' commands.sh;; 13) run_script '更换XanMod内核' kernel.sh;; 14) run_script '网络优化' optimize.sh;; 15) uninstall_sbshell;; 0) exit 0;; *) echo -e "${RED}无效的选择。${NC}";;
     esac
 }
 show_server_menu() {
     echo -e "\n${CYAN}================= sbshell服务端管理菜单 =================${NC}"
-    echo '1. 启动sing-box'; echo '2. 停止sing-box'; echo '3. 重启sing-box'; echo '4. 设为自启'; echo '5. 查看日志'; echo '6. 更新配置文件'; echo '7. 更新sing-box'; echo '8. 更新脚本'; echo '9. 证书申请'; echo '10. 更换XanMod内核'; echo '11. 网络优化'; echo '12. 手动配置防火墙'; echo '0. 退出'
+    echo '1. 启动sing-box'; echo '2. 停止sing-box'; echo '3. 重启sing-box'; echo '4. 设为自启'; echo '5. 查看日志'; echo '6. 更新配置文件'; echo '7. 更新sing-box'; echo '8. 更新脚本'; echo '9. 证书申请'; echo '10. 更换XanMod内核'; echo '11. 网络优化'; echo '12. 手动配置防火墙'; echo '13. 卸载Sbshell'; echo '0. 退出'
 }
 handle_server_choice() {
     local choice; read -rp '请选择操作: ' choice
@@ -141,7 +167,7 @@ handle_server_choice() {
       1) run_systemctl 启动sing-box start;; 2) run_systemctl 停止sing-box stop;; 3) run_systemctl 重启sing-box restart;; 4) run_systemctl 设置开机自启 enable;;
       5) journalctl -u sing-box --output cat -f;; 6) run_script 更新服务端配置文件 update_config.sh;;
       7) if command -v sing-box >/dev/null 2>&1; then run_script 检查\ sing-box\ 更新 check_update.sh; else run_script 安装/更新\ sing-box install_singbox.sh; fi;;
-      8) run_script 更新脚本 update_scripts.sh;; 9) run_script 证书申请 setup.sh;; 10) run_script 更换XanMod内核 kernel.sh;; 11) run_script 网络优化 optimize.sh;; 12) run_script 手动配置防火墙 ufw.sh;; 0) exit 0;; *) echo -e "${RED}无效的选择。${NC}";;
+      8) run_script 更新脚本 update_scripts.sh;; 9) run_script 证书申请 setup.sh;; 10) run_script 更换XanMod内核 kernel.sh;; 11) run_script 网络优化 optimize.sh;; 12) run_script 手动配置防火墙 ufw.sh;; 13) uninstall_sbshell;; 0) exit 0;; *) echo -e "${RED}无效选择。${NC}";;
     esac
 }
 
