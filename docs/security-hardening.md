@@ -49,27 +49,48 @@ tests/run.sh --local  # Linux 主机以 root 直接运行
 
 ## 发布流程（固定发布提交）
 
-脚本自更新与一键引导都通过 `BASE_REF` / `RELEASE_REF` 指向一个**不可变的提交**，
-而不是分支名：
+脚本自更新与一键引导都**按不可变提交**下载，而不是按分支名：
 
 ```
-sbshell.sh                RELEASE_REF
-debian/menu.sh            BASE_REF
-debian/update_scripts.sh  BASE_REF
-openwrt/menu.sh           BASE_REF
-openwrt/update_scripts.sh BASE_REF
-README.md                 模板地址
+RELEASE                    一行，声明当前发布提交（40 位 SHA）
+sbshell.sh                 RELEASE_REF（内置兜底）+ 下载前读 RELEASE
+debian/menu.sh             BASE_REF（内置兜底）+ 下载前读 RELEASE
+debian/update_scripts.sh   BASE_REF（内置兜底）+ 下载前读 RELEASE
+openwrt/menu.sh            BASE_REF（内置兜底）+ 下载前读 RELEASE
+openwrt/update_scripts.sh  BASE_REF（内置兜底）+ 下载前读 RELEASE
+README.md                  模板地址（固定到提交）
 ```
+
+**为什么必须有 `RELEASE` 声明**：git 提交无法包含自身的 SHA，所以任何写在提交里的引用
+常量都必然指向"上一版"。只信内置值会产生一跳回退（实测）：
+
+```
+91865d4 的 sbshall.sh          RELEASE_REF=fdbceb9…（修复前的基线）
+fdbceb9 的 update_scripts.sh   BASE_REF=security-release-2026-09-11（该分支已删除）
+```
+
+于是「安装加固版 → 在菜单里点一次更新」会静默退回修复前的脚本，再更新一次就 404。
+
+所以 5 个脚本在**真正下载之前**先读 `refs/heads/main/RELEASE`（一次请求，校验必须是 40 位
+十六进制），再按解析出的提交下载；解析失败（离线、被劫持的响应等）则回退到内置的**已加固**
+提交，最多落后一版，绝不会退回未修复版本。解析只发生在下载路径上，不影响菜单启动速度；
+CI 会校验 `RELEASE` 的形状以及该提交确实可下载。
 
 发布新版本时：
 
 1. 在 `main` 上完成并评审改动（CI 会跑语法检查 + 容器化行为测试）；
-2. 取该提交的 40 位 SHA：`git rev-parse HEAD`；
-3. 把上面这些位置的引用改成这个 SHA，作为新的“发布提交”；
-4. 用户重新执行 README 里的一键引导即可拿到新版本；已安装的机器会稳定停留在它被固定
-   的那个提交上，直到再次引导。
+2. 取**将要发布的内容提交**的 40 位 SHA：`git rev-parse HEAD`；
+3. 把 `RELEASE` 更新为这个 SHA 并提交（该提交只改一行，它自己不再作为发布提交）；
+4. 用户重新执行 README 的一键引导、或在菜单里点一次更新即可拿到新版本：脚本会读 `main`
+   上的 `RELEASE` 解析出第 2 步的提交，再按该不可变 SHA 下载全部脚本。
 
-为什么不用分支名：分支可被移动，任何人拿到写权限（或账号被入侵）都能替换所有脚本内容，
+为什么不能只写死一个 SHA：git 提交无法包含自身的 SHA，任何写在提交里的引用常量都必然指向
+"上一版"——这正是「一跳回退」的成因（`91865d4` 内置指向 `fdbceb9`，而 `fdbceb9` 又指向已被
+删除的分支）。所以引用改由 `RELEASE` 声明；**脚本内容仍然只按不可变 SHA 下载**，从 `main`
+读到的永远只有那一行声明。信任锚与 README 的一键引导相同（`refs/heads/main`）：能改写
+`main` 的人本来就能替换引导脚本，因此这里没有引入新的信任假设。
+
+为什么不用分支名下载脚本：分支可被移动，任何人拿到写权限（或账号被入侵）都能替换所有脚本内容，
 而脚本只做 `bash -n`；固定 SHA 让内容由哈希确定，配合 HTTPS 即可获得完整性保证。
 
 

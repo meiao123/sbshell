@@ -55,7 +55,9 @@ jobs:
           #     是有副作用的检查，不适合放在 CI 的检出里。
           # raw CDN 对刚推送的提交可能有秒级延迟，故重试 3 次。
           upstream=meiao123/sbshell
-          refs=$(grep -hoE '(BASE_REF|RELEASE_REF)=[^ ]+' sbshall.sh debian/menu.sh debian/update_scripts.sh openwrt/menu.sh openwrt/update_scripts.sh | cut -d= -f2 | sort -u)
+          # 只认 SHA 形状：脚本里还有运行时赋值（例如 `RELEASE_REF=$declared`），
+          # 用 `[^ ]+` 会把那个字面量当成"发布引用"去下载（实测踩过这个坑）。
+          refs=$(grep -hoE '(BASE_REF|RELEASE_REF)=[0-9a-f]{40}' sbshall.sh debian/menu.sh debian/update_scripts.sh openwrt/menu.sh openwrt/update_scripts.sh | cut -d= -f2 | sort -u)
           for ref in $refs; do
             echo "checking ref: $ref"
             ok=0
@@ -70,6 +72,15 @@ jobs:
             [ "$ok" -eq 1 ] || {
               echo "::error::发布引用不存在: $ref（请固定到已推送到 $upstream 的提交 SHA）"; exit 1; }
           done
+          # 发布声明文件：更新脚本按它解析"当前发布提交"，内容必须是单个可下载的不可变 SHA。
+          # 这里读**检出目录里**的 RELEASE（合并到 main 后就是运行时读的那一份）：引入该文件的
+          # PR 里 main 上还没有它，去 raw 读 main 必然 404。
+          echo "checking RELEASE declaration"
+          declared=$(tr -d '\r\n' < RELEASE)
+          printf '%s' "$declared" | grep -qE '^[0-9a-f]{40}$' || {
+            echo "::error::RELEASE 声明不是 40 位提交 SHA: '$declared'"; exit 1; }
+          curl -fsS --max-time 20 -o /dev/null "https://raw.githubusercontent.com/$upstream/$declared/debian/menu.sh" || {
+            echo "::error::RELEASE 指向的提交无法下载: $declared"; exit 1; }
       - name: Run ShellCheck (errors, blocking)
         uses: ludeeus/action-shellcheck@2.0.0
         with:
@@ -88,4 +99,17 @@ jobs:
       - uses: actions/checkout@v5.1.0
       - name: Run containerised behavioural tests
         shell: bash
-        run: bash tests/run.sh
+        run: |
+          set -uo pipefail
+          bash tests/run.sh > /tmp/suite.log 2>&1
+          rc=$?
+          # Actions 的作业日志过长时只保留开头，失败断言会看不到；
+          # 这里把输出尾部同时以内联注解暴露（可用 API /annotations 精准读取）。
+          if [ "$rc" -ne 0 ]; then
+            tail -25 /tmp/suite.log | while IFS= read -r line; do
+              [ -n "$line" ] && echo "::error::$line"
+            done
+          else
+            tail -5 /tmp/suite.log
+          fi
+          exit "$rc"
