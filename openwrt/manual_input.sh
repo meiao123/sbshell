@@ -158,7 +158,32 @@ while true; do
     fi
     valid_url "$FULL_URL" || { echo -e "${RED}生成的订阅 URL 无效。${NC}" >&2; exit 1; }
 
-    curl --fail --silent --show-error --location --proto '=http,https' --tlsv1.2 --connect-timeout 10 --max-time 60 "$FULL_URL" -o "$tmp_config" || { echo -e "${RED}配置文件下载失败，未修改现有配置。${NC}" >&2; exit 1; }
+    curl --fail --silent --show-error --location --proto '=http,https' --tlsv1.2 --connect-timeout 10 --max-time 30 "$FULL_URL" -o "$tmp_config" &
+    curl_pid=$!
+    elapsed=0
+    while kill -0 "$curl_pid" 2>/dev/null; do
+        remaining=$((30 - elapsed))
+        [ "$remaining" -ge 0 ] || remaining=0
+        printf '\r配置文件下载中，超时倒计时: %02ds' "$remaining"
+        if [ "$elapsed" -ge 30 ]; then
+            break
+        fi
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+    if kill -0 "$curl_pid" 2>/dev/null; then
+        kill "$curl_pid" 2>/dev/null || true
+        wait "$curl_pid" 2>/dev/null || true
+        printf '\n'
+        echo -e "${RED}配置文件下载超时（30s），未修改现有配置。${NC}" >&2
+        exit 1
+    fi
+    if ! wait "$curl_pid"; then
+        printf '\n'
+        echo -e "${RED}配置文件下载失败，未修改现有配置。${NC}" >&2
+        exit 1
+    fi
+    printf '\r配置文件下载中，超时倒计时: 00s\n'
     [ -s "$tmp_config" ] || { echo -e "${RED}下载的配置为空。${NC}" >&2; exit 1; }
     sing-box check -c "$tmp_config" || { echo -e "${RED}配置文件验证失败，未修改现有配置。${NC}" >&2; exit 1; }
 
