@@ -220,4 +220,36 @@ PATH="$shim:$PATH" bash /tmp/va_test.sh > /tmp/va.out 2>&1
 assert_not_rc "$?" 0 "zipinfo 不可用时拒绝（旧代码空转返回 0）"
 rm -rf "$shim"
 
+suite_begin "release pin: RELEASE declaration, and no hop-back to the pre-fix commit"
+
+assert_file "$SBSHELL_SRC/RELEASE" "仓库存在 RELEASE 发布声明"
+if grep -qE '^[0-9a-f]{40}$' "$SBSHELL_SRC/RELEASE"; then
+    pass "RELEASE 是 40 位不可变提交 SHA"
+else
+    fail "RELEASE 内容不是 40 位提交 SHA: $(head -n1 "$SBSHELL_SRC/RELEASE")"
+fi
+for f in sbshall.sh debian/menu.sh debian/update_scripts.sh openwrt/menu.sh openwrt/update_scripts.sh; do
+    if grep -q 'resolve_release_ref' "$SBSHELL_SRC/$f"; then
+        pass "$f 在下载前解析 RELEASE 声明"
+    else
+        fail "$f 未解析 RELEASE 声明（只用内置引用 → 一跳回退）"
+    fi
+done
+
+# 行为断言：桩 curl 会记录所有请求过的 URL。声明一个与内置常量不同的发布提交，
+# 更新脚本必须按声明提交下载，而不是按脚本里写死的那个。
+reset_stub_state
+reset_singbox_dir
+install_repo_scripts debian
+declared=2222222222222222222222222222222222222222
+fixture_write RELEASE "$declared"
+for f in "$SBSHELL_SRC"/debian/*.sh; do cp "$f" "$SBSHELL_FIXTURES/"; done
+run_with_timeout bash "$SCRIPTS/update_scripts.sh" > /tmp/no-hop.out 2>&1
+assert_grep "$declared/debian/" "$SBSHELL_STUB_STATE/curl.log" "更新按 RELEASE 声明的提交下载"
+if grep -q '91865d43c91b5d22141d412c27d3c54624c4be95/debian/' "$SBSHELL_STUB_STATE/curl.log"; then
+    fail "仍按内置常量下载（没有使用 RELEASE 声明）"
+else
+    pass "未按内置常量下载，改用 RELEASE 声明的提交"
+fi
+
 suite_end

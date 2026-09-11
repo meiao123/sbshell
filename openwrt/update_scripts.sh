@@ -1,12 +1,31 @@
 #!/bin/bash
 set -Eeuo pipefail
 SCRIPT_DIR=/etc/sing-box/scripts
+# 内置的发布提交（兜底）：提交无法包含自身 SHA，写死的引用必然指向"上一版"，只信它会出现
+# 「装好加固版后点一次更新就回退到修复前版本」的一跳回退（见 docs/security-hardening.md）。
+# 真正的发布提交按 main 上的 `RELEASE` 声明解析，只有解析失败才回退到这个常量。
 BASE_REF=91865d43c91b5d22141d412c27d3c54624c4be95
 BASE_URL="https://raw.githubusercontent.com/meiao123/sbshell/$BASE_REF/openwrt"
+RELEASE_DECL_URL="https://raw.githubusercontent.com/meiao123/sbshell/refs/heads/main/RELEASE"
+resolve_release_ref() {
+    local declared=''
+    declared=$(curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+        --connect-timeout 10 --max-time 20 "$RELEASE_DECL_URL" 2>/dev/null | tr -d '\r\n') || declared=''
+    case "$declared" in
+        *[!0-9a-f]*) ;;
+        *) if [ "${#declared}" -eq 40 ]; then
+               BASE_REF=$declared
+               BASE_URL="https://raw.githubusercontent.com/meiao123/sbshell/$BASE_REF/openwrt"
+           fi ;;
+    esac
+    return 0
+}
 TMP_DIR=$(mktemp -d /tmp/sbshell-update.XXXXXX)
 BACKUP_DIR=$(mktemp -d /tmp/sbshell-update-backup.XXXXXX)
 trap 'rm -rf "$TMP_DIR" "$BACKUP_DIR"' EXIT
 [ "$(id -u)" -eq 0 ] || { echo '请以 root 运行。' >&2; exit 1; }
+# 真正下载之前解析发布提交。
+resolve_release_ref
 install -d -m 0755 "$SCRIPT_DIR"
 SCRIPTS=(check_environment.sh install_singbox.sh manual_input.sh manual_update.sh auto_update.sh configure_tproxy.sh configure_tun.sh start_singbox.sh stop_singbox.sh clean_nft.sh set_defaults.sh commands.sh switch_mode.sh manage_autostart.sh check_config.sh update_scripts.sh update_ui.sh menu.sh)
 for script in "${SCRIPTS[@]}"; do

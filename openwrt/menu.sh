@@ -4,8 +4,25 @@ CYAN='\033[0;36m'; GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[1;33m'; NC
 [ "$(id -u)" -eq 0 ] || exec sudo bash "$0" "$@"
 SCRIPT_DIR=/etc/sing-box/scripts
 INITIALIZED_FILE="$SCRIPT_DIR/.initialized"
+# 内置的发布提交（兜底）：提交无法包含自身 SHA，写死的引用必然指向"上一版"，只信它会出现
+# 「装好加固版后点一次更新就回退到修复前版本」的一跳回退（见 docs/security-hardening.md）。
+# 真正的发布提交按 main 上的 `RELEASE` 声明解析，只有解析失败才回退到这个常量。
 BASE_REF=91865d43c91b5d22141d412c27d3c54624c4be95
 BASE_URL="https://raw.githubusercontent.com/meiao123/sbshell/$BASE_REF/openwrt"
+RELEASE_DECL_URL="https://raw.githubusercontent.com/meiao123/sbshell/refs/heads/main/RELEASE"
+resolve_release_ref() {
+    local declared=''
+    declared=$(curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+        --connect-timeout 10 --max-time 20 "$RELEASE_DECL_URL" 2>/dev/null | tr -d '\r\n') || declared=''
+    case "$declared" in
+        *[!0-9a-f]*) ;;
+        *) if [ "${#declared}" -eq 40 ]; then
+               BASE_REF=$declared
+               BASE_URL="https://raw.githubusercontent.com/meiao123/sbshell/$BASE_REF/openwrt"
+           fi ;;
+    esac
+    return 0
+}
 SCRIPTS=(check_environment.sh install_singbox.sh manual_input.sh manual_update.sh auto_update.sh configure_tproxy.sh configure_tun.sh start_singbox.sh stop_singbox.sh clean_nft.sh set_defaults.sh commands.sh switch_mode.sh manage_autostart.sh check_config.sh update_scripts.sh update_ui.sh menu.sh)
 install -d -o root -g root -m 0755 "$SCRIPT_DIR"
 confirm_yes() { local prompt="$1" answer; while true; do read -r -p "$prompt [y/n]: " answer || { echo -e "${YELLOW}无法读取输入（EOF），已取消。${NC}" >&2; return 1; }; case "$answer" in [Yy]) return 0;; [Nn]) return 1;; *) echo -e "${YELLOW}请输入 y 或 n。${NC}";; esac; done; }
@@ -23,6 +40,8 @@ uninstall_sbshell() {
     exit 0
 }
 update_scripts() {
+    # 下载前解析发布提交：只用内置常量会退回上一版（见 docs/security-hardening.md）。
+    resolve_release_ref
     local tmp backup s item rc=0
     # 两个 mktemp 都要检查（原因同 debian/menu.sh）。
     tmp=$(mktemp -d /tmp/sbshell-openwrt.XXXXXX) || return 1

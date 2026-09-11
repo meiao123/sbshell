@@ -70,6 +70,13 @@ jobs:
             [ "$ok" -eq 1 ] || {
               echo "::error::发布引用不存在: $ref（请固定到已推送到 $upstream 的提交 SHA）"; exit 1; }
           done
+          # 发布声明文件：更新脚本按它解析"当前发布提交"，内容必须是单个可下载的不可变 SHA。
+          echo "checking RELEASE declaration"
+          declared=$(curl -fsS --max-time 20 "https://raw.githubusercontent.com/$upstream/refs/heads/main/RELEASE" | tr -d '\r\n')
+          printf '%s' "$declared" | grep -qE '^[0-9a-f]{40}$' || {
+            echo "::error::RELEASE 声明不是 40 位提交 SHA: '$declared'"; exit 1; }
+          curl -fsS --max-time 20 -o /dev/null "https://raw.githubusercontent.com/$upstream/$declared/debian/menu.sh" || {
+            echo "::error::RELEASE 指向的提交无法下载: $declared"; exit 1; }
       - name: Run ShellCheck (errors, blocking)
         uses: ludeeus/action-shellcheck@2.0.0
         with:

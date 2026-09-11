@@ -49,17 +49,32 @@ tests/run.sh --local  # Linux 主机以 root 直接运行
 
 ## 发布流程（固定发布提交）
 
-脚本自更新与一键引导都通过 `BASE_REF` / `RELEASE_REF` 指向一个**不可变的提交**，
-而不是分支名：
+脚本自更新与一键引导都**按不可变提交**下载，而不是按分支名：
 
 ```
-sbshell.sh                RELEASE_REF
-debian/menu.sh            BASE_REF
-debian/update_scripts.sh  BASE_REF
-openwrt/menu.sh           BASE_REF
-openwrt/update_scripts.sh BASE_REF
-README.md                 模板地址
+RELEASE                    一行，声明当前发布提交（40 位 SHA）
+sbshell.sh                 RELEASE_REF（内置兜底）+ 下载前读 RELEASE
+debian/menu.sh             BASE_REF（内置兜底）+ 下载前读 RELEASE
+debian/update_scripts.sh   BASE_REF（内置兜底）+ 下载前读 RELEASE
+openwrt/menu.sh            BASE_REF（内置兜底）+ 下载前读 RELEASE
+openwrt/update_scripts.sh  BASE_REF（内置兜底）+ 下载前读 RELEASE
+README.md                  模板地址（固定到提交）
 ```
+
+**为什么必须有 `RELEASE` 声明**：git 提交无法包含自身的 SHA，所以任何写在提交里的引用
+常量都必然指向"上一版"。只信内置值会产生一跳回退（实测）：
+
+```
+91865d4 的 sbshall.sh          RELEASE_REF=fdbceb9…（修复前的基线）
+fdbceb9 的 update_scripts.sh   BASE_REF=security-release-2026-09-11（该分支已删除）
+```
+
+于是「安装加固版 → 在菜单里点一次更新」会静默退回修复前的脚本，再更新一次就 404。
+
+所以 5 个脚本在**真正下载之前**先读 `refs/heads/main/RELEASE`（一次请求，校验必须是 40 位
+十六进制），再按解析出的提交下载；解析失败（离线、被劫持的响应等）则回退到内置的**已加固**
+提交，最多落后一版，绝不会退回未修复版本。解析只发生在下载路径上，不影响菜单启动速度；
+CI 会校验 `RELEASE` 的形状以及该提交确实可下载。
 
 发布新版本时：
 
