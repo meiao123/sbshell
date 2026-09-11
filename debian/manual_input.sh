@@ -15,7 +15,7 @@ trap cleanup EXIT
 install -d -o root -g root -m 0755 /run/lock
 
 get_default() { local key="$1"; grep -m1 "^${key}=" "$DEFAULTS_FILE" 2>/dev/null | cut -d'=' -f2- || true; }
-valid_url() { [[ "$1" =~ ^https://[^[:space:]]+$/ ]]; }
+valid_url() { [[ "$1" =~ ^https://[^[:space:]]+$ ]]; }
 valid_subscription() {
     local value="$1"
     [ -z "$value" ] && return 0
