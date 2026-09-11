@@ -3,7 +3,8 @@ set -Eeuo pipefail
 
 PROXY_FWMARK=1
 PROXY_ROUTE_TABLE=100
-INTERFACE=$(ip route show default | awk '/default/ {print $5; exit}')
+# 同 configure_tproxy.sh：按 "dev" 关键字取网卡，避免 dev-only 默认路由取到 "link"。
+INTERFACE=$(ip route show default | awk '{for (i = 1; i < NF; i++) if ($i == "dev") { print $(i + 1); exit }}')
 MODE=$(sed -n 's/^MODE=//p' /etc/sing-box/mode.conf 2>/dev/null | head -n1)
 [ "$MODE" = TUN ] || exit 0
 [ -n "$INTERFACE" ] || { echo '无法确定默认网卡。' >&2; exit 1; }

@@ -5,7 +5,8 @@ ROUTING_MARK=666
 PROXY_FWMARK=1
 PROXY_ROUTE_TABLE=100
 RULE_PREF=10010
-INTERFACE=$(ip route show default | awk '/default/ {print $5; exit}')
+# 按 "dev" 关键字取默认路由出口网卡：PPPoE/WireGuard 的 dev-only 默认路由取 $5 会得到 "link"。
+INTERFACE=$(ip route show default | awk '{for (i = 1; i < NF; i++) if ($i == "dev") { print $(i + 1); exit }}')
 MODE=$(sed -n 's/^MODE=//p' /etc/sing-box/mode.conf 2>/dev/null | head -n1)
 [ "$MODE" = TProxy ] || exit 0
 [ -n "$INTERFACE" ] || { echo '未找到默认网卡。' >&2; exit 1; }

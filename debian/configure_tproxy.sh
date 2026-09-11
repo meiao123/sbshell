@@ -5,7 +5,11 @@ ROUTING_MARK=666
 PROXY_FWMARK=1
 PROXY_ROUTE_TABLE=100
 RULE_PREF=10010
-INTERFACE=$(ip route show default | awk '/default/ {print $5; exit}')
+# 取默认路由的出口网卡：必须按 "dev" 关键字取下一个字段。
+# 旧写法取 $5，只在 "default via GW dev IFACE ..." 形态下才是网卡；
+# 对 "default dev pppoe-wan scope link"（PPPoE）或 "default dev wg0 scope link"（WireGuard）
+# 会取到字面量 "link"，随后 `ip route add local default dev link table 100` 必然失败。
+INTERFACE=$(ip route show default | awk '{for (i = 1; i < NF; i++) if ($i == "dev") { print $(i + 1); exit }}')
 MODE=$(sed -n 's/^MODE=//p' /etc/sing-box/mode.conf 2>/dev/null | head -n1)
 [ "$MODE" = TProxy ] || exit 0
 [ -n "$INTERFACE" ] || { echo '无法确定默认网卡。' >&2; exit 1; }
