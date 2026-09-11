@@ -37,3 +37,6 @@ jobs:
         with:
           scandir: .
           severity: warning
+      - name: Run security regression checks
+        shell: bash
+        run: bash tests/security_regression.sh
