@@ -76,23 +76,35 @@ fi
 
 RULE_CREATED=0
 ROUTE_CREATED=0
+RULE_OWNED=0
+ROUTE_OWNED=0
 if [ -f "$STATE_FILE" ] && grep -q '^OWNER=sbshell$' "$STATE_FILE"; then
     nft list table inet sing-box > "$OLD_TABLE" 2>/dev/null || true
     prior_rule_created=0
     prior_route_created=0
+    prior_rule_owned=0
+    prior_route_owned=0
     grep -q '^RULE_CREATED=1$' "$STATE_FILE" && prior_rule_created=1
     grep -q '^ROUTE_CREATED=1$' "$STATE_FILE" && prior_route_created=1
-    if [ "$prior_rule_created" -eq 1 ]; then
+    grep -q '^RULE_OWNED=1$' "$STATE_FILE" && prior_rule_owned=1
+    grep -q '^ROUTE_OWNED=1$' "$STATE_FILE" && prior_route_owned=1
+    [ "$prior_rule_owned" -eq 1 ] || [ "$prior_rule_created" -eq 1 ] && prior_rule_owned=1
+    [ "$prior_route_owned" -eq 1 ] || [ "$prior_route_created" -eq 1 ] && prior_route_owned=1
+    if [ "$prior_rule_owned" -eq 1 ]; then
         old_pref=$(sed -n 's/^RULE_PREF=//p' "$STATE_FILE" | head -n1)
         [ -n "$old_pref" ] && ip -4 rule del pref "$old_pref" fwmark "$PROXY_FWMARK" lookup "$PROXY_ROUTE_TABLE" 2>/dev/null || true
     fi
     old_interface=$(sed -n 's/^INTERFACE=//p' "$STATE_FILE" | head -n1); [ -n "$old_interface" ] || old_interface="$INTERFACE"
-    if [ "$prior_route_created" -eq 1 ]; then ip -4 route del local default dev "$old_interface" table "$PROXY_ROUTE_TABLE" 2>/dev/null || true; fi
+    if [ "$prior_route_owned" -eq 1 ]; then ip -4 route del local default dev "$old_interface" table "$PROXY_ROUTE_TABLE" 2>/dev/null || true; fi
     nft delete table inet sing-box 2>/dev/null || true
+    RULE_OWNED=$prior_rule_owned
+    ROUTE_OWNED=$prior_route_owned
 else
     : > "$OLD_TABLE"
     prior_rule_created=0
     prior_route_created=0
+    prior_rule_owned=0
+    prior_route_owned=0
 fi
 
 rollback() {
@@ -117,6 +129,7 @@ if [ -z "$ACTUAL_RULE_PREF" ]; then
         rollback; exit 1
     fi
     RULE_CREATED=1
+    RULE_OWNED=1
     ACTUAL_RULE_PREF="$RULE_PREF"
 fi
 if ! ip -4 route show table "$PROXY_ROUTE_TABLE" | awk -v ifc="$INTERFACE" '$0 == "local default dev " ifc || index($0, "local default dev " ifc " ") == 1 {found=1} END {exit !found}'; then
@@ -124,6 +137,7 @@ if ! ip -4 route show table "$PROXY_ROUTE_TABLE" | awk -v ifc="$INTERFACE" '$0 =
         rollback; exit 1
     fi
     ROUTE_CREATED=1
+    ROUTE_OWNED=1
 fi
 
 if nft list table inet sing-box >/dev/null 2>&1; then
@@ -146,6 +160,8 @@ INTERFACE=$INTERFACE
 RULE_PREF=$ACTUAL_RULE_PREF
 RULE_CREATED=$RULE_CREATED
 ROUTE_CREATED=$ROUTE_CREATED
+RULE_OWNED=$RULE_OWNED
+ROUTE_OWNED=$ROUTE_OWNED
 EOF
 chown root:root "$STATE_FILE"; chmod 0600 "$STATE_FILE"
 rm -f "$TUN_STATE_FILE" "$TUN_NFT_FILE"
