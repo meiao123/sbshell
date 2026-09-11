@@ -18,7 +18,7 @@ jobs:
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git fetch origin main
+          git fetch --unshallow origin main
           git reset --hard origin/main
           BASE_COMMIT=27cab46aec8bc57e2f6abf194b2ca4d9e2008a29
           git cat-file -e "$BASE_COMMIT^{commit}"
@@ -26,8 +26,6 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           import re
-          def rw(p, fn):
-              q=Path(p); q.write_text(fn(q.read_text()))
           s=Path('sbshall.sh').read_text()
           s=re.sub(r'(?m)^RELEASE_REF=7dfddbae21d224349bb4ba4ac2d81bd541d39b9d\n','',s,count=1)
           s=re.sub(r'(?ms)^resolve_release_ref \{.*?^\}\n\n','',s,count=1)
