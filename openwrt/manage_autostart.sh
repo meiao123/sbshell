@@ -46,15 +46,15 @@ START=40
 STOP=10
 
 start() {
-	$SCRIPT_DIR/manage_autostart.sh apply_firewall
+\t$SCRIPT_DIR/manage_autostart.sh apply_firewall
 }
 
 stop() {
-	return 0
+\treturn 0
 }
 
 boot() {
-	start "\$@"
+\tstart "\$@"
 }
 EOF
     chmod 0755 "$INIT_SCRIPT"
@@ -77,8 +77,11 @@ case $autostart_choice in
 
         echo -e "${GREEN}启用自启动...${NC}"
 
-        # 先下发防火墙规则，再启动服务，避免服务起来时规则尚未生效
-        if ! "$INIT_SCRIPT" start; then
+        # 如果 sing-box 当前已经运行，说明当前会话的防火墙已由启动流程应用。
+        # 此时不要再次调用 configure_tun/configure_tproxy，否则它们会把运行中的 nft 表视为外部表而拒绝覆盖。
+        if pidof sing-box >/dev/null 2>&1; then
+            echo -e "${GREEN}sing-box 已在运行，跳过当前防火墙重载。${NC}"
+        elif ! "$INIT_SCRIPT" start; then
             echo -e "${RED}防火墙规则应用失败，未启用自启动。${NC}" >&2
             exit 1
         fi
