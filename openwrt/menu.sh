@@ -185,8 +185,14 @@ initialize() {
     touch "$INITIALIZED_FILE" && chmod 0644 "$INITIALIZED_FILE"
     run manual_input.sh || return 1
     run start_singbox.sh || return 1
-    # 初始化时自动安装默认 UI；UI 下载失败不阻断主程序初始化。
-    run update_ui.sh <<< '1' || echo -e "${YELLOW}默认 UI 安装失败，可稍后从菜单“10. 更新控制面板”重试。${NC}" >&2
+    # 初始化时自动安装默认 UI。暂存安装脚本的输出，避免其子菜单与主菜单混在一起。
+    local ui_output
+    if ui_output=$(run update_ui.sh <<< '1' 2>&1); then
+        printf '%s\n' "$ui_output" | tail -n1
+    else
+        echo -e "${YELLOW}默认 UI 安装失败，可稍后从菜单“10. 更新控制面板”重试。${NC}" >&2
+        printf '%s\n' "$ui_output" | tail -n1 >&2
+    fi
 }
 
 if [ ! -f "$INITIALIZED_FILE" ]; then
