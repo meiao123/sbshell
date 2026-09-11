@@ -21,7 +21,7 @@ get_config_url() {
     sed -n 's/.*"external_ui_download_url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' /etc/sing-box/config.json | head -n1
 }
 validate_archive() {
-    local zip="$1" line mode size total=0 count=0 entry
+    local zip="$1" mode size total=0 count=0 entry
     while IFS= read -r entry; do
         [ -n "$entry" ] || continue
         case "$entry" in
@@ -113,7 +113,7 @@ validate_archive() {
     case "$mode" in l*|b*|c*|p*) exit 1;; esac
     case "$size" in ''|*[!0-9]*) exit 1;; esac
     total=$((total + size)); [ "$total" -le 209715200 ] || exit 1
-done < <(zipinfo -l "$zip" | awk '$1 ~ /^[-dlcbp]/ {print $1, $4}')
+  done < <(zipinfo -l "$zip" | awk '$1 ~ /^[-dlcbp]/ {print $1, $4}')
 }
 archive_top() {
   local zip="$1" extract="$2" candidate top=''
