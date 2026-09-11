@@ -17,15 +17,16 @@ RUN apt-get update \
       zip \
  && rm -rf /var/lib/apt/lists/*
 
-COPY fakebin /opt/fakebin
-COPY fakebin-busybox /opt/fakebin-busybox
+# 测试 harness 统一以 /opt/tests 为根目录；避免测试脚本和镜像构建脚本使用两套路径。
+COPY fakebin /opt/tests/fakebin
+COPY fakebin-busybox /opt/tests/fakebin-busybox
 COPY lib /opt/tests/lib
 COPY suites /opt/tests/suites
 COPY all.sh /opt/tests/all.sh
 COPY rc.common /etc/rc.common
-COPY initd /etc/init.d-stubs
+COPY initd /opt/tests/initd
 
-RUN chmod 0755 /opt/tests/all.sh /opt/tests/suites/*.sh /opt/fakebin/* /opt/fakebin-busybox/* /etc/rc.common /etc/init.d-stubs/*
+RUN chmod 0755 /opt/tests/all.sh /opt/tests/suites/*.sh /opt/tests/fakebin/* /opt/tests/fakebin-busybox/* /etc/rc.common /opt/tests/initd/*
 
 WORKDIR /opt/tests
 CMD ["/opt/tests/all.sh"]
