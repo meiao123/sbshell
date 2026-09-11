@@ -8,7 +8,6 @@ SCRIPTS=/etc/sing-box/scripts
 
 suite_begin "kernel.sh: /proc/cpuinfo flags parsing (P0-2)"
 
-# 只检查可执行代码中的错误字段比较，忽略解释该历史 bug 的注释文本。
 if awk '!/^[[:space:]]*#/ && /\$1 == "flags"/' "$SBSHELL_SRC/debian/kernel.sh" | grep -q .; then
     fail "kernel.sh 仍在使用 \$1 == \"flags\"（对 /proc/cpuinfo 永远不匹配）"
 else
@@ -27,15 +26,27 @@ if [ -r /proc/cpuinfo ]; then
     if [ -n "${real_flags// /}" ]; then pass "真实 /proc/cpuinfo 也能解析"; else fail "真实 /proc/cpuinfo 解析失败"; fi
 fi
 
+# 本套件后半部分测试 Debian 脚本；前一个 OpenWrt 套件可能已经覆盖了 /etc/sing-box/scripts。
+reset_stub_state
+reset_singbox_dir
+reset_fixtures
+install_repo_scripts debian
+
 suite_begin "check_environment.sh: tolerant to missing IPv6 sysctl (P1-3.8)"
 
 reset_stub_state
-SBSHELL_NO_IPV6=1 run_with_timeout bash "$SCRIPTS/check_environment.sh" >/tmp/env1.out 2>&1
-assert_rc "$?" 0 "缺少 IPv6 键时不失败（旧代码会 unbound/integer error 中止）"
+export SBSHELL_NO_IPV6=1
+run_with_timeout bash "$SCRIPTS/check_environment.sh" >/tmp/env1.out 2>&1
+rc=$?
+unset SBSHELL_NO_IPV6
+assert_rc "$rc" 0 "缺少 IPv6 键时不失败（旧代码会 unbound/integer error 中止）"
 assert_no_grep "integer expected" /tmp/env1.out "没有整数比较报错"
 
-SBSHELL_IPV4_FORWARD=0 run_with_timeout bash "$SCRIPTS/check_environment.sh" >/tmp/env2.out 2>&1
-assert_not_rc "$?" 0 "IPv4 转发确实无法开启时报错"
+export SBSHELL_IPV4_FORWARD=0
+run_with_timeout bash "$SCRIPTS/check_environment.sh" >/tmp/env2.out 2>&1
+rc=$?
+unset SBSHELL_IPV4_FORWARD
+assert_not_rc "$rc" 0 "IPv4 转发确实无法开启时报错"
 assert_grep "IPv4 转发启用失败" /tmp/env2.out "错误信息明确"
 
 suite_begin "optimize.sh: qdisc probe and sysctl tolerance (P1-3.8)"
@@ -92,17 +103,13 @@ suite_begin "supply chain: script updates must not use mutable main refs (P2-4)"
 
 for f in sbshall.sh debian/menu.sh debian/update_scripts.sh openwrt/menu.sh openwrt/update_scripts.sh; do
     ref=$(grep -oE '(BASE_REF|RELEASE_REF)=[^ ]+' "$SBSHELL_SRC/$f" | head -n1 | cut -d= -f2)
-    case "$ref" in
-        [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f])
-            pass "$f 固定到 commit SHA"
-            ;;
-        security-release-*)
-            pass "$f 使用固定发布分支（建议进一步固定为 commit SHA）"
-            ;;
-        *)
-            fail "$f 的发布引用可疑: '$ref'"
-            ;;
-    esac
+    if [[ "$ref" =~ ^[0-9a-f]{40}$ ]]; then
+        pass "$f 固定到 commit SHA"
+    elif [[ "$ref" == security-release-* ]]; then
+        pass "$f 使用固定发布分支（建议进一步固定为 commit SHA）"
+    else
+        fail "$f 的发布引用可疑: '$ref'"
+    fi
     if grep -qE 'raw\.githubusercontent\.com/[^" ]*/main/' "$SBSHELL_SRC/$f"; then
         fail "$f 仍从 main 分支下载脚本"
     else
