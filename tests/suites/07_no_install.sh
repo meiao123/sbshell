@@ -59,6 +59,9 @@ for f in sbshall.sh openwrt/*.sh; do
     fi
 done
 
+suite_begin "openwrt: sb shortcut is installed by the bootstrap script"
+assert_grep 'ln -sfn "\$SCRIPT_DIR/menu.sh" /usr/bin/sb' "$SBSHELL_SRC/sbshall.sh" "引导脚本安装 /usr/bin/sb 快捷方式"
+
 # auto_update.sh 用 heredoc 生成给 cron 的那份也必须带兜底（否则 cron 静默不更新配置）。
 awk '/^cat > .*UPDATE_SCRIPT/{p=1} p{print} p&&/^EOF$/{exit}' \
     "$SBSHELL_SRC/openwrt/auto_update.sh" > /tmp/gen-update-script.sh
