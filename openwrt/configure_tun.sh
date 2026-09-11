@@ -66,11 +66,12 @@ if [ -s "$OLD_TPROXY_STATE" ]; then
     rm -f "$TPROXY_STATE_FILE"
 fi
 
+# TUN 模式只需要放行 forward：sing-box 的 auto_route/auto_redirect 负责透明劫持，
+# 本表原先还创建 input/output 两个空的 policy accept 基链，它们不做任何过滤，
+# 只会在同一 hook 上按基链顺序无条件放行流量，属于无谓的绕过面，故收窄为 forward。
 cat > "$TMP" <<'EOF'
 table inet sing-box-tun {
-    chain input { type filter hook input priority 0; policy accept; }
     chain forward { type filter hook forward priority 0; policy accept; }
-    chain output { type filter hook output priority 0; policy accept; }
 }
 EOF
 nft -c -f "$TMP"
@@ -78,13 +79,18 @@ if ! nft -f "$TMP"; then
     nft list table inet sing-box-tun >/dev/null 2>&1 && nft delete table inet sing-box-tun || true
     [ ! -s "$OLD_TUN_TABLE" ] || nft -f "$OLD_TUN_TABLE" 2>/dev/null || true
     [ ! -s "$OLD_TPROXY_TABLE" ] || nft -f "$OLD_TPROXY_TABLE" 2>/dev/null || true
+    # 还原机制保存的 ip rule/route 快照。iproute2 输出形如 "0:<TAB>from all lookup local"，
+    # 因此必须先用 ${line#*:} 去掉 "pref:" 再裁剪前导空白；旧代码用 ${line#*: }（冒号+空格）
+    # 对制表符不生效，spec 会退化成整行，恢复逻辑实际从未生效。
     while IFS= read -r line; do
         [ -n "$line" ] || continue
-        spec=${line#*: }
         pref=${line%%:*}
+        spec=${line#*:}
+        spec=${spec#"${spec%%[![:space:]]*}"}
+        case "$pref" in ''|*[!0-9]*) continue ;; esac
         [ -n "$spec" ] || continue
         ip -4 rule show | grep -Fq "$spec" || ip -4 rule add pref "$pref" $spec 2>/dev/null || true
-done < "$OLD_RULE"
+    done < "$OLD_RULE"
     while IFS= read -r route; do
         [ -n "$route" ] || continue
         ip -4 route show table "$PROXY_ROUTE_TABLE" | grep -Fqx "$route" || ip -4 route add table "$PROXY_ROUTE_TABLE" $route 2>/dev/null || true

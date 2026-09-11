@@ -86,7 +86,22 @@ rollback() {
     fi
 }
 
-ACTUAL_RULE_PREF=$(ip -4 rule show | awk -v mark="$PROXY_FWMARK" -v table="$PROXY_ROUTE_TABLE" '$0 ~ ("fwmark 0x" mark) && $0 ~ ("lookup " table) {sub(/:.*/, ""); print; exit}')
+# 精确匹配 fwmark/table，避免 "fwmark 0x1" 命中 "fwmark 0x10"（前缀匹配会误判规则已存在，
+# 从而不创建 mark-1 策略路由）。
+rule_pref_for_mark() {
+    ip -4 rule show | awk -v m="0x$1" -v t="$2" '
+        {
+            pref = $0; sub(/:.*/, "", pref)
+            fw = ""; lu = ""
+            for (i = 1; i < NF; i++) {
+                if ($i == "fwmark") fw = $(i + 1)
+                else if ($i == "lookup" || $i == "table") lu = $(i + 1)
+            }
+            if ((fw == m || fw == m "/0xffffffff") && lu == t) { print pref; exit }
+        }'
+}
+
+ACTUAL_RULE_PREF=$(rule_pref_for_mark "$PROXY_FWMARK" "$PROXY_ROUTE_TABLE")
 if [ -z "$ACTUAL_RULE_PREF" ]; then
     if ! ip -4 rule add pref "$RULE_PREF" fwmark "$PROXY_FWMARK" lookup "$PROXY_ROUTE_TABLE"; then rollback; exit 1; fi
     RULE_CREATED=1; ACTUAL_RULE_PREF="$RULE_PREF"
