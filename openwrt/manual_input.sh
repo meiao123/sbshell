@@ -144,7 +144,9 @@ while true; do
     tmp_config=$(mktemp /etc/sing-box/.config.json.XXXXXX)
     backup_manual=$(mktemp /etc/sing-box/.manual.conf.backup.XXXXXX)
     backup_config=$(mktemp /etc/sing-box/.config.json.backup.XXXXXX)
-    TMP_FILES+=("$tmp_manual" "$tmp_config" "$backup_manual" "$backup_config")
+    download_status=$(mktemp /tmp/sbshell-config-status.XXXXXX)
+    TMP_FILES+=("$tmp_manual" "$tmp_config" "$backup_manual" "$backup_config" "$download_status")
+    rm -f "$download_status"
     manual_existed=0
     config_existed=0
 
@@ -158,10 +160,13 @@ while true; do
     fi
     valid_url "$FULL_URL" || { echo -e "${RED}生成的订阅 URL 无效。${NC}" >&2; exit 1; }
 
-    curl --fail --silent --show-error --location --proto '=http,https' --tlsv1.2 --connect-timeout 10 --max-time 30 "$FULL_URL" -o "$tmp_config" &
+    (
+        curl --fail --silent --show-error --location --proto '=http,https' --tlsv1.2 --connect-timeout 10 --max-time 30 "$FULL_URL" -o "$tmp_config"
+        printf '%s\n' "$?" > "$download_status"
+    ) &
     curl_pid=$!
     elapsed=0
-    while kill -0 "$curl_pid" 2>/dev/null; do
+    while [ ! -s "$download_status" ]; do
         remaining=$((30 - elapsed))
         [ "$remaining" -ge 0 ] || remaining=0
         printf '\r配置文件下载中，超时倒计时: %02ds' "$remaining"
@@ -171,14 +176,16 @@ while true; do
         sleep 1
         elapsed=$((elapsed + 1))
     done
-    if kill -0 "$curl_pid" 2>/dev/null; then
+    if [ ! -s "$download_status" ]; then
         kill "$curl_pid" 2>/dev/null || true
         wait "$curl_pid" 2>/dev/null || true
         printf '\n'
         echo -e "${RED}配置文件下载超时（30s），未修改现有配置。${NC}" >&2
         exit 1
     fi
-    if ! wait "$curl_pid"; then
+    wait "$curl_pid" 2>/dev/null || true
+    download_rc=$(cat "$download_status" 2>/dev/null || echo 1)
+    if [ "$download_rc" -ne 0 ]; then
         printf '\n'
         echo -e "${RED}配置文件下载失败，未修改现有配置。${NC}" >&2
         exit 1
