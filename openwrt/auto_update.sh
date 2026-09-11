@@ -22,15 +22,22 @@ release_lock() {
   [ "$owner" = "$$" ] && rm -rf "$LOCK_DIR"
 }
 cleanup() { release_lock; rm -rf "$TMP"; }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'cleanup; exit 1' INT TERM
 acquire_lock() {
+  waited=0
   while ! mkdir "$LOCK_DIR" 2>/dev/null; do
     owner=$(cat "$LOCK_DIR/pid" 2>/dev/null || true)
-    if [ -n "$owner" ] && kill -0 "$owner" 2>/dev/null; then sleep 1; continue; fi
+    case "$owner" in ''|*[!0-9]*) owner='' ;; esac
     now=$(date +%s); created=$(stat -c %Y "$LOCK_DIR" 2>/dev/null || echo 0)
-    if [ "$created" -gt 0 ] && [ $((now - created)) -ge "$LOCK_TIMEOUT" ]; then rm -rf "$LOCK_DIR"; continue; fi
+    age=0; [ "$created" -gt 0 ] && age=$((now - created))
+    if [ "$age" -ge "$LOCK_TIMEOUT" ]; then rm -rf "$LOCK_DIR" 2>/dev/null || true; sleep 1; continue; fi
+    if [ -n "$owner" ] && kill -0 "$owner" 2>/dev/null; then
+      waited=$((waited + 1))
+      [ "$waited" -lt "$LOCK_TIMEOUT" ] || { echo '等待配置锁超时（另一个进程持锁）。' >&2; return 1; }
+    fi
     sleep 1
-done
+  done
   printf '%s\n' "$$" > "$LOCK_DIR/pid"
 }
 acquire_lock

@@ -34,23 +34,35 @@ release_lock() {
     [ "$owner" = "$$" ] && rm -rf "$LOCK_DIR"
 }
 acquire_lock() {
-    while ! mkdir "$LOCK_DIR" 2>/dev/null; do
-        owner=$(cat "$LOCK_DIR/pid" 2>/dev/null || true)
-        if [ -n "$owner" ] && kill -0 "$owner" 2>/dev/null; then
+        waited=0
+        while ! mkdir "$LOCK_DIR" 2>/dev/null; do
+            owner=$(cat "$LOCK_DIR/pid" 2>/dev/null || true)
+            # pid 必须是纯数字，否则视为无效
+            case "$owner" in ''|*[!0-9]*) owner='' ;; esac
+            now=$(date +%s)
+            created=$(stat -c %Y "$LOCK_DIR" 2>/dev/null || echo 0)
+            age=0
+            [ "$created" -gt 0 ] && age=$((now - created))
+            # 过期即接管：不能只凭 owner 是否存活判断（pid 复用或伪造 pid 会让
+            # 过期分支永远到不了，配置更新会永久阻塞）
+            if [ "$age" -ge "$LOCK_TIMEOUT" ]; then
+                rm -rf "$LOCK_DIR" 2>/dev/null || true
+                sleep 1
+                continue
+            fi
+            if [ -n "$owner" ] && kill -0 "$owner" 2>/dev/null; then
+                waited=$((waited + 1))
+                if [ "$waited" -ge "$LOCK_TIMEOUT" ]; then
+                    echo '等待配置锁超时（另一个进程持锁）。' >&2
+                    return 1
+                fi
+            fi
             sleep 1
-            continue
-        fi
-        now=$(date +%s)
-        created=$(stat -c %Y "$LOCK_DIR" 2>/dev/null || echo 0)
-        if [ "$created" -gt 0 ] && [ $((now - created)) -ge "$LOCK_TIMEOUT" ]; then
-            rm -rf "$LOCK_DIR"
-            continue
-        fi
-        sleep 1
-done
-    printf '%s\n' "$$" > "$LOCK_DIR/pid"
-    trap 'cleanup; release_lock' EXIT INT TERM
-}
+        done
+        printf '%s\n' "$$" > "$LOCK_DIR/pid"
+        trap 'cleanup; release_lock' EXIT
+        trap 'cleanup; release_lock; exit 1' INT TERM
+    }
 
 MODE=$(sed -n 's/^MODE=//p' "$MODE_FILE" 2>/dev/null | head -n1)
 TMP_FILES=()
