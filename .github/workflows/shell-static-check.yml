@@ -36,7 +36,7 @@ jobs:
         uses: ludeeus/action-shellcheck@2.0.0
         with:
           scandir: .
-          severity: warning
+          severity: error
       - name: Run security regression checks
         shell: bash
         run: bash tests/security_regression.sh
