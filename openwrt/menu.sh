@@ -109,6 +109,7 @@ confirm_yes() {
 }
 
 uninstall_sbshell() {
+    local opkg_output
     echo -e "${YELLOW}此操作将卸载 Sbshell、sing-box、配置文件及其管理的防火墙状态。${NC}"
     confirm_yes '确定要卸载 Sbshell 吗？' || { echo -e "${GREEN}已取消卸载。${NC}"; return 0; }
 
@@ -127,20 +128,21 @@ uninstall_sbshell() {
     fi
 
     echo -e "${CYAN}正在卸载 sing-box 软件包及 Sbshell...${NC}"
-    if opkg list-installed 2>/dev/null | grep -q '^sing-box '; then
-        if ! opkg remove --purge sing-box; then
-            echo -e "${YELLOW}当前 opkg 不支持 --purge，回退执行 opkg remove sing-box。${NC}" >&2
-            opkg remove sing-box || { echo -e "${RED}sing-box 软件包卸载失败，已停止继续清理。${NC}" >&2; return 1; }
+    if command -v opkg >/dev/null 2>&1; then
+        if opkg_output=$(opkg remove sing-box 2>&1); then
+            :
+        else
+            echo -e "${YELLOW}sing-box 软件包当前无法卸载（可能被其他软件包依赖），已保留 sing-box，继续清理 Sbshell 文件。${NC}" >&2
         fi
     else
-        echo -e "${YELLOW}未检测到已安装的 sing-box 软件包，继续清理 Sbshell 文件。${NC}" >&2
+        echo -e "${YELLOW}未找到 opkg，无法卸载 sing-box 软件包，继续清理 Sbshell 文件。${NC}" >&2
     fi
 
     rm -f /usr/local/bin/sb /usr/bin/sb /etc/cron.d/sbshell-ui /etc/cron.d/sbshell-singbox /etc/sing-box/update-ui.sh /etc/sing-box/update-singbox.sh
     rm -f /etc/crontabs/sbshell-ui 2>/dev/null || true
     if [ -f /etc/crontabs/root ]; then sed -i '/[[:space:]]# sbshell-singbox-auto-update$/d; /[[:space:]]# sbshell-ui-auto-update$/d' /etc/crontabs/root; fi
     rm -rf /etc/sing-box
-    echo -e "${GREEN}Sbshell 与 sing-box 已卸载，相关配置、脚本和 Sbshell 管理的防火墙状态已清理。${NC}"
+    echo -e "${GREEN}Sbshell 与 sing-box 配置目录已清理；若软件包存在依赖冲突，sing-box 软件包本身会继续保留。${NC}"
     exit 0
 }
 
