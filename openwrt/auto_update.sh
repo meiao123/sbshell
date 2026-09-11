@@ -16,9 +16,12 @@ CONFIG_FILE=/etc/sing-box/config.json
 LOCK_DIR=/tmp/sbshell-config.lock
 LOCK_TIMEOUT=900
 TMP=$(mktemp -d /tmp/sbshell-auto.XXXXXX)
-# 锁目录里含 pid 文件，`rmdir` 只能删空目录，会永久残留锁并让后续取锁者空转到
-# LOCK_TIMEOUT（900s），因此必须用 rm -rf。
-cleanup() { rm -rf "$TMP" "$LOCK_DIR"; }
+release_lock() {
+  [ -d "$LOCK_DIR" ] || return 0
+  owner=$(cat "$LOCK_DIR/pid" 2>/dev/null || true)
+  [ "$owner" = "$$" ] && rm -rf "$LOCK_DIR"
+}
+cleanup() { release_lock; rm -rf "$TMP"; }
 trap cleanup EXIT INT TERM
 acquire_lock() {
   while ! mkdir "$LOCK_DIR" 2>/dev/null; do
@@ -33,31 +36,21 @@ done
 acquire_lock
 read_value() { sed -n "s/^$1=//p" "$MANUAL_FILE" | head -n1; }
 B=$(read_value BACKEND_URL); S=$(read_value SUBSCRIPTION_URL); T=$(read_value TEMPLATE_URL)
-# 与 manual_input.sh 一致：后端地址允许留空，此时直接使用配置文件地址。
 case "$B" in
-    '')
-        U="$T"
-        ;;
-    https://*)
-        [ -n "$S" ] || { echo '使用后端地址时订阅地址不能为空。' >&2; exit 1; }
-        U="${B%/}/config/${S}&file=${T}"
-        ;;
-    *)
-        echo '无效的后端 HTTPS 地址。' >&2; exit 1
-        ;;
+    '') U="$T";;
+    https://*) [ -n "$S" ] || { echo '使用后端地址时订阅地址不能为空。' >&2; exit 1; }; U="${B%/}/config/${S}&file=${T}";;
+    *) echo '无效的后端 HTTPS 地址。' >&2; exit 1;;
 esac
-case "$S" in
-    *[[:space:]]*|*'&file='*|*'#'*) echo '订阅地址包含非法字符。' >&2; exit 1 ;;
-esac
+case "$S" in *[[:space:]]*|*'&file='*|*'#'*) echo '订阅地址包含非法字符。' >&2; exit 1;; esac
 case "$T" in https://*) ;; *) echo '无效的模板 HTTPS 地址。' >&2; exit 1;; esac
 case "$U" in https://*) ;; *) echo '生成的订阅 URL 无效。' >&2; exit 1;; esac
 curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 60 "$U" -o "$TMP/config.json"
 [ -s "$TMP/config.json" ] || { echo '下载的配置为空。' >&2; exit 1; }
 sing-box check -c "$TMP/config.json"
 [ ! -f "$CONFIG_FILE" ] || cp -a "$CONFIG_FILE" "$TMP/config.backup"
-install -o root -g root -m 0644 "$TMP/config.json" "$CONFIG_FILE"
+install -o root -g root -m 0600 "$TMP/config.json" "$CONFIG_FILE"
 if ! /etc/init.d/sing-box restart || ! sleep 2 || ! pidof sing-box >/dev/null 2>&1; then
-    [ ! -f "$TMP/config.backup" ] || install -o root -g root -m 0644 "$TMP/config.backup" "$CONFIG_FILE"
+    [ ! -f "$TMP/config.backup" ] || install -o root -g root -m 0600 "$TMP/config.backup" "$CONFIG_FILE"
     /etc/init.d/sing-box restart || true
     exit 1
 fi
@@ -69,7 +62,6 @@ while true; do
     read -rp '请选择(1/2): ' c
     case "$c" in
         1)
-            # cron 的 */N 只在 N 整除 24 时才是“每 N 小时”，因此只接受 24 的因数。
             read -rp '间隔小时(1/2/3/4/6/8/12,默认12): ' h
             h=${h:-12}
             case "$h" in 1|2|3|4|6|8|12) ;; *) echo -e "${RED}请输入 1/2/3/4/6/8/12。${NC}"; continue;; esac
@@ -78,13 +70,11 @@ while true; do
             printf '0 */%s * * * %s %s\n' "$h" "$UPDATE_SCRIPT" "$CRON_MARK" >> "$CRON_FILE"
             chmod 0600 "$CRON_FILE"; chown root:root "$CRON_FILE"
             /etc/init.d/cron restart >/dev/null 2>&1 || true
-            echo -e "${GREEN}已设置，每 $h 小时执行一次。${NC}"; break
-            ;;
+            echo -e "${GREEN}已设置，每 $h 小时执行一次。${NC}"; break;;
         2)
             [ -f "$CRON_FILE" ] && sed -i "/[[:space:]]$CRON_MARK\$/d" "$CRON_FILE"
             /etc/init.d/cron restart >/dev/null 2>&1 || true
-            echo -e "${GREEN}已取消。${NC}"; break
-            ;;
-        *) echo -e "${RED}无效选择。${NC}" ;;
+            echo -e "${GREEN}已取消。${NC}"; break;;
+        *) echo -e "${RED}无效选择。${NC}";;
     esac
 done
