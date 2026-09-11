@@ -109,7 +109,6 @@ confirm_yes() {
 }
 
 uninstall_sbshell() {
-    local opkg_output
     echo -e "${YELLOW}此操作将卸载 Sbshell、sing-box、配置文件及其管理的防火墙状态。${NC}"
     confirm_yes '确定要卸载 Sbshell 吗？' || { echo -e "${GREEN}已取消卸载。${NC}"; return 0; }
 
@@ -129,7 +128,7 @@ uninstall_sbshell() {
 
     echo -e "${CYAN}正在卸载 sing-box 软件包及 Sbshell...${NC}"
     if command -v opkg >/dev/null 2>&1; then
-        if opkg_output=$(opkg remove sing-box 2>&1); then
+        if opkg remove sing-box >/dev/null 2>&1; then
             :
         else
             echo -e "${YELLOW}sing-box 软件包当前无法卸载（可能被其他软件包依赖），已保留 sing-box，继续清理 Sbshell 文件。${NC}" >&2
