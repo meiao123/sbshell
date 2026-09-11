@@ -7,6 +7,11 @@ MANUAL_FILE=/etc/sing-box/manual.conf
 DEFAULTS_FILE=/etc/sing-box/defaults.conf
 CONFIG_FILE=/etc/sing-box/config.json
 MODE=$(sed -n 's/^MODE=//p' /etc/sing-box/mode.conf 2>/dev/null | head -n1)
+LOCK_DIR=/tmp/sbshell-config.lock
+while ! mkdir "$LOCK_DIR" 2>/dev/null; do sleep 1; done
+TMP_FILES=()
+cleanup(){ local f; for f in "${TMP_FILES[@]}"; do rm -f "$f" 2>/dev/null || true; done; rmdir "$LOCK_DIR" 2>/dev/null || true; }
+trap cleanup EXIT
 get_default() { awk -F= -v k="$1" '$1 == k {sub(/^[^=]*=/, ""); print; exit}' "$DEFAULTS_FILE" 2>/dev/null || true; }
 valid_url() { [[ "$1" =~ ^https://[^[:space:]]+$ ]]; }
 
@@ -38,15 +43,27 @@ while true; do
     valid_url "$FULL_URL" || { echo -e "${RED}生成的订阅 URL 无效。${NC}"; continue; }
 
     install -d -m 0755 /etc/sing-box
-    tmp_manual=$(mktemp /tmp/sbshell-manual.XXXXXX)
-    tmp_config=$(mktemp /tmp/sbshell-config.XXXXXX)
-    trap 'rm -f "$tmp_manual" "$tmp_config"' EXIT
+    tmp_manual=$(mktemp /etc/sing-box/.manual.conf.XXXXXX)
+    tmp_config=$(mktemp /etc/sing-box/.config.json.XXXXXX)
+    backup_manual=$(mktemp /etc/sing-box/.manual.conf.backup.XXXXXX)
+    backup_config=$(mktemp /etc/sing-box/.config.json.backup.XXXXXX)
+    TMP_FILES+=("$tmp_manual" "$tmp_config" "$backup_manual" "$backup_config")
+    manual_existed=0
+    config_existed=0
     printf 'BACKEND_URL=%s\nSUBSCRIPTION_URL=%s\nTEMPLATE_URL=%s\n' "$BACKEND_URL" "$SUBSCRIPTION_URL" "$TEMPLATE_URL" > "$tmp_manual"
+    if [ -f "$MANUAL_FILE" ]; then install -o root -g root -m 0600 "$MANUAL_FILE" "$backup_manual"; manual_existed=1; fi
     curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 60 "$FULL_URL" -o "$tmp_config" || { echo -e "${RED}配置下载失败。${NC}"; continue; }
     [ -s "$tmp_config" ] || { echo -e "${RED}下载的配置为空。${NC}"; continue; }
     sing-box check -c "$tmp_config" || { echo -e "${RED}配置验证失败，未覆盖现有配置。${NC}"; continue; }
-    install -o root -g root -m 0600 "$tmp_manual" "$MANUAL_FILE"
-    install -o root -g root -m 0644 "$tmp_config" "$CONFIG_FILE"
+    if [ -f "$CONFIG_FILE" ]; then install -o root -g root -m 0644 "$CONFIG_FILE" "$backup_config"; config_existed=1; fi
+    chown root:root "$tmp_manual" "$tmp_config"; chmod 0600 "$tmp_manual"; chmod 0644 "$tmp_config"
+    mv -f "$tmp_manual" "$MANUAL_FILE"
+    if ! mv -f "$tmp_config" "$CONFIG_FILE"; then
+        if [ "$manual_existed" -eq 1 ]; then mv -f "$backup_manual" "$MANUAL_FILE"; else rm -f "$MANUAL_FILE"; fi
+        if [ "$config_existed" -eq 1 ]; then cp -a "$backup_config" "$CONFIG_FILE"; else rm -f "$CONFIG_FILE"; fi
+        echo -e "${RED}配置提交失败，已回滚。${NC}" >&2
+        exit 1
+    fi
     echo '手动输入的配置已更新。'
     break
 done
