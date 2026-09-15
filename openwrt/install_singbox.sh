@@ -46,12 +46,20 @@ command -v sing-box >/dev/null 2>&1 || { echo 'sing-box 安装失败。' >&2; ex
 # 预检只为「不拿坏配置去启动服务」。现有配置与当前 sing-box 版本不兼容时（例如 1.11 起废弃的
 # block/dns 特殊出站）不能让整个初始化失败：初始化失败会让 sb 每次都重跑引导、连菜单都进不去，
 # 用户能看到的只剩 sing-box 自己那句 FATAL。这里改为提示 + 跳过启动，安装步骤本身照旧成功。
+# 另外新版 sing-box 会把废弃项打成一整串 WARN/ERROR/FATAL（固件升级残留的旧配置必然触发），
+# 整段倒给用户只会让人以为安装失败，所以先收集输出、只透出其中一行真正的原因。
 SKIP_RESTART=0
-if [ -f /etc/sing-box/config.json ] && ! sing-box check -c /etc/sing-box/config.json; then
+check_log=$(mktemp /tmp/sbshell-check.XXXXXX 2>/dev/null || echo "/tmp/sbshell-check.log")
+if [ -f /etc/sing-box/config.json ] && ! sing-box check -c /etc/sing-box/config.json 2>"$check_log"; then
     SKIP_RESTART=1
     echo '现有 /etc/sing-box/config.json 未通过校验，已跳过启动 sing-box。' >&2
+    reason=$(grep -m1 'FATAL' "$check_log" 2>/dev/null || grep -m1 'ERROR' "$check_log" 2>/dev/null || tail -n1 "$check_log" 2>/dev/null || true)
+    if [ -n "$reason" ]; then
+        printf '  原因: %s\n' "$reason" >&2
+    fi
     echo '可在菜单中选择 2 手动更新配置重新下载；若配置含已废弃的 block/dns 出站，请迁移为新的规则动作，或临时设置 ENABLE_DEPRECATED_SPECIAL_OUTBOUNDS=true。' >&2
 fi
+rm -f "$check_log"
 
 if [ -e /etc/init.d/sing-box ] && [ ! -f /etc/init.d/sing-box ]; then
     echo 'sing-box init 脚本不是普通文件，拒绝覆盖。' >&2

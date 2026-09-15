@@ -83,7 +83,7 @@ order_file
 run_menu '\n0\n'
 
 assert_rc "$MENU_RC" 0 "初始化成功并进入菜单"
-assert_eq "$(order_list)" "check_environment install_singbox switch_mode update_ui manual_input start_singbox " "初始化顺序：UI 安装先于配置输入，配置输入先于启动服务"
+assert_eq "$(order_list)" "check_environment install_singbox update_ui switch_mode manual_input start_singbox " "初始化顺序：装完 sing-box 立刻装 UI，然后才是模式选择与配置输入"
 assert_contains "$MENU_OUT" "UI 安装完成。" "UI 安装完成通知已打印"
 assert_contains "${MENU_OUT%%Sbshell OpenWrt 管理菜单*}" "UI 安装完成。" "通知先于主菜单出现"
 assert_contains "$MENU_OUT" "Sbshell OpenWrt 管理菜单" "通知之后才弹出主菜单"

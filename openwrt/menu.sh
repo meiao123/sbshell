@@ -229,13 +229,13 @@ initialize() {
     update_scripts || { echo -e "${RED}脚本更新失败，现有安装保持不变。${NC}" >&2; return 1; }
     run check_environment.sh || return 1
     run install_singbox.sh || return 1
+    # 装完 sing-box 立刻装好默认 UI 并给出通知，之后才让用户选择模式、再走配置输入。
+    # 失败不阻断初始化（否则 UI 一失败就会挡住后面所有步骤——真机踩坑）。
+    install_default_ui || true
     run switch_mode.sh || return 1
     # 管理脚本、sing-box 和网络模式已经完成基础初始化；之后即使配置下载失败，
     # 再次执行 sb 也应直接进入菜单，而不是重复执行完整初始化。
     touch "$INITIALIZED_FILE" && chmod 0644 "$INITIALIZED_FILE"
-    # 先把默认 UI 装完并给出通知，再进入配置输入；这一步刻意放在 manual_input/start_singbox
-    # 之前且失败不阻断——否则配置下载或启动一失败，UI 就永远装不上（真机踩坑）。
-    install_default_ui || true
     run manual_input.sh || return 1
     run start_singbox.sh || return 1
 }

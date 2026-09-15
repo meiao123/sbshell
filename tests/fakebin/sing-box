@@ -11,7 +11,14 @@ case "${1:-}" in
         file=''
         while [ $# -gt 0 ]; do case "$1" in -c) file="${2:-}"; shift 2 ;; *) shift ;; esac; done
         [ -n "$file" ] || { echo "sing-box: missing config" >&2; exit 1; }
-        if [ "${SBSHELL_SINGBOX_CHECK_FAIL:-0}" = 1 ]; then echo "FATAL invalid config" >&2; exit 1; fi
+        if [ "${SBSHELL_SINGBOX_CHECK_FAIL:-0}" = 1 ]; then
+            # 复刻 sing-box 1.12 碰到旧配置时的真实输出（WARN/ERROR/FATAL 三连，真机日志原文），
+            # 用来验证安装脚本只透出一行原因、不把整段 deprecation 刷屏给用户。
+            echo "WARN[0000] legacy DNS servers is deprecated in sing-box 1.12.0 and will be removed in sing-box 1.14.0, checkout documentation for migration: https://sing-box.sagernet.org/migration/#migrate-to-new-dns-server-formats" >&2
+            echo "ERROR[0000] legacy special outbounds is deprecated in sing-box 1.11.0 and will be removed in sing-box 1.13.0, checkout documentation for migration: https://sing-box.sagernet.org/migration/#migrate-legacy-special-outbounds-to-rule-actions" >&2
+            echo "FATAL[0000] to continuing using this feature, set environment variable ENABLE_DEPRECATED_SPECIAL_OUTBOUNDS=true" >&2
+            exit 1
+        fi
         jq empty "$file" >/dev/null 2>&1 || { echo "FATAL decode config: invalid JSON" >&2; exit 1; }
         exit 0
         ;;
