@@ -24,13 +24,18 @@ tests/run.sh --local    # 在本地 Linux 主机以 root 直接运行
 | `fakebin/` | `nft` `ip` `systemctl` `sing-box` `curl` `sysctl` `ss` `pidof` `opkg` `apk` `uci` `logread` `ufw` `sshd` 等 stub |
 | `fakebin-busybox/` | 模拟 busybox `grep`（不支持 `-P`），用于 OpenWrt 兼容性测试 |
 | `rc.common` / `initd/` | 极简 `/etc/rc.common` 与 OpenWrt 风格 init 脚本（`sing-box` 极简桩、`sing-box-package` 复刻包里的 UCI 门控桩） |
-| `suites/` | 12 个行为测试套件 |
+| `suites/` | 13 个行为测试套件 |
 
 状态都保存在 `$SBSHELL_STUB_STATE`（默认 `/tmp/sbshell-stub-state`），断言直接检查
 nft 表、ip rule/route、state 文件、锁目录、cron 文件等可观测结果。
 
-`fakebin/curl` 支持失败注入：`SBSHELL_CURL_FAIL=<curl 退出码>` 让本次请求按该退出码
-失败，`SBSHELL_CURL_HTTP=<状态码>` 决定 `-w '%{http_code}'` 回报的状态码。
+`fakebin/curl` 支持失败注入与慢速模拟：`SBSHELL_CURL_FAIL=<curl 退出码>` 让本次请求按该退出码
+失败，`SBSHELL_CURL_HTTP=<状态码>` 决定 `-w '%{http_code}'` 回报的状态码，
+`SBSHELL_CURL_SLEEP=<秒>` 让请求慢下来（用于确定性断言 30s 下载倒计时真的在走）。
+
+`initd/sing-box` 与 `initd/sing-box-package` 支持 `SBSHELL_INITD_NOISE=1`：让服务脚本按真机
+原样吐出两种 ubus 噪音（短形态 `Command failed: Not found` 与带命令名的长形态），用于验证
+各入口的噪音过滤。
 
 `fakebin/uci` 只实现仓库用到的那部分 UCI（`-q get/set/commit`），状态落在
 `$SBSHELL_STUB_STATE/uci/<config>`；配合 `initd/sing-box-package`（复刻包里的
@@ -50,6 +55,7 @@ nft 表、ip rule/route、state 文件、锁目录、cron 文件等可观测结�
 | `07_no_install.sh` | 真机回归（ImmortalWrt）：busybox 没有 `install` applet 时，一键引导与 OpenWrt 脚本仍须可用（含生成的 cron 脚本） |
 | `10_package_manager.sh` | 真机回归（ImmortalWrt 25.12.2 / apk-tools 3.0.5）：OpenWrt 25.12 起 apk 取代 opkg，安装/UI 更新/引导/卸载四处都须按可用包管理器分派，且老固件的 opkg 调用序列不变 |
 | `11_download_failure_reason.sh` | 真机回归（ImmortalWrt 25.12.2）：`set -Eeuo pipefail` + 后台子 shell 跑 curl 时，errexit 会在 curl 失败时跳过状态写入，导致后端 HTTP 500 被误报成“配置文件下载超时”；现在失败必须立刻给出真实原因（HTTP 状态 / DNS / 连接被拒绝 / curl 超时）并打印请求地址，且现有配置不被改动 |
+| `12_ui_install.sh` | 真机回归（ImmortalWrt 25.12.2）：① 安装流程必须主动安装默认 UI（配置下载/启动失败也要装，否则 UI 永远装不上）；② UI 的完成通知或失败警告必须先于主菜单出现，且 UI 失败不能挡住菜单；③ 配置下载/更新统一 30s 超时并显示倒计时（`manual_update.sh` 与 `auto_update.sh` 的 cron 脚本，cron 下用 `[ -t 1 ]` 静默） |
 
 ## 本地开发
 

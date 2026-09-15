@@ -112,11 +112,20 @@ EOF
 fixture_write template.json "$NEW_CONFIG"
 
 export SBSHELL_INITD_NOISE=1
+# 让桩 curl 慢 2 秒，这样倒计时一定会打印出中间值（需求③：更新配置也要有 30s 倒计时）
+export SBSHELL_CURL_SLEEP=2
 run_with_timeout bash /etc/sing-box/scripts/manual_update.sh >/tmp/mu_noise.out 2>&1
 rc=$?
-unset SBSHELL_INITD_NOISE
+unset SBSHELL_INITD_NOISE SBSHELL_CURL_SLEEP
 assert_rc "$rc" 0 "服务脚本吐 ubus 噪音时更新依然成功"
 assert_no_grep 'Command failed' /tmp/mu_noise.out "短形态与带命令名的长形态都被过滤"
 assert_grep '配置更新并启动成功' /tmp/mu_noise.out "成功提示照常打印"
+assert_grep '配置文件下载中，超时倒计时: [0-9][0-9]s' /tmp/mu_noise.out "更新配置时显示 30s 下载倒计时"
+assert_grep '配置文件下载中，超时倒计时: 00s' /tmp/mu_noise.out "下载完成时倒计时归零"
+if grep -qE '超时倒计时: [1-9][0-9]s' /tmp/mu_noise.out; then
+    pass "倒计时在下载期间确实往下走（出现非 00s 的中间值）"
+else
+    fail "倒计时没有打印中间值（只有终值，倒计时未真正运行）"
+fi
 
 suite_end

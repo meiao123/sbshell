@@ -205,6 +205,26 @@ update_scripts() {
 
 run() { bash "$SCRIPT_DIR/$1"; }
 
+UI_DIR=/etc/sing-box/ui
+
+# 安装默认 UI（zashboard）：已装好就直接返回。失败只告警并返回非 0，由调用方决定是否阻断——
+# 需求是「先把 UI 装完并给出通知，再弹出菜单；UI 失败就先给警告再弹菜单」。
+install_default_ui() {
+    [ -f "$UI_DIR/index.html" ] && return 0
+    # 同一次运行里只尝试一次：初始化阶段失败过就不再重试，避免重复下载、无谓拉长等待。
+    [ -z "${UI_INSTALL_TRIED:-}" ] || return 1
+    UI_INSTALL_TRIED=1
+    local ui_output
+    echo -e "${CYAN}正在安装默认 UI...${NC}"
+    if ui_output=$(run update_ui.sh <<< '1' 2>&1); then
+        printf '%s\n' "$ui_output" | tail -n1
+        return 0
+    fi
+    echo -e "${YELLOW}警告：默认 UI 安装失败，可稍后从菜单“10. 更新控制面板”重试。${NC}" >&2
+    printf '%s\n' "$ui_output" | tail -n1 >&2
+    return 1
+}
+
 initialize() {
     update_scripts || { echo -e "${RED}脚本更新失败，现有安装保持不变。${NC}" >&2; return 1; }
     run check_environment.sh || return 1
@@ -213,16 +233,11 @@ initialize() {
     # 管理脚本、sing-box 和网络模式已经完成基础初始化；之后即使配置下载失败，
     # 再次执行 sb 也应直接进入菜单，而不是重复执行完整初始化。
     touch "$INITIALIZED_FILE" && chmod 0644 "$INITIALIZED_FILE"
+    # 先把默认 UI 装完并给出通知，再进入配置输入；这一步刻意放在 manual_input/start_singbox
+    # 之前且失败不阻断——否则配置下载或启动一失败，UI 就永远装不上（真机踩坑）。
+    install_default_ui || true
     run manual_input.sh || return 1
     run start_singbox.sh || return 1
-    # 初始化时自动安装默认 UI。暂存安装脚本的输出，避免其子菜单与主菜单混在一起。
-    local ui_output
-    if ui_output=$(run update_ui.sh <<< '1' 2>&1); then
-        printf '%s\n' "$ui_output" | tail -n1
-    else
-        echo -e "${YELLOW}默认 UI 安装失败，可稍后从菜单“10. 更新控制面板”重试。${NC}" >&2
-        printf '%s\n' "$ui_output" | tail -n1 >&2
-    fi
 }
 
 if [ ! -f "$INITIALIZED_FILE" ]; then
@@ -236,6 +251,10 @@ if [ ! -f "$INITIALIZED_FILE" ]; then
 else
     [ -f "$SCRIPT_DIR/menu.sh" ] || update_scripts || exit 1
 fi
+
+# 已初始化过的机器（含历史安装中断、从未装过 UI 的）在进菜单前自动补装一次；
+# 失败只告警，不阻挡菜单显示。
+install_default_ui || true
 
 while true; do
     echo -e "${CYAN}=========== Sbshell OpenWrt 管理菜单 ===========${NC}"

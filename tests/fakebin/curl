@@ -21,6 +21,9 @@ done
 
 printf '%s\n' "$url" >> "$S/curl.log"
 
+# 模拟慢速下载，让「30s 倒计时」这类断言具有确定性（默认不睡，不影响其它套件）。
+if [ -n "${SBSHELL_CURL_SLEEP:-}" ]; then sleep "$SBSHELL_CURL_SLEEP"; fi
+
 http_code=${SBSHELL_CURL_HTTP:-200}
 # -w 输出必须和真 curl 一致：脚本用 -w '%{http_code}' 判断服务端状态码，而真 curl 在
 # --fail 中止时同样会输出该状态码（实测 curl 8.x：--fail + 404 → rc=22 且输出 [404]）。
