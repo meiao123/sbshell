@@ -99,36 +99,25 @@ assert_grep 'allow 2222/tcp' "$SBSHELL_STUB_STATE/ufw.log" "放行 sshd_config �
 assert_grep 'allow 52021/udp' "$SBSHELL_STUB_STATE/ufw.log" "放行 sing-box 的 hysteria2 端口"
 assert_grep 'allow 8388/tcp' "$SBSHELL_STUB_STATE/ufw.log" "放行 sing-box 的 TCP 端口"
 
-suite_begin "supply chain: script updates must not use mutable main refs (P2-4)"
+suite_begin "supply chain: main is the only update source (P2-4)"
 
-refs=()
+# 维护者已移除 RELEASE 发布声明与不可变 SHA 固定机制：main 是唯一更新源
+# （README「代码来源」与 docs/security-hardening.md 均如此描述）。
+# 这一段与 .github/workflows/shell-static-check.yml 的 "Verify update source is main" 对齐。
 for f in sbshall.sh debian/menu.sh debian/update_scripts.sh openwrt/menu.sh openwrt/update_scripts.sh; do
-    # 只认 SHA 形状：脚本里还有 `RELEASE_REF=$declared` 这类运行时赋值，
-    # `[^ ]+` 会把字面量当成固定引用（CI 里实测踩过）。
-    ref=$(grep -oE '(BASE_REF|RELEASE_REF)=[0-9a-f]{40}' "$SBSHELL_SRC/$f" | head -n1 | cut -d= -f2)
-    refs+=("$ref")
-    # 必须是不可变的提交 SHA：分支名可被移动（2026-09-11 那次事故就是引用的分支被删除，
-    # 导致一键安装与自更新全部 404，而当时套件只做字符串形状检查，放过了它）。
-    if [[ "$ref" =~ ^[0-9a-f]{40}$ ]]; then
-        pass "$f 固定到不可变 commit SHA"
+    if grep -nE 'BASE_REF|RELEASE_REF|RELEASE_DECL_URL|resolve_release_ref' "$SBSHELL_SRC/$f" >/dev/null 2>&1; then
+        fail "$f 仍残留不可变发布引用机制"
     else
-        fail "$f 的发布引用不是不可变提交: '$ref'"
+        pass "$f 没有残留的不可变发布引用机制"
     fi
-    # 唯一允许从 main 读取的是发布声明文件 RELEASE：它只有一行不可变 SHA，且 main 本来就是
-    # README 一键引导的信任锚（能改写 main 的人本来就能替换引导脚本，没有新增信任假设）。
-    # 脚本内容一律按不可变 SHA 下载 —— 这里只禁止从 main 下载脚本/配置内容。
-    main_urls=$(grep -oE 'raw\.githubusercontent\.com/[^" ]*/main/[^" ]*' "$SBSHELL_SRC/$f" | sort -u)
-    if [ -z "$main_urls" ]; then
-        pass "$f 未从 main 分支读取任何内容"
+    if grep -nE "download_repo_file ['\"]?RELEASE|['\"]RELEASE['\"]" "$SBSHELL_SRC/$f" >/dev/null 2>&1; then
+        fail "$f 仍在下载 RELEASE 发布声明"
     else
-        for u in $main_urls; do
-            case "$u" in
-                */RELEASE) pass "$f 只从 main 读取发布声明 RELEASE" ;;
-                *) fail "$f 从 main 分支读取了非声明内容: $u" ;;
-            esac
-        done
+        pass "$f 不再下载 RELEASE 发布声明"
     fi
 done
+
+assert_no_file "$SBSHELL_SRC/RELEASE" "仓库不再有 RELEASE 发布声明（main 是唯一更新源）"
 
 if grep -q 'qljsyph/sbshell/refs/heads/main' "$SBSHELL_SRC/README.md"; then
     fail "README 仍指向他人仓库的 main 分支"
@@ -139,36 +128,25 @@ fi
 if [ -f "$SBSHELL_SRC/.gitattributes" ]; then pass ".gitattributes 存在（强制脚本用 LF）"; else fail "缺少 .gitattributes"; fi
 if grep -q 'eol=lf' "$SBSHELL_SRC/.gitattributes" 2>/dev/null; then pass ".gitattributes 指定 eol=lf"; else fail ".gitattributes 未指定 eol=lf"; fi
 
-# 引用“是否存在”只能联网验证：默认离线跳过，SBSHELL_ONLINE=1 时校验。
-# 不能用 `git ls-remote <repo> <sha>`：ls-remote 只匹配引用名，对提交 SHA 恒为 rc=2，
-# 会把合法的 SHA 固定误判为不存在。首选直接请求 raw URL（脚本真正消费的路径）；
-# 没有 curl 时用一次性 `git init` + `git fetch --depth=1`——必须放在临时仓库里，
-# 因为 --depth 获取会把当前仓库变成 shallow 并截断历史（实测会让随后的祖先判断失真）。
+# 更新源“是否存在”只能联网验证：默认离线跳过，SBSHELL_ONLINE=1 时校验。
+# 不能用 `git ls-remote <repo> <ref>`：ls-remote 只匹配引用名，对提交 SHA 恒为 rc=2。
+# 现在更新源就是 main，直接请求脚本真正消费的 raw URL。
 if [ "${SBSHELL_ONLINE:-0}" = 1 ]; then
-    for ref in $(printf '%s\n' "${refs[@]}" | sort -u); do
-        rc=0
-        if command -v curl >/dev/null 2>&1; then
-            curl -fsS --max-time 20 -o /dev/null \
-                "https://raw.githubusercontent.com/meiao123/sbshell/$ref/debian/menu.sh" || rc=$?
-        elif command -v git >/dev/null 2>&1; then
-            tmp_repo=$(mktemp -d)
-            git -C "$tmp_repo" init -q
-            git -C "$tmp_repo" fetch --depth=1 --no-tags \
-                https://github.com/meiao123/sbshell "$ref" >/dev/null 2>&1 || rc=$?
-            rm -rf "$tmp_repo"
-        else
-            rc=127
-        fi
-        if [ "$rc" -eq 0 ]; then
-            pass "发布引用 $ref 在远端存在"
-        elif [ "$rc" -eq 127 ]; then
-            pass "无 git/curl：跳过 $ref 的联网校验（CI 由 workflow 的 raw URL 步骤负责）"
-        else
-            fail "发布引用 $ref 在远端不存在（安装/自更新会 404）"
-        fi
-    done
+    if command -v curl >/dev/null 2>&1; then
+        for u in \
+            "https://raw.githubusercontent.com/meiao123/sbshell/main/debian/menu.sh" \
+            "https://raw.githubusercontent.com/meiao123/sbshell/main/openwrt/menu.sh"; do
+            if curl -fsS --max-time 20 -o /dev/null "$u"; then
+                pass "更新源可下载: $u"
+            else
+                fail "更新源不可下载（安装/自更新会 404）: $u"
+            fi
+        done
+    else
+        pass "无 curl：跳过更新源联网校验（CI 里由 workflow 的 raw URL 步骤负责）"
+    fi
 else
-    pass "离线模式：跳过引用存在性检查（CI 里由 workflow 的 raw URL 步骤负责）"
+    pass "离线模式：跳过更新源存在性检查（CI 里由 workflow 的 raw URL 步骤负责）"
 fi
 
 suite_begin "configure scripts: a missing mode.conf must be a silent no-op (P2)"
@@ -231,47 +209,40 @@ PATH="$shim:$PATH" bash /tmp/va_test.sh > /tmp/va.out 2>&1
 assert_not_rc "$?" 0 "zipinfo 不可用时拒绝（旧代码空转返回 0）"
 rm -rf "$shim"
 
-suite_begin "release pin: RELEASE declaration, and no hop-back to the pre-fix commit"
+suite_begin "release pin removed: updates download from main, not a pinned commit"
 
-assert_file "$SBSHELL_SRC/RELEASE" "仓库存在 RELEASE 发布声明"
-if grep -qE '^[0-9a-f]{40}$' "$SBSHELL_SRC/RELEASE"; then
-    pass "RELEASE 是 40 位不可变提交 SHA"
-else
-    fail "RELEASE 内容不是 40 位提交 SHA: $(head -n1 "$SBSHELL_SRC/RELEASE")"
-fi
+assert_no_file "$SBSHELL_SRC/RELEASE" "仓库不再包含 RELEASE 发布声明"
 for f in sbshall.sh debian/menu.sh debian/update_scripts.sh openwrt/menu.sh openwrt/update_scripts.sh; do
     if grep -q 'resolve_release_ref' "$SBSHELL_SRC/$f"; then
-        pass "$f 在下载前解析 RELEASE 声明"
+        fail "$f 仍在解析 RELEASE 声明"
     else
-        fail "$f 未解析 RELEASE 声明（只用内置引用 → 一跳回退）"
+        pass "$f 不再解析 RELEASE 声明"
     fi
 done
 
-# 行为断言：桩 curl 会记录所有请求过的 URL。声明一个与内置常量不同的发布提交，
-# 更新脚本必须按声明提交下载，而不是按脚本里写死的那个。
+# 行为断言：桩 curl 会记录所有请求过的 URL。更新脚本必须从 main 下载，
+# 而不是从任何写死的提交 SHA 下载（那正是维护者移除的“一跳回退”保护）。
 reset_stub_state
 reset_singbox_dir
 install_repo_scripts debian
-declared=2222222222222222222222222222222222222222
-fixture_write RELEASE "$declared"
 for f in "$SBSHELL_SRC"/debian/*.sh; do cp "$f" "$SBSHELL_FIXTURES/"; done
-run_with_timeout bash "$SCRIPTS/update_scripts.sh" > /tmp/no-hop.out 2>&1
+run_with_timeout bash "$SCRIPTS/update_scripts.sh" > /tmp/main-only.out 2>&1
 rc=$?
 if [ "$rc" -ne 0 ]; then
-    fail "更新脚本执行失败（rc=$rc），无法判定发布解析行为"
+    fail "更新脚本执行失败（rc=$rc），无法判定下载来源"
     echo "--- update_scripts.sh 输出（尾部）---"
-    tail -20 /tmp/no-hop.out
+    tail -20 /tmp/main-only.out
     echo "--- curl.log ---"
     cat "$SBSHELL_STUB_STATE/curl.log" 2>/dev/null || true
     echo "--- 结束 ---"
 else
-    pass "更新脚本按 RELEASE 声明执行完成"
+    pass "更新脚本按 main 更新源执行完成"
 fi
-assert_grep "$declared/debian/" "$SBSHELL_STUB_STATE/curl.log" "更新按 RELEASE 声明的提交下载"
-if grep -q '91865d43c91b5d22141d412c27d3c54624c4be95/debian/' "$SBSHELL_STUB_STATE/curl.log"; then
-    fail "仍按内置常量下载（没有使用 RELEASE 声明）"
+assert_grep 'main/debian/' "$SBSHELL_STUB_STATE/curl.log" "更新按 main 分支下载脚本"
+if grep -qE 'raw\.githubusercontent\.com/[^/]+/sbshell/[0-9a-f]{40}/' "$SBSHELL_STUB_STATE/curl.log"; then
+    fail "仍按写死的提交 SHA 下载（RELEASE 固定引用残留）"
 else
-    pass "未按内置常量下载，改用 RELEASE 声明的提交"
+    pass "未按写死的提交 SHA 下载，main 是唯一更新源"
 fi
 
 suite_end

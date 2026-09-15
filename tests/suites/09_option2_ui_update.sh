@@ -18,10 +18,11 @@ suite_begin "openwrt: option 9 downloads scripts from openwrt/"
 assert_grep 'download_repo_file "openwrt/\$script"' "$SBSHELL_SRC/openwrt/update_scripts.sh" "选项 9 使用正确的 openwrt 路径"
 
 suite_begin "openwrt: UI menu separators and colored notifications"
-assert_grep "^    echo '========'$" "$SBSHELL_SRC/openwrt/update_ui.sh" "二级菜单顶部有分隔线"
-separator_count=$(grep -c "^    echo '========'$" "$SBSHELL_SRC/openwrt/update_ui.sh" || true)
+assert_grep 'echo -e "${CYAN}======== Sbshell UI 管理菜单 ========${NC}"' "$SBSHELL_SRC/openwrt/update_ui.sh" "二级菜单顶部有分隔线"
+separator_count=$(grep -c 'echo -e "${CYAN}=' "$SBSHELL_SRC/openwrt/update_ui.sh" || true)
 assert_eq "$separator_count" "2" "请选择前也有二级菜单分隔线"
-assert_grep 'GREEN=.*RED=' "$SBSHELL_SRC/openwrt/update_ui.sh" "UI 脚本定义成功/失败颜色"
+assert_grep '^GREEN=' "$SBSHELL_SRC/openwrt/update_ui.sh" "UI 脚本定义成功颜色"
+assert_grep '^RED=' "$SBSHELL_SRC/openwrt/update_ui.sh" "UI 脚本定义失败颜色"
 assert_grep 'GREEN.*UI 安装完成' "$SBSHELL_SRC/openwrt/update_ui.sh" "UI 安装成功使用绿色通知"
 assert_grep 'RED.*>&2' "$SBSHELL_SRC/openwrt/update_ui.sh" "UI 失败通知使用红色"
 assert_grep 'check_ui()' "$SBSHELL_SRC/openwrt/update_ui.sh" "检查 UI 保留为独立函数"
