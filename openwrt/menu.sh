@@ -133,8 +133,14 @@ uninstall_sbshell() {
         else
             echo -e "${YELLOW}sing-box 软件包当前无法卸载（可能被其他软件包依赖），已保留 sing-box，继续清理 Sbshell 文件。${NC}" >&2
         fi
+    elif command -v apk >/dev/null 2>&1; then
+        if apk del sing-box >/dev/null 2>&1; then
+            :
+        else
+            echo -e "${YELLOW}sing-box 软件包当前无法卸载（可能被其他软件包依赖），已保留 sing-box，继续清理 Sbshell 文件。${NC}" >&2
+        fi
     else
-        echo -e "${YELLOW}未找到 opkg，无法卸载 sing-box 软件包，继续清理 Sbshell 文件。${NC}" >&2
+        echo -e "${YELLOW}未找到 opkg 或 apk，无法卸载 sing-box 软件包，继续清理 Sbshell 文件。${NC}" >&2
     fi
 
     rm -f /usr/local/bin/sb /usr/bin/sb /etc/cron.d/sbshell-ui /etc/cron.d/sbshell-singbox /etc/sing-box/update-ui.sh /etc/sing-box/update-singbox.sh
