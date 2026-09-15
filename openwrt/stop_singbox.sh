@@ -10,7 +10,7 @@ if ! pidof sing-box >/dev/null 2>&1; then
     echo -e "${GREEN}sing-box 未运行，无需重复停止。${NC}"
     exit 0
 fi
-if ! /etc/init.d/sing-box stop 2> >(sed '/^Command failed: Not found$/d' >&2); then
+if ! /etc/init.d/sing-box stop 2> >(sed '/^Command failed:.*Not found/d' >&2); then
     echo -e "${RED}停止 sing-box 失败。${NC}" >&2
     exit 1
 fi

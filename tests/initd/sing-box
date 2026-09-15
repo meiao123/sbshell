@@ -15,6 +15,14 @@ start() {
 
 stop() {
     rm -f "$S/singbox_active" 2>/dev/null || true
+    # 真机上包管理器的脚本走 ubus 删除实例，没有已注册实例时 rc.common/ubus 会回显两种噪音形态：
+    # 短形态 `Command failed: Not found`，以及带命令名的长形态
+    # `Command failed: ubus call service delete { "name": "sing-box" } (Not found)`。
+    # 默认关闭；各入口的过滤回归测试用 SBSHELL_INITD_NOISE=1 打开。
+    if [ "${SBSHELL_INITD_NOISE:-0}" = 1 ]; then
+        echo 'Command failed: Not found' >&2
+        echo 'Command failed: ubus call service delete { "name": "sing-box" } (Not found)' >&2
+    fi
     return 0
 }
 
