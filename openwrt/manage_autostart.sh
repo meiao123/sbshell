@@ -46,15 +46,15 @@ START=40
 STOP=10
 
 start() {
-\t$SCRIPT_DIR/manage_autostart.sh apply_firewall
+    $SCRIPT_DIR/manage_autostart.sh apply_firewall
 }
 
 stop() {
-\treturn 0
+    return 0
 }
 
 boot() {
-\tstart "\$@"
+    start "\$@"
 }
 EOF
     chmod 0755 "$INIT_SCRIPT"

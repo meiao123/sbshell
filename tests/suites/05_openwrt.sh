@@ -58,6 +58,14 @@ assert_rc "$rc" 0 "启用自启动成功"
 assert_file /etc/init.d/sbshell-firewall "生成 /etc/init.d/sbshell-firewall"
 assert_grep 'apply_firewall' /etc/init.d/sbshell-firewall "开机脚本调用 apply_firewall"
 assert_grep 'START=40' /etc/init.d/sbshell-firewall "开机脚本先于 sing-box (START=40)"
+# 未加引号的 heredoc 不解释 `\t`。写错时开机脚本会去执行 `t/etc/...` 并以 127 失败，
+# 重启后 nft 规则再也恢复不了（正是 P0-4 要防的静默失效）。
+if grep -q '\\t' /etc/init.d/sbshell-firewall 2>/dev/null; then
+    fail "开机脚本残留字面量 \\t（heredoc 不解释转义，执行时会 127）"
+else
+    pass "开机脚本没有转义残留"
+fi
+assert_grep "$SCRIPTS/manage_autostart.sh apply_firewall" /etc/init.d/sbshell-firewall "开机脚本直接调用 manage_autostart.sh apply_firewall"
 if [ -e /etc/rc.d/S40sbshell-firewall ]; then pass "已注册开机启动链接"; else fail "未注册开机启动链接"; fi
 if nft_table_exists sing-box; then pass "启用时已下发防火墙规则"; else fail "启用时未下发规则"; fi
 rm -f "$SBSHELL_STUB_STATE/nft/inet__sing-box"

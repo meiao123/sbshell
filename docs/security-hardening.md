@@ -89,9 +89,10 @@ main/openwrt/*.sh 或 main/debian/*.sh
 | 4 个客户端模板仍走第三方代理 + 可变分支规则集 | `config_template/*.json` | 去掉 `gh-proxy.com`/`ghfast.top` 前缀、面板地址固定 commit、删除未被引用的第三方规则集 |
 | Debian UI 安装缺少 chown 失败回滚（与 OpenWrt 不对称） | `debian/update_ui.sh` | 对齐 OpenWrt：失败时恢复旧备份 |
 
-发布流程补充：`BASE_REF`/`RELEASE_REF` 必须是**确实存在**的不可变提交；
-CI 的 `Verify the pinned release ref exists` 步骤与 `tests/suites/06_misc.sh`
-（`SBSHELL_ONLINE=1` 时）都会验证这一点 —— 2026-09-11 的事故正是引用被删除后无人发现。
+发布流程补充：更新源固定为 **main**，`BASE_REF`/`RELEASE_REF` 固定指针机制已经移除；
+CI 的 `Verify update source is main` 步骤与 `tests/suites/06_misc.sh`、`tests/suites/08_archive_fallback.sh`
+都会验证 5 个入口脚本不含 `BASE_REF`/`RELEASE_REF`/`resolve_release_ref`，并且确实从 `main` 下载
+—— 2026-09-11 的事故（引用的分支被删除后 404 无人发现）就是这次改动的原因。
 
 
 ## 第三轮：真机回归（ImmortalWrt 的 busybox 没有 install）

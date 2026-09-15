@@ -3,12 +3,12 @@ set -Eeuo pipefail
 GREEN='\033[0;32m'; RED='\033[0;31m'; NC='\033[0m'
 SCRIPT_DIR=/etc/sing-box/scripts
 BASE_URL="https://raw.githubusercontent.com/meiao123/sbshell/main/debian"
-# 「装好加固版后点一次更新就回退到修复前版本」的一跳回退（见 docs/security-hardening.md）。
-# 真正的发布提交按 main 上的 `RELEASE` 声明解析，只有解析失败才回退到这个常量。
+# 更新源固定为 main（见 README「代码来源」与 docs/security-hardening.md）：
+# 已移除 RELEASE 发布声明与不可变 SHA 固定机制。
 # 先提权再做任何事：`exec` 不会触发 EXIT trap，先建临时目录会在非 root 调用时泄漏
 # （并且提权后的实例还会再建一份）。
 [ "$(id -u)" -eq 0 ] || exec sudo bash "$0" "$@"
-# 提权之后、真正下载之前解析发布提交。
+# 提权之后、真正下载之前准备临时目录。
 TMP_DIR=$(mktemp -d /tmp/sing-box-update.XXXXXX) || exit 1
 BACKUP_DIR=$(mktemp -d /tmp/sing-box-update-backup.XXXXXX) || { rm -rf "$TMP_DIR"; exit 1; }
 trap 'rm -rf "$TMP_DIR" "$BACKUP_DIR"' EXIT
