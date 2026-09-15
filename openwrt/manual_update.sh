@@ -171,10 +171,46 @@ acquire_lock
 if [ -f "$MANUAL_FILE" ]; then cp -a "$MANUAL_FILE" "$TMP_DIR/manual.backup" || { echo -e "${RED}备份地址配置失败。${NC}" >&2; exit 1; }; fi
 if [ -f "$CONFIG_FILE" ]; then cp -a "$CONFIG_FILE" "$BACKUP_FILE" || { echo -e "${RED}旧配置备份失败，已取消更新。${NC}" >&2; exit 1; }; fi
 
-if ! curl --fail --silent --show-error --location --proto '=http,https' --tlsv1.2 --connect-timeout 10 --max-time 60 "$FULL_URL" -o "$TMP_DIR/config.json"; then
+# 与初始化路径（manual_input.sh）一致：30s 超时 + 实时倒计时。curl 放进后台子 shell 写状态文件，
+# 前台显示倒计时；子 shell 内用 `|| rc=$?` 兜住退出码（本脚本是 set -Eeuo pipefail，裸 curl 失败
+# 会直接终止子 shell，状态文件永远写不出来，父进程只能空转到超时并误报原因）。
+download_status=$(mktemp /tmp/sbshell-update-status.XXXXXX)
+rm -f "$download_status"
+(
+    rc=0
+    curl --fail --silent --show-error --location --proto '=http,https' --tlsv1.2 --connect-timeout 10 --max-time 30 "$FULL_URL" -o "$TMP_DIR/config.json" || rc=$?
+    printf '%s\n' "$rc" > "$download_status"
+    exit 0
+) &
+curl_pid=$!
+elapsed=0
+while [ ! -s "$download_status" ]; do
+    remaining=$((30 - elapsed))
+    [ "$remaining" -ge 0 ] || remaining=0
+    printf '\r配置文件下载中，超时倒计时: %02ds' "$remaining"
+    if [ "$elapsed" -ge 30 ]; then
+        break
+    fi
+    sleep 1
+    elapsed=$((elapsed + 1))
+done
+if [ ! -s "$download_status" ]; then
+    kill "$curl_pid" 2>/dev/null || true
+    wait "$curl_pid" 2>/dev/null || true
+    printf '\n'
+    echo -e "${RED}新配置下载超时（30s），已保留之前的 config.json。${NC}" >&2
+    rm -f "$download_status"
+    exit 1
+fi
+wait "$curl_pid" 2>/dev/null || true
+download_rc=$(cat "$download_status" 2>/dev/null || echo 1)
+rm -f "$download_status"
+if [ "$download_rc" -ne 0 ]; then
+    printf '\n'
     echo -e "${RED}新配置下载失败，已保留之前的 config.json。${NC}" >&2
     exit 1
 fi
+printf '\r配置文件下载中，超时倒计时: 00s\n'
 if ! sing-box check -c "$TMP_DIR/config.json"; then
     echo -e "${RED}新配置验证失败，已保留之前的 config.json。${NC}" >&2
     exit 1

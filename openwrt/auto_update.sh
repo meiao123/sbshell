@@ -137,7 +137,44 @@ esac
 case "$S" in *[[:space:]]*|*'&file='*|*'#'*) echo '订阅地址包含非法字符。' >&2; exit 1;; esac
 case "$T" in https://*) ;; *) echo '无效的模板 HTTPS 地址。' >&2; exit 1;; esac
 case "$U" in https://*) ;; *) echo '生成的订阅 URL 无效。' >&2; exit 1;; esac
-curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 60 "$U" -o "$TMP/config.json"
+# 30s 超时 + 实时倒计时：手动执行本脚本（stdout 是终端）时显示倒计时，cron 里静默不刷日志。
+# curl 放进后台子 shell 写状态文件，前台显示倒计时；`|| rc=$?` 兜住退出码（本脚本 set -eu，
+# 裸 curl 失败会直接终止子 shell，状态文件写不出来）。
+download_status=$(mktemp /tmp/sbshell-auto-status.XXXXXX)
+rm -f "$download_status"
+(
+    rc=0
+    curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 30 "$U" -o "$TMP/config.json" || rc=$?
+    printf '%s\n' "$rc" > "$download_status"
+    exit 0
+) &
+curl_pid=$!
+elapsed=0
+while [ ! -s "$download_status" ]; do
+    if [ -t 1 ]; then
+        remaining=$((30 - elapsed))
+        [ "$remaining" -ge 0 ] || remaining=0
+        printf '\r配置文件下载中，超时倒计时: %02ds' "$remaining"
+    fi
+    if [ "$elapsed" -ge 30 ]; then
+        break
+    fi
+    sleep 1
+    elapsed=$((elapsed + 1))
+done
+if [ ! -s "$download_status" ]; then
+    kill "$curl_pid" 2>/dev/null || true
+    wait "$curl_pid" 2>/dev/null || true
+    if [ -t 1 ]; then printf '\n'; fi
+    echo '配置下载超时（30s）。' >&2
+    rm -f "$download_status"
+    exit 1
+fi
+wait "$curl_pid" 2>/dev/null || true
+download_rc=$(cat "$download_status" 2>/dev/null || echo 1)
+rm -f "$download_status"
+if [ -t 1 ]; then printf '\r配置文件下载中，超时倒计时: 00s\n'; fi
+[ "$download_rc" -eq 0 ] || { echo '配置下载失败。' >&2; exit 1; }
 [ -s "$TMP/config.json" ] || { echo '下载的配置为空。' >&2; exit 1; }
 sing-box check -c "$TMP/config.json"
 [ ! -f "$CONFIG_FILE" ] || cp -a "$CONFIG_FILE" "$TMP/config.backup"
