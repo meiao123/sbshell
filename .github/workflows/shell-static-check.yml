@@ -82,6 +82,8 @@ jobs:
           bash tests/run.sh > /tmp/suite.log 2>&1 || rc=$?
           if [ "$rc" -ne 0 ]; then
             echo "::error::行为测试失败（rc=$rc），下面是套件日志尾部："
+            echo "----- 套件小结与失败断言 -----"
+            grep -nE '^########## |^-- [0-9]+ checks|  FAIL ' /tmp/suite.log || true
           fi
           tail -40 /tmp/suite.log
           exit "$rc"
