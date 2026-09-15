@@ -190,10 +190,12 @@ install -o root -g root -m 0600 "$TMP_DIR/config.json" "$CONFIG_FILE" || {
     exit 1
 }
 
-if ! /etc/init.d/sing-box restart || ! sleep 2 || ! pidof sing-box >/dev/null 2>&1; then
+# 重启沿用仓库其它入口的写法：rc.common/procd 在没有已注册实例时会回显
+# `Command failed: Not found`（ubus 的「没有东西可删」），属噪音，过滤掉以免误导排查。
+if ! /etc/init.d/sing-box restart 2> >(sed '/^Command failed: Not found$/d' >&2) || ! sleep 2 || ! pidof sing-box >/dev/null 2>&1; then
     [ ! -f "$BACKUP_FILE" ] || install -o root -g root -m 0600 "$BACKUP_FILE" "$CONFIG_FILE"
     [ ! -f "$TMP_DIR/manual.backup" ] || install -o root -g root -m 0600 "$TMP_DIR/manual.backup" "$MANUAL_FILE"
-    /etc/init.d/sing-box restart || true
+    /etc/init.d/sing-box restart 2> >(sed '/^Command failed: Not found$/d' >&2) || true
     echo -e "${RED}新配置启动失败，已恢复旧配置。${NC}" >&2
     exit 1
 fi

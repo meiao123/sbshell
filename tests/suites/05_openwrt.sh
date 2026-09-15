@@ -139,4 +139,33 @@ suite_begin "openwrt: autostart while sing-box is already running"
 assert_grep 'pidof sing-box' "$SBSHELL_SRC/openwrt/manage_autostart.sh" "设置自启动前检查 sing-box 运行状态"
 assert_grep '已在运行，跳过当前防火墙重载' "$SBSHELL_SRC/openwrt/manage_autostart.sh" "sing-box 运行时跳过重复防火墙应用"
 
+suite_begin "openwrt: package-managed init script must be switched on through uci"
+reset_stub_state
+reset_singbox_dir
+reset_openwrt_dirs
+reset_fixtures
+install_repo_scripts openwrt
+# 换成更接近真机的门控桩（复刻包里的 UCI 门控），并复刻包自带的 UCI 配置：enabled 0。
+install -m 0755 "${SBSHELL_TEST_ROOT:-/opt/tests}/initd/sing-box-package" /etc/init.d/sing-box
+mkdir -p "$SBSHELL_STUB_STATE/uci"
+printf 'main - sing-box\nmain enabled 0\nmain conffile /etc/sing-box/config.json\n' > "$SBSHELL_STUB_STATE/uci/sing-box"
+printf '%s\n' "$VALID_CLIENT_CONFIG" > /etc/sing-box/config.json
+run_with_timeout /etc/init.d/sing-box start >/dev/null 2>&1
+assert_rc "$?" 0 "上游风格脚本在 enabled=0 时 start 仍返回 0（静默不启动）"
+if [ -e "$SBSHELL_STUB_STATE/singbox_active" ]; then fail "门控桩不该在没有 UCI 开关时启动进程"; else pass "门控桩忠实复刻了上游的静默不启动"; fi
+output=$(run_with_timeout bash "$SCRIPTS/install_singbox.sh" 2>&1)
+rc=$?
+assert_rc "$rc" 0 "install_singbox.sh 在包管理器脚本就位时成功"
+assert_eq "$(uci -q get sing-box.main.enabled)" "1" "install_singbox.sh 打开 sing-box.main.enabled"
+if [ -e "$SBSHELL_STUB_STATE/singbox_active" ]; then pass "包管理器脚本真正启动了 sing-box"; else fail "sing-box 仍未启动：UCI 开关没生效（真机表现为「未运行，请检查日志」）"; fi
+assert_grep 'sing-box.main.enabled=1' "$SBSHELL_SRC/openwrt/install_singbox.sh" "安装脚本显式打开包管理器服务的 UCI 开关"
+
+suite_begin "openwrt: ubus 'Command failed: Not found' noise must not leak"
+# rc.common/procd 在「没有已注册实例可删」时固定回显这一行，属于噪音；仓库其它入口
+# （start_singbox.sh / stop_singbox.sh / menu.sh）早已过滤，更新路径也要一致。
+assert_grep "Command failed: Not found" "$SBSHELL_SRC/openwrt/manual_update.sh" "手动更新路径过滤 ubus 噪音"
+assert_grep "Command failed: Not found" "$SBSHELL_SRC/openwrt/auto_update.sh" "自动更新脚本过滤 ubus 噪音"
+assert_grep "sed '/\^Command failed: Not found\$/d'" "$SBSHELL_SRC/openwrt/manual_update.sh" "手动更新沿用仓库既有的过滤写法"
+assert_grep 'restart_singbox' "$SBSHELL_SRC/openwrt/auto_update.sh" "自动更新（#!/bin/sh）用可移植包装保留退出码"
+
 suite_end

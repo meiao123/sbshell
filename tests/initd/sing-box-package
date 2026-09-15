@@ -1,0 +1,35 @@
+#!/bin/sh /etc/rc.common
+# 测试用「包管理器提供的」sing-box 服务脚本：忠实复刻 ImmortalWrt/OpenWrt 包里
+# net/sing-box/files/sing-box.init 的 UCI 门控语义：
+#   config_get_bool enabled "main" "enabled" "0"
+#   [ "$enabled" -eq "1" ] || return 0
+# 即：UCI 里没启用时 start 静默返回成功，却不会起任何进程。
+# 因此它比 initd/sing-box 更接近真机，用来守住 install_singbox.sh 的 UCI 开关。
+START=99
+S=${SBSHELL_STUB_STATE:-/tmp/sbshell-stub-state}
+
+service_enabled() {
+    [ "$(uci -q get sing-box.main.enabled 2>/dev/null)" = "1" ]
+}
+
+start() {
+    mkdir -p "$S" 2>/dev/null || true
+    service_enabled || return 0
+    [ -s /etc/sing-box/config.json ] || return 1
+    touch "$S/singbox_active"
+    return 0
+}
+
+stop() {
+    rm -f "$S/singbox_active" 2>/dev/null || true
+    return 0
+}
+
+restart() {
+    stop
+    start
+}
+
+boot() {
+    start
+}
