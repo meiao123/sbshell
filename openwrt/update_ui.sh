@@ -15,9 +15,22 @@ NC='\033[0m'
 ZASHBOARD_URL=https://github.com/Zephyruso/zashboard/archive/15575961dc84cc614c66c3e9bd20e70b862b6734/gh-pages.zip
 METACUBEXD_URL=https://github.com/MetaCubeX/metacubexd/archive/28a9589f6239bbafc24e87bbf5e5b4997fe42e59/gh-pages.zip
 YACD_URL=https://github.com/MetaCubeX/Yacd-meta/archive/6945744f5ab10d3d639d6eb76f3a67167da77b34/gh-pages.zip
-command -v curl >/dev/null 2>&1 || { opkg update; opkg install curl; }
-command -v unzip >/dev/null 2>&1 || { opkg update; opkg install unzip; }
-command -v zipinfo >/dev/null 2>&1 || { opkg update; opkg install unzip; }
+# OpenWrt 25.12 起用 apk 取代了 opkg（ImmortalWrt 25.x 同源）。旧代码只认 opkg：
+# 在 apk 固件上缺 unzip/zipinfo 时 `opkg update` 会以 127 退出，set -e 直接把整个
+# UI 更新器带走（菜单 10 与 cron 自动更新都走这里）。
+if command -v opkg >/dev/null 2>&1; then
+    pkg_update() { opkg update; }
+    pkg_install() { opkg install "$@"; }
+elif command -v apk >/dev/null 2>&1; then
+    pkg_update() { apk update; }
+    pkg_install() { apk add "$@"; }
+else
+    pkg_update() { echo '未找到 opkg 或 apk 包管理器。' >&2; return 1; }
+    pkg_install() { echo '未找到 opkg 或 apk 包管理器。' >&2; return 1; }
+fi
+command -v curl >/dev/null 2>&1 || { pkg_update && pkg_install curl; }
+command -v unzip >/dev/null 2>&1 || { pkg_update && pkg_install unzip; }
+command -v zipinfo >/dev/null 2>&1 || { pkg_update && pkg_install unzip; }
 valid_url() { [[ "$1" =~ ^https://[^[:space:]]+$ ]]; }
 get_config_url() { sed -n 's/.*"external_ui_download_url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' /etc/sing-box/config.json 2>/dev/null | head -n1; }
 release_ui_lock() {

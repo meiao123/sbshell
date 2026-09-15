@@ -104,15 +104,36 @@ else
 fi
 
 # 修复点 2：避免反复 opkg/apt update 拖垮路由器
+# OpenWrt 25.12 起用 apk 取代了 opkg（ImmortalWrt 25.x 同源）：引导脚本必须能在
+# 缺 curl/bash/nft 的新固件上把依赖装回来，只认 opkg 会停在第一步。
+if command -v opkg >/dev/null 2>&1; then
+    PKG_MGR=opkg
+elif command -v apk >/dev/null 2>&1; then
+    PKG_MGR=apk
+else
+    PKG_MGR=none
+fi
 PKG_UPDATED=false
 install_package() {
     local package="$1"
     if ! $PKG_UPDATED; then
-        if $is_openwrt; then opkg update; else apt-get update; fi
+        if $is_openwrt; then
+            case "$PKG_MGR" in
+                opkg) opkg update ;;
+                apk)  apk update ;;
+                none) echo -e "${RED}未找到 opkg 或 apk 包管理器。${NC}" >&2; return 1 ;;
+            esac
+        else
+            apt-get update
+        fi
         PKG_UPDATED=true
     fi
     if $is_openwrt; then 
-        opkg install "$package"
+        case "$PKG_MGR" in
+            opkg) opkg install "$package" ;;
+            apk)  apk add "$package" ;;
+            none) echo -e "${RED}未找到 opkg 或 apk 包管理器。${NC}" >&2; return 1 ;;
+        esac
     else
         apt-get install -y "$package"
     fi

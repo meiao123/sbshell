@@ -1,0 +1,11 @@
+#!/bin/bash
+# apk stub：记录调用，默认成功。
+# 对应 OpenWrt 25.12+/ImmortalWrt 25.x 的 apk-tools（这些固件里没有 opkg）。
+S=${SBSHELL_STUB_STATE:-/tmp/sbshell-stub-state}
+mkdir -p "$S" 2>/dev/null || true
+printf 'apk %s\n' "$*" >> "$S/apk.log" 2>/dev/null || true
+if [ -n "${SBSHELL_APK_FAIL:-}" ]; then
+    echo "apk: failed" >&2
+    exit 1
+fi
+exit 0

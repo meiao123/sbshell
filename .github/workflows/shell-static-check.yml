@@ -48,7 +48,9 @@ jobs:
           ! grep -nE 'BASE_REF|RELEASE_REF|RELEASE_DECL_URL|resolve_release_ref' "${files[@]}"
           ! grep -nE "download_repo_file ['\"]?RELEASE|['\"]RELEASE['\"]" "${files[@]}"
           grep -q '"main"' sbshall.sh
-          grep -q 'main/openwrt/' openwrt/menu.sh
+          # openwrt/menu.sh 的下载体已改成 download_repo_file "openwrt/$s" "main"，
+          # 字面量 "main/openwrt/" 不复存在：改为断言“下载 ref 是 main”。
+          grep -qE 'download_repo_file "openwrt/[^"]*" "main"' openwrt/menu.sh
           grep -q '"main"' openwrt/update_scripts.sh
           grep -q 'main/debian' debian/menu.sh
           grep -q 'main/debian' debian/update_scripts.sh
@@ -73,15 +75,13 @@ jobs:
         shell: bash
         run: |
           set -uo pipefail
-          bash tests/run.sh > /tmp/suite.log 2>&1
-          rc=$?
-          # Actions 的作业日志过长时只保留开头，失败断言会看不到；
-          # 这里把输出尾部同时以内联注解暴露（可用 API /annotations 精准读取）。
+          # Actions 的 `shell: bash` 自带 -e：旧写法里 `bash tests/run.sh …` 一旦失败就
+          # 立刻结束这一步，下面的 rc=$? 和 tail 永远执行不到，失败原因只留在
+          # /tmp/suite.log 里（注解也没生成），CI 只报 "Process completed with exit code 1"。
+          rc=0
+          bash tests/run.sh > /tmp/suite.log 2>&1 || rc=$?
           if [ "$rc" -ne 0 ]; then
-            tail -25 /tmp/suite.log | while IFS= read -r line; do
-              [ -n "$line" ] && echo "::error::$line"
-            done
-          else
-            tail -5 /tmp/suite.log
+            echo "::error::行为测试失败（rc=$rc），下面是套件日志尾部："
           fi
+          tail -40 /tmp/suite.log
           exit "$rc"
