@@ -195,6 +195,13 @@ assert_rc "$rc" 0 "现有配置未通过 check 时安装步骤仍然成功（不
 if [ -e "$SBSHELL_STUB_STATE/singbox_active" ]; then fail "坏配置不该被拿去启动服务"; else pass "坏配置没有被拿去启动服务"; fi
 assert_grep '未通过校验，已跳过启动 sing-box' /tmp/is_check_fail.out "明确告知已跳过启动"
 assert_grep '手动更新配置' /tmp/is_check_fail.out "给出下一步操作指引"
+# 真机日志（ImmortalWrt 25.12.2 + sing-box 1.12.25）：残留的旧配置会让 sing-box 打出
+# WARN legacy DNS + ERROR legacy special outbounds + FATAL 三连。整段倒给用户只会让人
+# 以为安装失败，所以只透出其中一行真正的原因。
+assert_contains "$(cat /tmp/is_check_fail.out)" "ENABLE_DEPRECATED_SPECIAL_OUTBOUNDS" "把真正的原因（FATAL 行）透出一行给用户"
+assert_no_grep 'legacy DNS servers' /tmp/is_check_fail.out "不再把 sing-box 的 deprecation WARN 整段刷屏给用户"
+assert_grep 'check_log=\$(mktemp' "$SBSHELL_SRC/openwrt/install_singbox.sh" "校验输出先收集、再筛出一行原因"
+assert_grep 'reason=\$(grep -m1' "$SBSHELL_SRC/openwrt/install_singbox.sh" "失败原因优先取 FATAL 行"
 
 printf '%s\n' "$VALID_CLIENT_CONFIG" > /etc/sing-box/config.json
 run_with_timeout bash "$SCRIPTS/install_singbox.sh" >/tmp/is_check_ok.out 2>&1
