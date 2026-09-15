@@ -168,4 +168,38 @@ assert_grep "Command failed: Not found" "$SBSHELL_SRC/openwrt/auto_update.sh" "�
 assert_grep "sed '/\^Command failed: Not found\$/d'" "$SBSHELL_SRC/openwrt/manual_update.sh" "手动更新沿用仓库既有的过滤写法"
 assert_grep 'restart_singbox' "$SBSHELL_SRC/openwrt/auto_update.sh" "自动更新（#!/bin/sh）用可移植包装保留退出码"
 
+suite_begin "openwrt: incompatible existing config must not abort initialization"
+# 真机症状：路由器上残留的旧配置（例如 1.11 起废弃的 block/dns 特殊出站）让 `sing-box check`
+# 返回非零，而预检写在 set -e 下，于是 install_singbox.sh 中止 → 初始化永远走不完、
+# INITIALIZED_FILE 建不出来，菜单也进不去，用户只能看到 sing-box 自己那句 FATAL。
+reset_stub_state
+reset_singbox_dir
+reset_openwrt_dirs
+reset_fixtures
+install_repo_scripts openwrt
+install -m 0755 "${SBSHELL_TEST_ROOT:-/opt/tests}/initd/sing-box" /etc/init.d/sing-box
+printf '%s\n' "$VALID_CLIENT_CONFIG" > /etc/sing-box/config.json
+
+export SBSHELL_SINGBOX_CHECK_FAIL=1
+run_with_timeout bash "$SCRIPTS/install_singbox.sh" >/tmp/is_check_fail.out 2>&1
+rc=$?
+unset SBSHELL_SINGBOX_CHECK_FAIL
+assert_rc "$rc" 0 "现有配置未通过 check 时安装步骤仍然成功（不再拖垮整个初始化）"
+if [ -e "$SBSHELL_STUB_STATE/singbox_active" ]; then fail "坏配置不该被拿去启动服务"; else pass "坏配置没有被拿去启动服务"; fi
+assert_grep '未通过校验，已跳过启动 sing-box' /tmp/is_check_fail.out "明确告知已跳过启动"
+assert_grep '手动更新配置' /tmp/is_check_fail.out "给出下一步操作指引"
+
+printf '%s\n' "$VALID_CLIENT_CONFIG" > /etc/sing-box/config.json
+run_with_timeout bash "$SCRIPTS/install_singbox.sh" >/tmp/is_check_ok.out 2>&1
+assert_rc "$?" 0 "配置正常时安装步骤成功"
+if [ -e "$SBSHELL_STUB_STATE/singbox_active" ]; then pass "配置正常时服务照旧被启动（无回归）"; else fail "配置正常时服务没有被启动"; fi
+assert_grep 'if \[ -f /etc/sing-box/config.json \] && ! sing-box check' "$SBSHELL_SRC/openwrt/install_singbox.sh" "预检改为「失败不中止」的形式"
+assert_grep '\[ "\$SKIP_RESTART" = 1 \] || /etc/init.d/sing-box restart' "$SBSHELL_SRC/openwrt/install_singbox.sh" "预检失败时跳过重启服务"
+
+suite_begin "config_template: DNS servers use the sing-box 1.12+ form"
+# 老式 `{"address": "tls://8.8.8.8"}` 在 1.12 会打 deprecation WARN，1.14 起彻底移除。
+assert_grep '"type": "tls", "server": "8.8.8.8"' "$SBSHELL_SRC/config_template/config_tun.json" "加密 DNS 改用 type/server 新写法"
+assert_no_grep '"address_strategy"' "$SBSHELL_SRC/config_template/config_tun.json" "不再使用已废弃的 address_strategy"
+assert_no_grep '"address": "tls://' "$SBSHELL_SRC/config_template/config_tun.json" "不再使用老式 tls:// 地址写法"
+
 suite_end
