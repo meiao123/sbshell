@@ -1,6 +1,9 @@
 #!/bin/bash
 # curl stub：按 URL 的 basename 从 $SBSHELL_FIXTURES 取本地 fixture，
 # 并记录所有请求过的 URL 以便断言订阅 URL 的组装是否正确。
+# 失败注入（回归 openwrt/manual_input.sh 的失败上报）：
+#   SBSHELL_CURL_FAIL=<curl 退出码>   让本次请求以该退出码失败
+#   SBSHELL_CURL_HTTP=<状态码>        配合 -w '%{http_code}' 返回的状态码（默认 200）
 S=${SBSHELL_STUB_STATE:-/tmp/sbshell-stub-state}
 FIX=${SBSHELL_FIXTURES:-/tmp/sbshell-fixtures}
 mkdir -p "$S" 2>/dev/null || true
@@ -17,6 +20,33 @@ while [ $# -gt 0 ]; do
 done
 
 printf '%s\n' "$url" >> "$S/curl.log"
+
+http_code=${SBSHELL_CURL_HTTP:-200}
+# -w 输出必须和真 curl 一致：脚本用 -w '%{http_code}' 判断服务端状态码，而真 curl 在
+# --fail 中止时同样会输出该状态码（实测 curl 8.x：--fail + 404 → rc=22 且输出 [404]）。
+# 其余格式沿用旧的固定时间三元组。
+emit_w() {
+    [ -n "$wfmt" ] || return 0
+    case "$wfmt" in
+        *'%{http_code}'*) printf '%s\n' "${wfmt//\%\{http_code\}/$http_code}" ;;
+        *) printf '0.010000,0.020000,0.030000\n' ;;
+    esac
+}
+
+if [ -n "${SBSHELL_CURL_FAIL:-}" ]; then
+    case "$SBSHELL_CURL_FAIL" in
+        6)  echo "curl: (6) Could not resolve host: ${url#*://}" >&2 ;;
+        7)  echo "curl: (7) Failed to connect to ${url#*://}: Connection refused" >&2 ;;
+        22) echo "curl: (22) The requested URL returned error: $http_code ($url)" >&2 ;;
+        28) echo "curl: (28) Operation timed out after 30001 milliseconds ($url)" >&2 ;;
+        *)  echo "curl: ($SBSHELL_CURL_FAIL) injected failure ($url)" >&2 ;;
+    esac
+    # 真 curl 在 -o 时会先建/截断目标文件：这里也留下一个错误体，用于证明脚本不会
+    # 把失败响应当成配置提交。
+    if [ -n "$out" ]; then printf '{"error":"injected failure %s"}\n' "$SBSHELL_CURL_FAIL" > "$out"; fi
+    emit_w
+    exit "$SBSHELL_CURL_FAIL"
+fi
 
 name="${url%%\?*}"
 name="${name##*/}"
@@ -40,6 +70,7 @@ for candidate in "$FIX/$name" "$FIX/${url//\//_}" "$FIX/default"; do
 done
 if [ -z "$src" ]; then
     echo "curl: (22) The requested URL returned error: 404 ($url)" >&2
+    emit_w
     exit 22
 fi
 if [ -n "$out" ]; then
@@ -47,5 +78,5 @@ if [ -n "$out" ]; then
 else
     cat "$src"
 fi
-[ -n "$wfmt" ] && printf '0.010000,0.020000,0.030000\n'
+emit_w
 exit 0

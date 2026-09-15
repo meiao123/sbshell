@@ -24,10 +24,14 @@ tests/run.sh --local    # 在本地 Linux 主机以 root 直接运行
 | `fakebin/` | `nft` `ip` `systemctl` `sing-box` `curl` `sysctl` `ss` `pidof` `opkg` `apk` `logread` `ufw` `sshd` 等 stub |
 | `fakebin-busybox/` | 模拟 busybox `grep`（不支持 `-P`），用于 OpenWrt 兼容性测试 |
 | `rc.common` / `initd/` | 极简 `/etc/rc.common` 与 OpenWrt 风格 init 脚本 |
-| `suites/` | 11 个行为测试套件 |
+| `suites/` | 12 个行为测试套件 |
 
 状态都保存在 `$SBSHELL_STUB_STATE`（默认 `/tmp/sbshell-stub-state`），断言直接检查
 nft 表、ip rule/route、state 文件、锁目录、cron 文件等可观测结果。
+
+`fakebin/curl` 支持失败注入：`SBSHELL_CURL_FAIL=<curl 退出码>` 让本次请求按该退出码
+失败，`SBSHELL_CURL_HTTP=<状态码>` 决定 `-w '%{http_code}'` 回报的状态码。
+
 
 ## 套件与审计项的对应关系
 
@@ -41,6 +45,7 @@ nft 表、ip rule/route、state 文件、锁目录、cron 文件等可观测结�
 | `06_misc.sh` | P0-2 cpuinfo flags、P1-3.8 环境/优化/延迟测试、P2-6 ufw 端口、P2-4 固定发布引用 |
 | `07_no_install.sh` | 真机回归（ImmortalWrt）：busybox 没有 `install` applet 时，一键引导与 OpenWrt 脚本仍须可用（含生成的 cron 脚本） |
 | `10_package_manager.sh` | 真机回归（ImmortalWrt 25.12.2 / apk-tools 3.0.5）：OpenWrt 25.12 起 apk 取代 opkg，安装/UI 更新/引导/卸载四处都须按可用包管理器分派，且老固件的 opkg 调用序列不变 |
+| `11_download_failure_reason.sh` | 真机回归（ImmortalWrt 25.12.2）：`set -Eeuo pipefail` + 后台子 shell 跑 curl 时，errexit 会在 curl 失败时跳过状态写入，导致后端 HTTP 500 被误报成“配置文件下载超时”；现在失败必须立刻给出真实原因（HTTP 状态 / DNS / 连接被拒绝 / curl 超时）并打印请求地址，且现有配置不被改动 |
 
 ## 本地开发
 

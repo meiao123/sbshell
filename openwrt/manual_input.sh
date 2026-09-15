@@ -71,6 +71,36 @@ valid_subscription() {
     return 0
 }
 
+# 把 curl 的退出码（以及 --fail 中止时仍会输出的 HTTP 状态码）翻译成能直接看懂的原因。
+# 真机踩坑（ImmortalWrt 25.12.2）：后端返回 HTTP 500，日志里却只有一句"下载超时"，
+# 用户完全看不出是服务端出错。这里只做翻译，不改变任何失败处理流程。
+download_failure_reason() {
+    reason_rc="${1:-}"
+    reason_http="${2:-}"
+    # -w 输出可能在异常情况下混入非数字内容，先过滤掉，别让数值比较报错。
+    case "$reason_http" in ''|*[!0-9]*) reason_http='' ;; esac
+    case "$reason_rc" in
+        5)  echo '无法解析代理地址（--proxy 配置有误）' ;;
+        6)  echo '域名解析失败（DNS 无法解析该主机）' ;;
+        7)  echo '连接被拒绝（目标端口没有服务在监听）' ;;
+        22) if [ -z "$reason_http" ]; then
+                echo '服务器返回 HTTP 错误'
+            elif [ "$reason_http" -ge 500 ]; then
+                echo "服务器返回 HTTP $reason_http（服务端出错：多为后端拉取上游订阅或模板失败）"
+            elif [ "$reason_http" = 401 ] || [ "$reason_http" = 403 ]; then
+                echo "服务器返回 HTTP $reason_http（鉴权失败或无权访问）"
+            elif [ "$reason_http" = 404 ]; then
+                echo "服务器返回 HTTP $reason_http（地址不存在）"
+            else
+                echo "服务器返回 HTTP $reason_http"
+            fi ;;
+        28) echo '请求超时（服务器未在限时内响应）' ;;
+        35|51|60) echo 'TLS/证书校验失败' ;;
+        56) echo '接收数据失败（连接被重置）' ;;
+        *)  echo "curl 退出码 ${reason_rc:-未知}" ;;
+    esac
+}
+
 release_lock() {
     [ -d "$LOCK_DIR" ] || return 0
     owner=$(cat "$LOCK_DIR/pid" 2>/dev/null || true)
@@ -145,8 +175,9 @@ while true; do
     backup_manual=$(mktemp /etc/sing-box/.manual.conf.backup.XXXXXX)
     backup_config=$(mktemp /etc/sing-box/.config.json.backup.XXXXXX)
     download_status=$(mktemp /tmp/sbshell-config-status.XXXXXX)
-    TMP_FILES+=("$tmp_manual" "$tmp_config" "$backup_manual" "$backup_config" "$download_status")
-    rm -f "$download_status"
+    download_http=$(mktemp /tmp/sbshell-config-http.XXXXXX)
+    TMP_FILES+=("$tmp_manual" "$tmp_config" "$backup_manual" "$backup_config" "$download_status" "$download_http")
+    rm -f "$download_status" "$download_http"
     manual_existed=0
     config_existed=0
 
@@ -161,8 +192,14 @@ while true; do
     valid_url "$FULL_URL" || { echo -e "${RED}生成的订阅 URL 无效。${NC}" >&2; exit 1; }
 
     (
-        curl --fail --silent --show-error --location --proto '=http,https' --tlsv1.2 --connect-timeout 10 --max-time 30 "$FULL_URL" -o "$tmp_config"
-        printf '%s\n' "$?" > "$download_status"
+        # 真机踩坑（ImmortalWrt 25.12.2）：本脚本是 set -Eeuo pipefail，裸 curl 失败时
+        # errexit 会直接干掉整个子 shell，下面写状态文件的那句永远执行不到 —— 父进程
+        # 只能空转到 30 秒，把后端返回的 HTTP 500 误报成"配置文件下载超时"。必须用
+        # `|| rc=$?` 兜住退出码，并在子 shell 结尾显式 exit 0。
+        rc=0
+        curl --fail --silent --show-error --location --proto '=http,https' --tlsv1.2 --connect-timeout 10 --max-time 30 -w '%{http_code}' "$FULL_URL" -o "$tmp_config" > "$download_http" || rc=$?
+        printf '%s\n' "$rc" > "$download_status"
+        exit 0
     ) &
     curl_pid=$!
     elapsed=0
@@ -186,8 +223,11 @@ while true; do
     wait "$curl_pid" 2>/dev/null || true
     download_rc=$(cat "$download_status" 2>/dev/null || echo 1)
     if [ "$download_rc" -ne 0 ]; then
+        http_code=$(cat "$download_http" 2>/dev/null || true)
         printf '\n'
         echo -e "${RED}配置文件下载失败，未修改现有配置。${NC}" >&2
+        echo -e "${RED}失败原因: $(download_failure_reason "$download_rc" "$http_code")${NC}" >&2
+        echo -e "${RED}请求地址: $FULL_URL${NC}" >&2
         exit 1
     fi
     printf '\r配置文件下载中，超时倒计时: 00s\n'
