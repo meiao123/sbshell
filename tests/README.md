@@ -21,9 +21,9 @@ tests/run.sh --local    # 在本地 Linux 主机以 root 直接运行
 | `all.sh` | 容器内入口：依次执行 `suites/*.sh` 并汇总 |
 | `run.sh` | 宿主机入口：构建镜像、以只读方式挂载仓库到 `/src` |
 | `lib/harness.sh` | 断言、状态重置、脚本安装等公共函数 |
-| `fakebin/` | `nft` `ip` `systemctl` `sing-box` `curl` `sysctl` `ss` `pidof` `opkg` `apk` `logread` `ufw` `sshd` 等 stub |
+| `fakebin/` | `nft` `ip` `systemctl` `sing-box` `curl` `sysctl` `ss` `pidof` `opkg` `apk` `uci` `logread` `ufw` `sshd` 等 stub |
 | `fakebin-busybox/` | 模拟 busybox `grep`（不支持 `-P`），用于 OpenWrt 兼容性测试 |
-| `rc.common` / `initd/` | 极简 `/etc/rc.common` 与 OpenWrt 风格 init 脚本 |
+| `rc.common` / `initd/` | 极简 `/etc/rc.common` 与 OpenWrt 风格 init 脚本（`sing-box` 极简桩、`sing-box-package` 复刻包里的 UCI 门控桩） |
 | `suites/` | 12 个行为测试套件 |
 
 状态都保存在 `$SBSHELL_STUB_STATE`（默认 `/tmp/sbshell-stub-state`），断言直接检查
@@ -32,6 +32,10 @@ nft 表、ip rule/route、state 文件、锁目录、cron 文件等可观测结�
 `fakebin/curl` 支持失败注入：`SBSHELL_CURL_FAIL=<curl 退出码>` 让本次请求按该退出码
 失败，`SBSHELL_CURL_HTTP=<状态码>` 决定 `-w '%{http_code}'` 回报的状态码。
 
+`fakebin/uci` 只实现仓库用到的那部分 UCI（`-q get/set/commit`），状态落在
+`$SBSHELL_STUB_STATE/uci/<config>`；配合 `initd/sing-box-package`（复刻包里的
+`sing-box.main.enabled` 门控）用来守住「保留了包管理器服务脚本，却没打开 UCI 开关
+→ `start` 返回 0 但 sing-box 静默不启动」这个真机缺陷。
 
 ## 套件与审计项的对应关系
 
@@ -41,7 +45,7 @@ nft 表、ip rule/route、state 文件、锁目录、cron 文件等可观测结�
 | `02_mode_state.sh` | P1-3.1 TProxy/TUN 对称清理、P1-3.4 fwmark 精确匹配、P1-3.5 快照恢复、P2-7 TUN 表收窄、回滚与外来表拒绝 |
 | `03_locks.sh` | P0-3 锁不释放、P2-18 锁/临时文件清理、debian flock 并发 |
 | `04_config_update.sh` | P1-3.2 空后端地址、P1-3.3 参数语义、P2-15 订阅校验、P2-1 服务端凭据本地生成、配置更新原子性 |
-| `05_openwrt.sh` | P0-4 开机防火墙恢复、P1-3.6 busybox grep、P1-3.7 initialize 失败传播、P2-13 kmod-tun |
+| `05_openwrt.sh` | P0-4 开机防火墙恢复、P1-3.6 busybox grep、P1-3.7 initialize 失败传播、P2-13 kmod-tun、包管理器 init 脚本的 UCI 启用开关、更新路径过滤 ubus `Command failed: Not found` 噪音（均为真机回归） |
 | `06_misc.sh` | P0-2 cpuinfo flags、P1-3.8 环境/优化/延迟测试、P2-6 ufw 端口、P2-4 固定发布引用 |
 | `07_no_install.sh` | 真机回归（ImmortalWrt）：busybox 没有 `install` applet 时，一键引导与 OpenWrt 脚本仍须可用（含生成的 cron 脚本） |
 | `10_package_manager.sh` | 真机回归（ImmortalWrt 25.12.2 / apk-tools 3.0.5）：OpenWrt 25.12 起 apk 取代 opkg，安装/UI 更新/引导/卸载四处都须按可用包管理器分派，且老固件的 opkg 调用序列不变 |

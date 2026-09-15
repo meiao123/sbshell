@@ -1,0 +1,54 @@
+#!/bin/sh
+# uci stub：只覆盖仓库脚本用到的那点 UCI 能力——读写 sing-box 服务的启用开关。
+#   uci -q get <cfg>.<sec>[.<opt>]
+#   uci -q set <cfg>.<sec>[.<opt>]=<value>
+#   uci -q commit [<cfg>]
+# 状态落在 $SBSHELL_STUB_STATE/uci/<cfg>，每行 `sec opt value`；节类型用 `-` 占位。
+# 找不到配置/选项时按真实 uci 的约定以非 0 退出（-q 模式不打印错误）。
+S=${SBSHELL_STUB_STATE:-/tmp/sbshell-stub-state}
+DIR="$S/uci"
+
+[ "${1:-}" = "-q" ] && shift
+cmd=${1:-}
+[ $# -gt 0 ] && shift
+arg=${1:-}
+
+parse_key() {
+    case "$1" in
+        *.*.*) CONF=${1%%.*}; _r=${1#*.}; SEC=${_r%%.*}; OPT=${_r#*.} ;;
+        *.*)   CONF=${1%%.*}; SEC=${1#*.}; OPT=- ;;
+        *)     return 1 ;;
+    esac
+    return 0
+}
+
+case "$cmd" in
+    get)
+        parse_key "$arg" || exit 1
+        f="$DIR/$CONF"
+        [ -f "$f" ] || exit 1
+        val=$(grep -m1 "^$SEC $OPT " "$f" 2>/dev/null | sed "s/^$SEC $OPT //")
+        [ -n "$val" ] || exit 1
+        printf '%s\n' "$val"
+        ;;
+    set)
+        case "$arg" in
+            *=*) key=${arg%%=*}; val=${arg#*=} ;;
+            *) exit 1 ;;
+        esac
+        parse_key "$key" || exit 1
+        mkdir -p "$DIR"
+        f="$DIR/$CONF"
+        tmp="$f.tmp"
+        if [ -f "$f" ]; then grep -v "^$SEC $OPT " "$f" > "$tmp"; else : > "$tmp"; fi
+        printf '%s %s %s\n' "$SEC" "$OPT" "$val" >> "$tmp"
+        mv "$tmp" "$f"
+        ;;
+    commit|revert)
+        : # 状态本来就是直接落盘的
+        ;;
+    *)
+        exit 0
+        ;;
+esac
+exit 0

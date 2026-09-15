@@ -73,6 +73,19 @@ EOF
     chmod 0755 /etc/init.d/sing-box
 else
     echo '检测到已有 /etc/init.d/sing-box，保留包管理器提供的服务脚本。'
+    # 包管理器提供的脚本（net/sing-box/files/sing-box.init）按 UCI 开关启动：
+    #   config_get_bool enabled main enabled 0
+    #   [ "$enabled" -eq 1 ] || return 0
+    # 而包自带的 /etc/config/sing-box 默认 option enabled '0'，于是 start/restart
+    # 返回 0 却什么都不做——sing-box 装完也不会运行（真机表现为「sing-box 未运行，请检查日志。」
+    # 与「新配置启动失败，已恢复旧配置。」）。这里显式打开开关。
+    if command -v uci >/dev/null 2>&1; then
+        uci -q get sing-box.main >/dev/null 2>&1 || uci -q set sing-box.main=sing-box || true
+        uci -q set sing-box.main.enabled=1 || true
+        # conffile 为空时包脚本会执行 `sing-box run -c ''`，同样起不来。
+        [ -n "$(uci -q get sing-box.main.conffile 2>/dev/null || true)" ] || uci -q set sing-box.main.conffile=/etc/sing-box/config.json || true
+        uci -q commit sing-box || true
+    fi
 fi
 
 /etc/init.d/sing-box enable
