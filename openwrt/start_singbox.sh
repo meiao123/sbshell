@@ -16,7 +16,7 @@ case "$MODE" in
     *) echo -e "${RED}未知代理模式: $MODE${NC}" >&2; exit 1 ;;
 esac
 
-if ! /etc/init.d/sing-box start 2> >(sed '/^Command failed: Not found$/d' >&2); then
+if ! /etc/init.d/sing-box start 2> >(sed '/^Command failed:.*Not found/d' >&2); then
     echo -e "${RED}sing-box 启动失败。${NC}" >&2
     exit 1
 fi

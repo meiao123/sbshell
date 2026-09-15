@@ -91,7 +91,7 @@ case $autostart_choice in
         fi
 
         /etc/init.d/sing-box enable
-        /etc/init.d/sing-box start
+        /etc/init.d/sing-box start 2> >(sed '/^Command failed:.*Not found/d' >&2)
         cmd_status=$?
 
         if [ "$cmd_status" -eq 0 ]; then

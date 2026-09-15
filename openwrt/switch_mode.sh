@@ -81,7 +81,7 @@ if [ "$OLD_MODE" = "$NEW_MODE" ]; then
     exit 0
 fi
 
-/etc/init.d/sing-box stop
+/etc/init.d/sing-box stop 2> >(sed '/^Command failed:.*Not found/d' >&2)
 TMP_MODE=$(mktemp /tmp/sbshell-mode.XXXXXX)
 BACKUP_MODE=$(mktemp /tmp/sbshell-mode-backup.XXXXXX)
 trap 'rm -f "$TMP_MODE" "$BACKUP_MODE"' EXIT

@@ -92,4 +92,31 @@ assert_eq "$(jq -r '.inbounds | length' /etc/sing-box/config.json)" "2" "默认�
 if grep -q 'REPLACE_ME' /etc/sing-box/config.json; then fail "生成结果里存在占位符"; else pass "凭据为本地随机生成"; fi
 assert_eq "$(jq -r '.inbounds[0].password | length > 10' /etc/sing-box/config.json)" "true" "SS 密码已随机生成"
 
+suite_begin "manual_update: ubus 'Command failed' noise from the init script must not leak"
+
+# 真机回归（ImmortalWrt 25.12.2，包管理器提供的 init 脚本）：菜单 2 更新成功后仍会漏出一行
+#   Command failed: ubus call service delete { "name": "sing-box" } (Not found)
+# 旧的 `'/^Command failed: Not found$/d'` 只压得住短形态。这里让服务脚本吐出两种形态，
+# 验证更新路径把两条都吃掉（不是只做静态断言）。
+reset_stub_state
+reset_singbox_dir
+reset_openwrt_dirs
+reset_fixtures
+install_repo_scripts openwrt
+printf '%s\n' "$VALID_CLIENT_CONFIG" > /etc/sing-box/config.json
+cat > /etc/sing-box/manual.conf <<'EOF'
+BACKEND_URL=
+SUBSCRIPTION_URL=
+TEMPLATE_URL=https://tpl.test/template.json
+EOF
+fixture_write template.json "$NEW_CONFIG"
+
+export SBSHELL_INITD_NOISE=1
+run_with_timeout bash /etc/sing-box/scripts/manual_update.sh >/tmp/mu_noise.out 2>&1
+rc=$?
+unset SBSHELL_INITD_NOISE
+assert_rc "$rc" 0 "服务脚本吐 ubus 噪音时更新依然成功"
+assert_no_grep 'Command failed' /tmp/mu_noise.out "短形态与带命令名的长形态都被过滤"
+assert_grep '配置更新并启动成功' /tmp/mu_noise.out "成功提示照常打印"
+
 suite_end

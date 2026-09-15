@@ -142,12 +142,13 @@ curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connec
 sing-box check -c "$TMP/config.json"
 [ ! -f "$CONFIG_FILE" ] || cp -a "$CONFIG_FILE" "$TMP/config.backup"
 install -o root -g root -m 0600 "$TMP/config.json" "$CONFIG_FILE"
-# rc.common/procd 在没有已注册实例时会回显 `Command failed: Not found`（ubus 的「没有东西可删」）。
+# rc.common/procd 在没有已注册实例时会回显 ubus 噪音（短形态 `Command failed: Not found` 与
+# 带命令名的长形态 `Command failed: ubus call service delete { "name": "sing-box" } (Not found)`）。
 # 本脚本是 #!/bin/sh（busybox 的 ash 没有进程替换），故用可移植写法过滤，同时保留真实退出码。
 restart_singbox() {
     err=$(mktemp /tmp/sbshell-restart.XXXXXX 2>/dev/null || echo "/tmp/sbshell-restart.$$")
     if /etc/init.d/sing-box restart 2>"$err"; then rc=0; else rc=$?; fi
-    sed '/^Command failed: Not found$/d' "$err" >&2
+    sed '/^Command failed:.*Not found/d' "$err" >&2
     rm -f "$err"
     return "$rc"
 }

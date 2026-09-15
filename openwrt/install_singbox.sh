@@ -98,4 +98,13 @@ else
 fi
 
 /etc/init.d/sing-box enable
-[ "$SKIP_RESTART" = 1 ] || /etc/init.d/sing-box restart
+if [ "$SKIP_RESTART" != 1 ]; then
+    # rc.common/procd 在没有已注册实例时会回显 ubus 噪音（短形态 `Command failed: Not found`
+    # 与带命令名的长形态）；本脚本是 #!/bin/sh，busybox 的 ash 没有进程替换，故用可移植的
+    # mktemp + sed 过滤，并保留 restart 的真实退出码（失败即失败，行为不变）。
+    restart_err=$(mktemp /tmp/sbshell-restart.XXXXXX 2>/dev/null || echo "/tmp/sbshell-restart.$$")
+    if /etc/init.d/sing-box restart 2>"$restart_err"; then rc=0; else rc=$?; fi
+    sed '/^Command failed:.*Not found/d' "$restart_err" >&2
+    rm -f "$restart_err"
+    [ "$rc" -eq 0 ] || exit "$rc"
+fi

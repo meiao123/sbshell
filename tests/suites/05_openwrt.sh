@@ -153,19 +153,26 @@ printf '%s\n' "$VALID_CLIENT_CONFIG" > /etc/sing-box/config.json
 run_with_timeout /etc/init.d/sing-box start >/dev/null 2>&1
 assert_rc "$?" 0 "上游风格脚本在 enabled=0 时 start 仍返回 0（静默不启动）"
 if [ -e "$SBSHELL_STUB_STATE/singbox_active" ]; then fail "门控桩不该在没有 UCI 开关时启动进程"; else pass "门控桩忠实复刻了上游的静默不启动"; fi
+export SBSHELL_INITD_NOISE=1
 output=$(run_with_timeout bash "$SCRIPTS/install_singbox.sh" 2>&1)
 rc=$?
+unset SBSHELL_INITD_NOISE
 assert_rc "$rc" 0 "install_singbox.sh 在包管理器脚本就位时成功"
+assert_not_contains "$output" "Command failed" "初始化路径也把 ubus 噪音吃掉了（#!/bin/sh 用 mktemp+sed 写法）"
 assert_eq "$(uci -q get sing-box.main.enabled)" "1" "install_singbox.sh 打开 sing-box.main.enabled"
 if [ -e "$SBSHELL_STUB_STATE/singbox_active" ]; then pass "包管理器脚本真正启动了 sing-box"; else fail "sing-box 仍未启动：UCI 开关没生效（真机表现为「未运行，请检查日志」）"; fi
 assert_grep 'sing-box.main.enabled=1' "$SBSHELL_SRC/openwrt/install_singbox.sh" "安装脚本显式打开包管理器服务的 UCI 开关"
 
-suite_begin "openwrt: ubus 'Command failed: Not found' noise must not leak"
-# rc.common/procd 在「没有已注册实例可删」时固定回显这一行，属于噪音；仓库其它入口
-# （start_singbox.sh / stop_singbox.sh / menu.sh）早已过滤，更新路径也要一致。
-assert_grep "Command failed: Not found" "$SBSHELL_SRC/openwrt/manual_update.sh" "手动更新路径过滤 ubus 噪音"
-assert_grep "Command failed: Not found" "$SBSHELL_SRC/openwrt/auto_update.sh" "自动更新脚本过滤 ubus 噪音"
-assert_grep "sed '/\^Command failed: Not found\$/d'" "$SBSHELL_SRC/openwrt/manual_update.sh" "手动更新沿用仓库既有的过滤写法"
+suite_begin "openwrt: ubus 'Command failed' noise must not leak"
+# rc.common/procd 在「没有已注册实例可删」时会回显 ubus 噪音，真机上见过两种形态：
+#   短形态 `Command failed: Not found`
+#   长形态 `Command failed: ubus call service delete { "name": "sing-box" } (Not found)`
+# 旧写法 `'/^Command failed: Not found$/d'` 只压得住短形态，长形态会直接漏给用户（真机回归）。
+NOISE_SED="sed '/^Command failed:\.\*Not found/d'"
+for f in manual_update.sh auto_update.sh start_singbox.sh stop_singbox.sh menu.sh switch_mode.sh install_singbox.sh manage_autostart.sh; do
+    assert_grep "$NOISE_SED" "$SBSHELL_SRC/openwrt/$f" "$f 用同一写法过滤两种噪音形态"
+done
+assert_no_grep 'Command failed: Not found\$' "$SBSHELL_SRC/openwrt/manual_update.sh" "不再只匹配整行等于短形态的旧写法"
 assert_grep 'restart_singbox' "$SBSHELL_SRC/openwrt/auto_update.sh" "自动更新（#!/bin/sh）用可移植包装保留退出码"
 
 suite_begin "openwrt: incompatible existing config must not abort initialization"
@@ -194,7 +201,8 @@ run_with_timeout bash "$SCRIPTS/install_singbox.sh" >/tmp/is_check_ok.out 2>&1
 assert_rc "$?" 0 "配置正常时安装步骤成功"
 if [ -e "$SBSHELL_STUB_STATE/singbox_active" ]; then pass "配置正常时服务照旧被启动（无回归）"; else fail "配置正常时服务没有被启动"; fi
 assert_grep 'if \[ -f /etc/sing-box/config.json \] && ! sing-box check' "$SBSHELL_SRC/openwrt/install_singbox.sh" "预检改为「失败不中止」的形式"
-assert_grep '\[ "\$SKIP_RESTART" = 1 \] || /etc/init.d/sing-box restart' "$SBSHELL_SRC/openwrt/install_singbox.sh" "预检失败时跳过重启服务"
+assert_grep '\[ "\$SKIP_RESTART" != 1 \]' "$SBSHELL_SRC/openwrt/install_singbox.sh" "预检失败时跳过重启服务"
+assert_grep 'restart_err=$(mktemp /tmp/sbshell-restart.XXXXXX' "$SBSHELL_SRC/openwrt/install_singbox.sh" "#!/bin/sh 初始化路径用可移植写法保留 restart 退出码"
 
 suite_begin "config_template: DNS servers use the sing-box 1.12+ form"
 # 老式 `{"address": "tls://8.8.8.8"}` 在 1.12 会打 deprecation WARN，1.14 起彻底移除。

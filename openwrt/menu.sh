@@ -114,7 +114,7 @@ uninstall_sbshell() {
 
     echo -e "${CYAN}正在停止 sing-box 并清理防火墙...${NC}"
     if pidof sing-box >/dev/null 2>&1; then
-        if ! /etc/init.d/sing-box stop 2> >(sed '/^Command failed: Not found$/d' >&2); then
+        if ! /etc/init.d/sing-box stop 2> >(sed '/^Command failed:.*Not found/d' >&2); then
             echo -e "${RED}停止 sing-box 失败，已取消卸载。${NC}" >&2
             return 1
         fi
