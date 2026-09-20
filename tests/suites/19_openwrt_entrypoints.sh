@@ -14,13 +14,23 @@ set -uo pipefail
 
 SCRIPTS=/etc/sing-box/scripts
 
-# 统一的运行器：stdin 走文件（避免进程替换等待），硬上限 20s，附带可选环境变量。
+# 统一运行器：文件 stdin（避免进程替换等待）+ 硬上限 20s。
+# 用法：run_owrt <script> <stdin 文本> [VAR=VAL ...] -- [脚本参数 ...]
+# 注意 `--` 之前是**环境变量**，之后才是分给脚本的参数（早先把 apply_firewall
+# 当成环境变量传给 env，得到 rc=127 'env: apply_firewall: No such file or directory'）。
 run_owrt() {
     local script="$1" input="$2"
     shift 2
+    local envs=()
+    while [ $# -gt 0 ] && [ "$1" != "--" ]; do
+        envs+=("$1")
+        shift
+    done
+    [ "${1:-}" = "--" ] && shift
     printf '%b' "$input" > /tmp/s19.in
     local rc=0
-    env "$@" timeout -k 5 20 bash "$script" < /tmp/s19.in > /tmp/s19.out 2>&1 || rc=$?
+    env ${envs[@]+"${envs[@]}"} timeout -k 5 20 bash "$script" ${1+"$@"} \
+        < /tmp/s19.in > /tmp/s19.out 2>&1 || rc=$?
     return "$rc"
 }
 
@@ -29,9 +39,11 @@ setup_owrt() {
     reset_singbox_dir
     reset_openwrt_dirs
     install_repo_scripts openwrt
+    # 有效配置：init 桩的 start 会校验它（否则报 `sing-box: no config`，把启动用例带偏）。
+    printf '%s\n' "$VALID_CLIENT_CONFIG" > /etc/sing-box/config.json
     fixture_write template.json "$VALID_CLIENT_CONFIG"
     # init 脚本是 `#!/bin/sh /etc/rc.common`；容器里若没有就用仓库自带的那份，
-    # 否则 enable/enable 的 rc.d 行为无从验证（run.sh --local 也做同样的事）。
+    # 否则 enable/disable 的 rc.d 行为无从验证（run.sh --local 也做同样的事）。
     [ -f /etc/rc.common ] || install -m 0755 "$SBSHELL_TEST_ROOT/rc.common" /etc/rc.common
 }
 
@@ -40,7 +52,7 @@ suite_begin "manage_autostart: apply_firewall 不需要任何交互（P0-4 回�
 
 setup_owrt
 printf 'MODE=TProxy\n' > /etc/sing-box/mode.conf
-run_owrt "$SCRIPTS/manage_autostart.sh" '' apply_firewall; rc=$?
+run_owrt "$SCRIPTS/manage_autostart.sh" '' -- apply_firewall; rc=$?
 assert_rc "$rc" 0 "带 apply_firewall 参数时不需要交互即可完成"
 assert_not_rc "$rc" 124 "apply_firewall 没有卡在输入上（未被超时杀掉）"
 if nft_table_exists sing-box; then pass "TProxy 模式应用了 inet sing-box 表"; else fail "未应用 TProxy 表"; fi
@@ -48,13 +60,15 @@ assert_file /etc/sing-box/tproxy.state "写入 tproxy.state"
 
 setup_owrt
 printf 'MODE=TUN\n' > /etc/sing-box/mode.conf
-run_owrt "$SCRIPTS/manage_autostart.sh" '' apply_firewall; rc=$?
+run_owrt "$SCRIPTS/manage_autostart.sh" '' -- apply_firewall; rc=$?
 assert_rc "$rc" 0 "TUN 模式下 apply_firewall 成功"
+assert_not_rc "$rc" 124 "TUN 模式 apply_firewall 没有卡住"
 if nft_table_exists sing-box-tun; then pass "TUN 模式应用了 inet sing-box-tun 表"; else fail "未应用 TUN 表"; fi
 
 setup_owrt
-run_owrt "$SCRIPTS/manage_autostart.sh" '' apply_firewall; rc=$?
+run_owrt "$SCRIPTS/manage_autostart.sh" '' -- apply_firewall; rc=$?
 assert_not_rc "$rc" 0 "mode.conf 缺失时 apply_firewall 以非 0 结束"
+assert_not_rc "$rc" 124 "mode.conf 缺失路径没有挂住"
 assert_contains "$(cat /tmp/s19.out)" "无效的模式" "提示模式无效"
 
 # ------------------------------------------------ manage_autostart.sh 启用/禁用
@@ -65,6 +79,7 @@ printf 'MODE=TProxy\n' > /etc/sing-box/mode.conf
 : > "$SBSHELL_STUB_STATE/singbox_active"
 run_owrt "$SCRIPTS/manage_autostart.sh" '1\n'; rc=$?
 out=$(cat /tmp/s19.out)
+assert_not_rc "$rc" 124 "启用自启动没有挂住（未被超时杀掉）"
 assert_rc "$rc" 0 "选择 1 启用自启动成功"
 assert_file /etc/init.d/sbshell-firewall "写出开机防火墙 init 脚本"
 assert_grep 'START=40' /etc/init.d/sbshell-firewall "init 脚本 START=40（在 sing-box 之前）"
@@ -79,6 +94,7 @@ suite_begin "manage_autostart: 服务未运行时会先下发当前模式的规�
 setup_owrt
 printf 'MODE=TProxy\n' > /etc/sing-box/mode.conf
 run_owrt "$SCRIPTS/manage_autostart.sh" '1\n'; rc=$?
+assert_not_rc "$rc" 124 "服务未运行时启用自启动没有挂住"
 assert_rc "$rc" 0 "服务未运行时启用自启动成功"
 if nft_table_exists sing-box; then pass "启用过程中下发了 TProxy 规则"; else fail "未下发 TProxy 规则"; fi
 
@@ -153,6 +169,7 @@ assert_contains "$(cat /tmp/s19.out)" "未知代理模式" "提示未知模式"
 setup_owrt
 printf 'MODE=TProxy\n' > /etc/sing-box/mode.conf
 run_owrt "$SCRIPTS/start_singbox.sh" ''; rc=$?
+assert_not_rc "$rc" 124 "正常启动没有挂住（未被超时杀掉）"
 assert_rc "$rc" 0 "TProxy 模式下启动成功"
 if nft_table_exists sing-box; then pass "启动前下发了 TProxy 规则"; else fail "未下发 TProxy 规则"; fi
 assert_contains "$(cat /tmp/s19.out)" "启动成功" "给出启动成功提示"
@@ -191,6 +208,7 @@ printf 'OWNER=sbshell\nMODE=TProxy\n' > /etc/sing-box/tproxy.state
 printf '' > "$SBSHELL_STUB_STATE/nft/inet__sing-box"
 : > "$SBSHELL_STUB_STATE/singbox_active"
 run_owrt "$SCRIPTS/stop_singbox.sh" 'y\ny\n'; rc=$?
+assert_not_rc "$rc" 124 "停止并清理没有挂住"
 assert_rc "$rc" 0 "停止并清理成功"
 if nft_table_exists sing-box; then fail "选择清理后 TProxy 表应被删除"; else pass "选择清理后 TProxy 表已删除"; fi
 assert_no_file /etc/sing-box/tproxy.state "选择清理后 state 已删除"
@@ -199,18 +217,17 @@ assert_no_file /etc/sing-box/tproxy.state "选择清理后 state 已删除"
 suite_begin "check_config: 缺 sing-box / 配置缺失 / 配置合法或非法"
 
 setup_owrt
-PATH=/usr/bin:/bin run_owrt "$SCRIPTS/check_config.sh" ''; rc=$?
+run_owrt "$SCRIPTS/check_config.sh" '' PATH=/usr/bin:/bin; rc=$?
 assert_not_rc "$rc" 0 "找不到 sing-box 时以非 0 退出"
+assert_contains "$(cat /tmp/s19.out)" "未找到 sing-box" "提示未找到 sing-box"
 
-reset_stub_state
-rm -rf /etc/sing-box
-mkdir -p /etc/sing-box
+setup_owrt
+rm -f /etc/sing-box/config.json
 run_owrt "$SCRIPTS/check_config.sh" ''; rc=$?
 assert_not_rc "$rc" 0 "配置文件缺失时以非 0 退出"
 assert_contains "$(cat /tmp/s19.out)" "配置文件不存在或为空" "提示配置文件缺失"
 
 setup_owrt
-printf '%s\n' "$VALID_CLIENT_CONFIG" > /etc/sing-box/config.json
 run_owrt "$SCRIPTS/check_config.sh" ''; rc=$?
 assert_rc "$rc" 0 "合法配置校验通过"
 assert_contains "$(cat /tmp/s19.out)" "配置文件验证通过" "给出验证通过提示"
