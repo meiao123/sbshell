@@ -62,6 +62,18 @@ jobs:
           grep -qE 'download_repo_file "openwrt/[^"]*" "main"' openwrt/menu.sh
           grep -q '"main"' openwrt/update_scripts.sh
           test ! -e RELEASE
+      - name: Verify SHA256SUMS matches the shipped OpenWrt scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          # A-12：安装前校验用的清单必须与仓库里的脚本完全一致，否则更新会
+          # 在真机上被 verify_script_hashes 拒绝（或者更糟：清单被改成"放行一切"）。
+          sha256sum sbshall.sh openwrt/*.sh | sort > /tmp/expected-sums
+          sort SHA256SUMS > /tmp/actual-sums
+          if ! diff -u /tmp/actual-sums /tmp/expected-sums; then
+            echo "::error::SHA256SUMS 与 sbshall.sh/openwrt/*.sh 不一致，请重新生成：sha256sum sbshall.sh openwrt/*.sh > SHA256SUMS"
+            exit 1
+          fi
       - name: Run ShellCheck (errors, blocking)
         uses: ludeeus/action-shellcheck@00cae500b08a931fb5698e11e79bfbd38e612a38 # 2.0.0
         with:

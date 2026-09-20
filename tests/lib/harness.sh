@@ -84,10 +84,28 @@ reset_fixtures() {
     rm -rf "$SBSHELL_FIXTURES"
     mkdir -p "$SBSHELL_FIXTURES"
     export SBSHELL_FIXTURES
+    # 自更新（A-12）会额外下载仓库根的 SHA256SUMS 并逐文件校验。夹具里放的是仓库**真实**
+    # 脚本，所以清单一并放进来即可保持一致；否则校验必然失败、更新路径整条变红。
+    [ -f "$SBSHELL_SRC/SHA256SUMS" ] || { echo "缺少 $SBSHELL_SRC/SHA256SUMS（更新路径需要它）" >&2; return 1; }
+    cp "$SBSHELL_SRC/SHA256SUMS" "$SBSHELL_FIXTURES/"
 }
-fixture_from_repo() { cp "$SBSHELL_SRC/$1" "$SBSHELL_FIXTURES/$(basename "$1")"; }
-fixture_write() { printf '%s\n' "$2" > "$SBSHELL_FIXTURES/$1"; }
-fixture_copy() { cp "$1" "$SBSHELL_FIXTURES/$2"; }
+# 夹具辅助函数在写入/复制时**同步维护 SHA256SUMS**：自更新（A-12）会拿夹具里的清单逐文件
+# 校验，而有些套件会故意伪造或改写脚本夹具（例如让某次下载"内容不符"）——清单不跟着变，
+# 就会在真正要测的场景之前先失败。只登记 *.sh（清单里的路径都是 openwrt/<脚本名>）。
+_fixture_manifest_set() {
+    local name="$1" manifest="$SBSHELL_FIXTURES/SHA256SUMS" hash tmp
+    case "$name" in *.sh) ;; *) return 0 ;; esac
+    [ -f "$SBSHELL_FIXTURES/$name" ] || return 0
+    [ -f "$manifest" ] || : > "$manifest"
+    hash=$(sha256sum "$SBSHELL_FIXTURES/$name" | awk '{print $1}')
+    tmp="$manifest.tmp"
+    grep -v "  openwrt/$name\$" "$manifest" > "$tmp" 2>/dev/null || true
+    printf '%s  openwrt/%s\n' "$hash" "$name" >> "$tmp"
+    mv -f "$tmp" "$manifest"
+}
+fixture_from_repo() { cp "$SBSHELL_SRC/$1" "$SBSHELL_FIXTURES/$(basename "$1")"; _fixture_manifest_set "$(basename "$1")"; }
+fixture_write() { printf '%s\n' "$2" > "$SBSHELL_FIXTURES/$1"; _fixture_manifest_set "$1"; }
+fixture_copy() { cp "$1" "$SBSHELL_FIXTURES/$2"; _fixture_manifest_set "$2"; }
 
 VALID_CLIENT_CONFIG='{"log":{"level":"info"},"inbounds":[{"type":"mixed","tag":"mixed-in","listen":"127.0.0.1","listen_port":7893}],"outbounds":[{"type":"direct","tag":"direct"}]}'
 
