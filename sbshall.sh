@@ -57,7 +57,16 @@ github_archive_download() {
         return 1
     fi
     [ -s "$archive" ] || { rm -f "$archive"; return 1; }
-    prefix=$(tar -tzf "$archive" 2>/dev/null | head -n1 | cut -d/ -f1)
+    # 不要写成 `tar -tzf "$archive" | head -n1`：head 先退出会让 tar 收到 SIGPIPE（rc=141），
+    # 在 set -o pipefail 下赋值失败、脚本直接中止 —— 只有大归档才会命中（小归档碰巧正常）。
+    list=$(mktemp /tmp/sbshell-archive-list.XXXXXX) || { rm -f "$archive"; return 1; }
+    if ! tar -tzf "$archive" > "$list" 2>/dev/null; then
+        rm -f "$archive" "$list"
+        return 1
+    fi
+    first=$(head -n1 "$list") || true
+    prefix=${first%%/*}
+    rm -f "$list"
     [ -n "$prefix" ] || { rm -f "$archive"; return 1; }
     entry="$prefix/$path"
     case "$entry" in

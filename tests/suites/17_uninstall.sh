@@ -46,6 +46,14 @@ setup_uninstall_case() {
     # "非 Sbshell 管理"而拒绝删除，卸载就会中止 —— 夹具必须还原这一点，否则测的是假场景。
     printf 'OWNER=sbshell\nMODE=TProxy\n' > /etc/sing-box/tproxy.state
     printf 'OWNER=sbshell\nMODE=TUN\n' > /etc/sing-box/tun.state
+    # 真实机器上"启用自启动"会留下这些开机启动项，卸载必须把它们一起清掉（A-07）：
+    # 否则每次开机 rc.common 都会去执行已经不存在的 manage_autostart.sh。
+    printf '#!/bin/sh\nexit 0\n' > /etc/init.d/sbshell-firewall
+    chmod 0755 /etc/init.d/sbshell-firewall
+    : > /etc/rc.d/S40sbshell-firewall
+    # sing-box 仍在（PATH 上有桩）时它的 init 脚本属于自己，不应被卸载流程删除。
+    printf '#!/bin/sh\nexit 0\n' > /etc/init.d/sing-box
+    chmod 0755 /etc/init.d/sing-box
 }
 
 # 注意：这里**不能**写成 `out=$(run_uninstall ...)`，也不能用管道喂 stdin。
@@ -98,6 +106,10 @@ assert_no_file /etc/sing-box "配置目录已删除"
 assert_no_file /etc/cron.d/sbshell-ui "面板 cron 文件已删除"
 assert_no_grep 'sbshell-ui-auto-update' /etc/crontabs/root "crontab 里的 sbshell 条目已删除"
 assert_file /etc/init.d/cron "无关 init 脚本未被误删"
+# A-07：卸载留下指向已删脚本的开机启动项 → 开机时 init 去执行不存在的脚本。
+assert_no_file /etc/init.d/sbshell-firewall "卸载后清掉开机防火墙 init 脚本（A-07）"
+assert_no_file /etc/rc.d/S40sbshell-firewall "卸载后清掉开机防火墙 rc.d 链接（A-07）"
+assert_file /etc/init.d/sing-box "sing-box 仍在时它的 init 脚本不被误删"
 
 # ------------------------- 4) install 兜底必须早于第一次 install 调用
 # 背景：测试镜像装了 coreutils，`install` 一直存在，所以"busybox 没有 install"这类问题

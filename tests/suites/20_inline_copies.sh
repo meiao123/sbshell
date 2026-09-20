@@ -86,6 +86,24 @@ for rel in sbshall.sh openwrt/menu.sh openwrt/update_scripts.sh; do
 done
 
 # ------------------------------------------------ 完全一致的副本：断言哈希相同
+# ------------------------------------------- 归档列表不得把 tar 管给 head
+suite_begin "inline copies: 归档列表不得用 tar | head（pipefail 下会被 SIGPIPE 判失败）"
+
+# A-14：`prefix=$(tar -tzf "$archive" | head -n1 | cut -d/ -f1)` 里 head 取到首行就退出，
+# tar 继续写就被 SIGPIPE 打断（141）；`set -o pipefail` 下赋值失败、脚本直接中止。
+# 只有大归档才会命中（小归档 tar 写完时 head 还没退出），所以必须静态守住。
+for rel in sbshall.sh openwrt/menu.sh openwrt/update_scripts.sh; do
+    f="$SRC/$rel"
+    assert_no_grep 'tar -tzf "\$archive" 2>/dev/null | head' "$f" \
+        "$rel: 不再把 tar 列表直接管给 head"
+    assert_grep 'tar -tzf "\$archive" > "\$list"' "$f" \
+        "$rel: 归档列表先重定向到临时文件"
+    assert_grep 'sbshell-archive-list.XXXXXX' "$f" \
+        "$rel: 临时列表文件用 mktemp 唯一化"
+    assert_grep 'prefix=\${first%%/\*}' "$f" \
+        "$rel: 首行前缀用参数展开取，不经管道"
+done
+
 suite_begin "inline copies: 逐字相同的副本必须保持一致"
 
 for name in route_default_exists rule_pref_for_mark; do

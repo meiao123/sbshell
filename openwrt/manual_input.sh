@@ -64,6 +64,20 @@ get_default() {
     grep -m1 "^${key}=" "$DEFAULTS_FILE" 2>/dev/null | cut -d'=' -f2- || true
 }
 valid_url() { [[ "$1" =~ ^https://[^[:space:]]+$ ]]; }
+# 订阅地址（FULL_URL）里含用户 token：任何输出都不该带原文，终端回滚、截图、粘贴给别人
+# 排查都会把它带出去。只保留 scheme+host，其余以 *** 代替。
+redact_url() {
+    local u="$1" scheme rest host
+    case "$u" in
+        *://*)
+            scheme=${u%%://*}
+            rest=${u#*://}
+            host=${rest%%/*}
+            printf '%s://%s/***' "$scheme" "$host"
+            ;;
+        *) printf '%s' "$u" ;;
+    esac
+}
 valid_subscription() {
     local value="$1"
     [ -z "$value" ] && return 0
@@ -230,7 +244,7 @@ while true; do
         printf '\n'
         echo -e "${RED}配置文件下载失败，未修改现有配置。${NC}" >&2
         echo -e "${RED}失败原因: $(download_failure_reason "$download_rc" "$http_code")${NC}" >&2
-        echo -e "${RED}请求地址: $FULL_URL${NC}" >&2
+        echo -e "${RED}请求地址: $(redact_url "$FULL_URL")${NC}" >&2
         exit 1
     fi
     printf '\r配置文件下载中，超时倒计时: 00s\n'
