@@ -103,10 +103,24 @@ clean_tproxy_routes() {
 }
 
 wait_for_singbox_exit
+# A-21：nftables.conf 是普通文件、没有所有权凭据，所以先在清理**之前**判定它是否
+# 属于 Sbshell 的 TUN 部署（表存在，或 state 写着 OWNER=sbshell），只有属于才删。
+# 旧写法无条件 rm -f，会静默删掉第三方放进这个目录的文件。用 if 形式判定：
+# `[ -f … ] && grep -q … && x=1` 在 set -e 下失败会直接终止脚本。
+tun_owned=0
+if [ -f "$TUN_STATE_FILE" ] && grep -q '^OWNER=sbshell$' "$TUN_STATE_FILE"; then
+    tun_owned=1
+fi
+nft_tun_present=0
+if nft list table inet sing-box-tun >/dev/null 2>&1; then
+    nft_tun_present=1
+fi
 clean_owned_table sing-box-tun "$TUN_STATE_FILE" TUN || exit 1
 clean_tproxy_routes || exit 1
 clean_owned_table sing-box "$TPROXY_STATE_FILE" TProxy || exit 1
-rm -f /etc/sing-box/tun/nftables.conf
+if [ "$nft_tun_present" -eq 1 ] || [ "$tun_owned" -eq 1 ]; then
+    rm -f /etc/sing-box/tun/nftables.conf
+fi
 rmdir /etc/sing-box/tun 2>/dev/null || true
 
 echo 'sing-box 服务已停止, Sbshell 管理的 TProxy/TUN 防火墙规则已清理。'

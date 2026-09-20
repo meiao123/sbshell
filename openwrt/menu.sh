@@ -152,6 +152,9 @@ uninstall_sbshell() {
         echo -e "${YELLOW}未找到 opkg 或 apk，无法卸载 sing-box 软件包，继续清理 Sbshell 文件。${NC}" >&2
     fi
 
+    # A-20：/etc/cron.d/sbshell-ui 与 /etc/cron.d/sbshell-singbox 现在的版本已经不再创建
+    # （UI 的计划任务写在 /etc/crontabs/root，见 update_ui.sh），但早期版本留下过它们，
+    # 所以这里继续清理以兼容旧安装 —— 注释说明用途，避免被误读成现行 cron.d 布局。
     rm -f /usr/local/bin/sb /usr/bin/sb /etc/cron.d/sbshell-ui /etc/cron.d/sbshell-singbox /etc/sing-box/update-ui.sh /etc/sing-box/update-singbox.sh
     rm -f /etc/crontabs/sbshell-ui 2>/dev/null || true
     if [ -f /etc/crontabs/root ]; then sed -i '/[[:space:]]# sbshell-singbox-auto-update$/d; /[[:space:]]# sbshell-ui-auto-update$/d' /etc/crontabs/root; fi
@@ -315,12 +318,15 @@ install_default_ui() {
     UI_INSTALL_TRIED=1
     local ui_output
     echo -e "${CYAN}正在安装默认 UI...${NC}"
+    # A-27：不能只透传最后一行。初始化阶段 config.json 还没下载，真实 update_ui.sh 会
+    # 先打「UI 安装完成。」再打一句黄字提示，最后一行是提示 —— 用户反而看不到结论。
+    # 改为透传关键行；一行都没匹配上时回退到原行为（尾行），保证信息不丢。
     if ui_output=$(run update_ui.sh <<< '1' 2>&1); then
-        printf '%s\n' "$ui_output" | tail -n1
+        printf '%s\n' "$ui_output" | grep -E 'UI 安装完成|UI 压缩包下载失败|UI 目录|警告|失败|提示' || printf '%s\n' "$ui_output" | tail -n1
         return 0
     fi
     echo -e "${YELLOW}警告：默认 UI 安装失败，可稍后从菜单「10. 更新控制面板」重试。${NC}" >&2
-    printf '%s\n' "$ui_output" | tail -n1 >&2
+    printf '%s\n' "$ui_output" | grep -E 'UI 安装完成|UI 压缩包下载失败|UI 目录|警告|失败|提示' || printf '%s\n' "$ui_output" | tail -n1 >&2
     return 1
 }
 
