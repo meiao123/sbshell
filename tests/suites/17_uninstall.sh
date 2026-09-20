@@ -39,8 +39,13 @@ setup_uninstall_case() {
     mkdir -p /etc/cron.d /etc/crontabs
     : > /etc/cron.d/sbshell-ui
     printf '%s\n' '*/5 * * * * /etc/sing-box/update-ui.sh # sbshell-ui-auto-update' > /etc/crontabs/root
-    : > "$SBSHELL_STUB_STATE/singbox_active"      # 让 pidof 认为服务在跑（否则不进入 stop 分支）
-    : > "$SBSHELL_STUB_STATE/nft/inet__sing-box"  # 让 clean_nft 有表可删
+    : > "$SBSHELL_STUB_STATE/singbox_active"        # 让 pidof 认为服务在跑（否则不进入 stop 分支）
+    : > "$SBSHELL_STUB_STATE/nft/inet__sing-box"     # TProxy 表
+    : > "$SBSHELL_STUB_STATE/nft/inet__sing-box-tun" # TUN 表
+    # 真实安装会留下 OWNER=sbshell 的 state 文件；缺了它 clean_nft.sh 会（正确地）把表判为
+    # "非 Sbshell 管理"而拒绝删除，卸载就会中止 —— 夹具必须还原这一点，否则测的是假场景。
+    printf 'OWNER=sbshell\nMODE=TProxy\n' > /etc/sing-box/tproxy.state
+    printf 'OWNER=sbshell\nMODE=TUN\n' > /etc/sing-box/tun.state
 }
 
 # 注意：这里**不能**写成 `out=$(run_uninstall ...)`，也不能用管道喂 stdin。
@@ -85,6 +90,7 @@ suite_begin "uninstall: 正常卸载要清干净且不误删无关文件"
 setup_uninstall_case
 run_uninstall 'y\n'; rc=$?
 out=$(cat /tmp/u17.out)
+assert_contains "$out" "TProxy 防火墙状态已清理" "TProxy 表删除路径真的执行了"
 assert_rc "$rc" 0 "正常卸载返回 0"
 assert_not_rc "$rc" 124 "正常卸载路径没有挂住（未被超时杀掉）"
 assert_contains "$out" "Sbshell 与 sing-box 配置目录已清理" "给出卸载完成提示"
