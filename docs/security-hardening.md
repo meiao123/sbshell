@@ -227,3 +227,28 @@ GNU 专有选项黑名单、`timeout` 命令调用、`stat -c` 格式串白名�
 没有统一成单一常量是有意的（网络下载与本机探活的风险完全不同）；改动时请按上表归类，
 不要只调整某一个调用点。测试侧的 `SBSHELL_TIMEOUT` 默认 90s，只用于包住整套脚本。
 
+## 第五轮：下载内容完整性校验（批次 6 / A-12）
+
+脚本更新有三个传输层（`raw.githubusercontent.com` → `api.github.com/contents` → `archive/<ref>.tar.gz`），
+此前只做语法校验（`bash -n` / `sh -n`）——半截文件、CDN 返回的错误页、或中间层被替换的脚本，
+只要还是合法 shell 就会被安装进 `/etc/sing-box/scripts`。
+
+现在仓库根维护一份 `SHA256SUMS`（`sbshall.sh` + `openwrt/*.sh`，格式与
+`sha256sum sbshall.sh openwrt/*.sh` 一致），两个更新入口（`openwrt/update_scripts.sh` 与
+`openwrt/menu.sh` 的 `update_scripts()`）在**安装之前**调用逐字相同的 `verify_script_hashes()`：
+
+- 清单里**没有**本目录条目（`checked == 0`）→ 拒绝安装（防止用一个空清单绕过校验）；
+- 任一文件缺失或哈希不符 → 拒绝安装并保留现有安装；
+- 无 `sha256sum` 的环境 → 打印显式警告后**继续**（有意取舍：不在裁剪过的 busybox 上把更新彻底弄坏）。
+
+CI 新增一步 `Verify SHA256SUMS matches the shipped OpenWrt scripts`：重新计算并与清单 `diff -u`，
+清单与脚本不一致直接失败（`::error::` 注解给出重算命令）。**因此改动 `sbshall.sh` 或任何
+`openwrt/*.sh` 之后必须同步重算清单**：`sha256sum sbshall.sh openwrt/*.sh > SHA256SUMS`
+（Windows 检出工作区可用 `tools/gen_sha256sums.py`，它把 CRLF 归一为 LF 后再哈希）。
+注意：哈希清单只保证「下载内容与仓库当时提交的内容一致」，不等于供应链签名——它拦得住传输损坏
+与中间层的意外替换，拦不住仓库本身被改写。
+
+回归测试：`tests/suites/23_sha256_manifest.sh`（清单覆盖全部发货脚本且与检出内容一致、
+两处副本逐字一致且调用顺序为下载→校验→安装、以及 5 个行为场景）；`tests/suites/20_inline_copies.sh`
+把这对副本纳入长期漂移检查。
+

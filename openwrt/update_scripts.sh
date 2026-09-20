@@ -122,6 +122,27 @@ acquire_scripts_lock() {
     done
     printf '%s\n' "$$" > "$SCRIPTS_LOCK_DIR/pid"
 }
+# --- 下载内容完整性校验（A-12）：与 menu.sh 里的同名函数逐字一致 ---
+verify_script_hashes() {
+    # $1=清单路径 $2=脚本目录 $3=清单里的路径前缀（如 openwrt）
+    local manifest="$1" dir="$2" prefix="$3" hash name actual checked=0
+    [ -f "$manifest" ] || { echo '未找到 SHA256SUMS，拒绝安装（无法校验下载内容）。' >&2; return 1; }
+    if ! command -v sha256sum >/dev/null 2>&1; then
+        echo '未找到 sha256sum，本次跳过下载内容校验（建议使用带 sha256sum 的 busybox 或安装 coreutils-sha256sum）。' >&2
+        return 0
+    fi
+    while read -r hash name; do
+        case "$hash" in ''|\#*) continue ;; esac
+        case "$name" in "$prefix"/*) ;; *) continue ;; esac
+        name=${name#"$prefix"/}
+        actual=$(sha256sum "$dir/$name" 2>/dev/null | awk '{print $1}')
+        [ -n "$actual" ] || { echo "完整性校验失败：$prefix/$name 未下载成功。" >&2; return 1; }
+        [ "$actual" = "$hash" ] || { echo "完整性校验失败：$prefix/$name 与 SHA256SUMS 不符（期望 $hash，实际 $actual）。" >&2; return 1; }
+        checked=$((checked + 1))
+    done < "$manifest"
+    [ "$checked" -gt 0 ] || { echo 'SHA256SUMS 中没有本目录的条目，拒绝安装。' >&2; return 1; }
+    return 0
+}
 TMP_DIR=$(mktemp -d /tmp/sbshell-update.XXXXXX)
 BACKUP_DIR=$(mktemp -d /tmp/sbshell-update-backup.XXXXXX)
 trap 'release_scripts_lock; rm -rf "$TMP_DIR" "$BACKUP_DIR"' EXIT
@@ -136,6 +157,9 @@ for script in "${SCRIPTS[@]}"; do
     bash -n "$TMP_DIR/$script"
     if head -n1 "$TMP_DIR/$script" | grep -q '^#!/bin/sh'; then sh -n "$TMP_DIR/$script"; fi
 done
+# A-12：安装前按清单逐个校验下载件，避免半截/被篡改的脚本进 /etc（三个传输层任一层出问题都能拦住）。
+download_repo_file "SHA256SUMS" "main" "$TMP_DIR/SHA256SUMS" || exit 1
+verify_script_hashes "$TMP_DIR/SHA256SUMS" "$TMP_DIR" openwrt || exit 1
 for script in "${SCRIPTS[@]}"; do
     if [ -f "$SCRIPT_DIR/$script" ]; then cp -a "$SCRIPT_DIR/$script" "$BACKUP_DIR/$script"; fi
 done

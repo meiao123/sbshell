@@ -173,6 +173,27 @@ uninstall_sbshell() {
     exit 0
 }
 
+# --- 下载内容完整性校验（A-12）：与 update_scripts.sh 里的同名函数逐字一致 ---
+verify_script_hashes() {
+    # $1=清单路径 $2=脚本目录 $3=清单里的路径前缀（如 openwrt）
+    local manifest="$1" dir="$2" prefix="$3" hash name actual checked=0
+    [ -f "$manifest" ] || { echo '未找到 SHA256SUMS，拒绝安装（无法校验下载内容）。' >&2; return 1; }
+    if ! command -v sha256sum >/dev/null 2>&1; then
+        echo '未找到 sha256sum，本次跳过下载内容校验（建议使用带 sha256sum 的 busybox 或安装 coreutils-sha256sum）。' >&2
+        return 0
+    fi
+    while read -r hash name; do
+        case "$hash" in ''|\#*) continue ;; esac
+        case "$name" in "$prefix"/*) ;; *) continue ;; esac
+        name=${name#"$prefix"/}
+        actual=$(sha256sum "$dir/$name" 2>/dev/null | awk '{print $1}')
+        [ -n "$actual" ] || { echo "完整性校验失败：$prefix/$name 未下载成功。" >&2; return 1; }
+        [ "$actual" = "$hash" ] || { echo "完整性校验失败：$prefix/$name 与 SHA256SUMS 不符（期望 $hash，实际 $actual）。" >&2; return 1; }
+        checked=$((checked + 1))
+    done < "$manifest"
+    [ "$checked" -gt 0 ] || { echo 'SHA256SUMS 中没有本目录的条目，拒绝安装。' >&2; return 1; }
+    return 0
+}
 update_scripts() {
     local tmp backup s rc=0
     local -a backed_up=()
@@ -197,6 +218,15 @@ update_scripts() {
             break
         fi
     done
+
+    if [ "$rc" -eq 0 ]; then
+        # A-12：安装前按清单校验下载件（三个传输层任一层出问题都能拦住）。
+        if ! download_repo_file "SHA256SUMS" "main" "$tmp/SHA256SUMS" ||
+            ! verify_script_hashes "$tmp/SHA256SUMS" "$tmp" openwrt; then
+            echo -e "${RED}下载内容完整性校验失败，已中止更新（现有安装保持不变）。${NC}" >&2
+            rc=1
+        fi
+    fi
 
     if [ "$rc" -eq 0 ]; then
         for s in "${SCRIPTS[@]}"; do

@@ -60,7 +60,11 @@ printf '\n\n\ny\n' | run_with_timeout bash /etc/sing-box/scripts/manual_input.sh
 rc=$?
 assert_rc "$rc" 0 "manual_input.sh 完成"
 if [ -d /tmp/sbshell-config.lock ]; then fail "manual_input 锁目录残留"; else pass "manual_input 锁目录已释放"; fi
-leftovers=$(ls -A /etc/sing-box/ 2>/dev/null | grep -c '^\.config.json.backup\|^\.manual.conf.backup' || true)
+leftovers=0
+for leftover in /etc/sing-box/.config.json.backup* /etc/sing-box/.manual.conf.backup*; do
+    [ -e "$leftover" ] || continue
+    leftovers=$((leftovers + 1))
+done
 assert_eq "$leftovers" "0" "临时/备份文件已清理"
 assert_file /etc/sing-box/manual.conf "manual.conf 已写入"
 
