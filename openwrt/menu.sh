@@ -231,6 +231,53 @@ UI_DIR=/etc/sing-box/ui
 
 # 安装默认 UI（zashboard）：已装好就直接返回。失败只告警并返回非 0，由调用方决定是否阻断——
 # 需求是「先把 UI 装完并给出通知，再弹出菜单；UI 失败就先给警告再弹菜单」。
+# --- 脚本更新互斥（A-15）：menu.sh 的自动更新与 update_scripts.sh 都会重写 $SCRIPT_DIR 里
+# 同一批脚本，两个入口并发会交错安装不同批次的文件。这里用与配置/UI 更新同一套 mkdir 锁实现
+# （/tmp 世界可写，因此 pid 必须是纯数字、过期按 mtime 判定、并有 waited 硬上限）。
+SCRIPTS_LOCK_DIR=/tmp/sbshell-scripts.lock
+SCRIPTS_LOCK_TIMEOUT=900
+release_scripts_lock() {
+    [ -d "$SCRIPTS_LOCK_DIR" ] || return 0
+    owner=$(cat "$SCRIPTS_LOCK_DIR/pid" 2>/dev/null || true)
+    [ "$owner" = "$$" ] && rm -rf "$SCRIPTS_LOCK_DIR"
+}
+acquire_scripts_lock() {
+    waited=0
+    while ! mkdir "$SCRIPTS_LOCK_DIR" 2>/dev/null; do
+        owner=$(cat "$SCRIPTS_LOCK_DIR/pid" 2>/dev/null || true)
+        case "$owner" in ''|*[!0-9]*) owner='' ;; esac
+        now=$(date +%s)
+        created=$(stat -c %Y "$SCRIPTS_LOCK_DIR" 2>/dev/null || echo 0)
+        age=0
+        [ "$created" -gt 0 ] && age=$((now - created))
+        if [ "$age" -ge "$SCRIPTS_LOCK_TIMEOUT" ]; then
+            rm -rf "$SCRIPTS_LOCK_DIR" 2>/dev/null || true
+            sleep 1
+            continue
+        fi
+        if [ -n "$owner" ] && kill -0 "$owner" 2>/dev/null; then
+            waited=$((waited + 1))
+            if [ "$waited" -ge "$SCRIPTS_LOCK_TIMEOUT" ]; then
+                echo '等待脚本更新锁超时（另一个进程正在更新脚本）。' >&2
+                return 1
+            fi
+        fi
+        sleep 1
+    done
+    printf '%s\n' "$$" > "$SCRIPTS_LOCK_DIR/pid"
+}
+# 持锁调用：menu.sh 是长驻的交互进程，不能靠 EXIT trap 释放（那会一直持到退出菜单），
+# 因此在这里显式成对 acquire/release。
+update_scripts_locked() {
+    local rc=0
+    acquire_scripts_lock || { echo -e "${RED}另一个进程正在更新脚本，已跳过本次自动更新。${NC}" >&2; return 1; }
+    trap 'release_scripts_lock; exit 1' INT TERM
+    update_scripts || rc=$?
+    release_scripts_lock
+    trap - INT TERM
+    return "$rc"
+}
+
 install_default_ui() {
     [ -f "$UI_DIR/index.html" ] && return 0
     # 同一次运行里只尝试一次：初始化阶段失败过就不再重试，避免重复下载、无谓拉长等待。
@@ -248,7 +295,7 @@ install_default_ui() {
 }
 
 initialize() {
-    update_scripts || { echo -e "${RED}脚本更新失败，现有安装保持不变。${NC}" >&2; return 1; }
+    update_scripts_locked || { echo -e "${RED}脚本更新失败，现有安装保持不变。${NC}" >&2; return 1; }
     run check_environment.sh || return 1
     run install_singbox.sh || return 1
     # 装完 sing-box 立刻装好默认 UI 并给出通知，之后才让用户选择模式、再走配置输入。
@@ -266,12 +313,12 @@ if [ ! -f "$INITIALIZED_FILE" ]; then
     echo -e "${CYAN}回车进入初始化，输入 skip 跳过：${NC}"
     read -r choice
     if [[ "$choice" =~ ^[Ss]kip$ ]]; then
-        update_scripts || exit 1
+        update_scripts_locked || exit 1
     else
         initialize || exit 1
     fi
 else
-    [ -f "$SCRIPT_DIR/menu.sh" ] || update_scripts || exit 1
+    [ -f "$SCRIPT_DIR/menu.sh" ] || update_scripts_locked || exit 1
 fi
 
 # 已初始化过的机器（含历史安装中断、从未装过 UI 的）在进菜单前自动补装一次；

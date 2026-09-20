@@ -88,11 +88,48 @@ download_repo_file() {
     rm -f "$output"
     github_archive_download "$path" "$ref" "$output"
 }
+# --- 脚本更新互斥（A-15）：menu.sh 的自动更新与 update_scripts.sh 都会重写 $SCRIPT_DIR 里
+# 同一批脚本，两个入口并发会交错安装不同批次的文件。这里用与配置/UI 更新同一套 mkdir 锁实现
+# （/tmp 世界可写，因此 pid 必须是纯数字、过期按 mtime 判定、并有 waited 硬上限）。
+SCRIPTS_LOCK_DIR=/tmp/sbshell-scripts.lock
+SCRIPTS_LOCK_TIMEOUT=900
+release_scripts_lock() {
+    [ -d "$SCRIPTS_LOCK_DIR" ] || return 0
+    owner=$(cat "$SCRIPTS_LOCK_DIR/pid" 2>/dev/null || true)
+    [ "$owner" = "$$" ] && rm -rf "$SCRIPTS_LOCK_DIR"
+}
+acquire_scripts_lock() {
+    waited=0
+    while ! mkdir "$SCRIPTS_LOCK_DIR" 2>/dev/null; do
+        owner=$(cat "$SCRIPTS_LOCK_DIR/pid" 2>/dev/null || true)
+        case "$owner" in ''|*[!0-9]*) owner='' ;; esac
+        now=$(date +%s)
+        created=$(stat -c %Y "$SCRIPTS_LOCK_DIR" 2>/dev/null || echo 0)
+        age=0
+        [ "$created" -gt 0 ] && age=$((now - created))
+        if [ "$age" -ge "$SCRIPTS_LOCK_TIMEOUT" ]; then
+            rm -rf "$SCRIPTS_LOCK_DIR" 2>/dev/null || true
+            sleep 1
+            continue
+        fi
+        if [ -n "$owner" ] && kill -0 "$owner" 2>/dev/null; then
+            waited=$((waited + 1))
+            if [ "$waited" -ge "$SCRIPTS_LOCK_TIMEOUT" ]; then
+                echo '等待脚本更新锁超时（另一个进程正在更新脚本）。' >&2
+                return 1
+            fi
+        fi
+        sleep 1
+    done
+    printf '%s\n' "$$" > "$SCRIPTS_LOCK_DIR/pid"
+}
 TMP_DIR=$(mktemp -d /tmp/sbshell-update.XXXXXX)
 BACKUP_DIR=$(mktemp -d /tmp/sbshell-update-backup.XXXXXX)
-trap 'rm -rf "$TMP_DIR" "$BACKUP_DIR"' EXIT
+trap 'release_scripts_lock; rm -rf "$TMP_DIR" "$BACKUP_DIR"' EXIT
 [ "$(id -u)" -eq 0 ] || { echo '请以 root 运行。' >&2; exit 1; }
 install -d -m 0755 "$SCRIPT_DIR"
+# 取锁失败（另一个入口正在更新）就退出，绝不与它交错写入。
+acquire_scripts_lock || exit 1
 SCRIPTS=(check_environment.sh install_singbox.sh manual_input.sh manual_update.sh auto_update.sh configure_tproxy.sh configure_tun.sh start_singbox.sh stop_singbox.sh clean_nft.sh set_defaults.sh commands.sh switch_mode.sh manage_autostart.sh check_config.sh update_scripts.sh update_ui.sh menu.sh)
 for script in "${SCRIPTS[@]}"; do
     download_repo_file "openwrt/$script" "main" "$TMP_DIR/$script"
