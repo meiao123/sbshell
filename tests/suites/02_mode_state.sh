@@ -135,4 +135,12 @@ assert_not_rc "$?" 0 "nft delete 失败时 clean_nft 以非 0 退出"
 if [ -f /etc/sing-box/tproxy.state ]; then pass "清理失败时保留 state（旧代码会删掉，表成永久孤儿）"; else fail "state 被误删"; fi
 assert_no_grep "TProxy 防火墙状态已清理" /tmp/cleanfail.out "不再谎报 TProxy 已清理"
 
+suite_begin "switch_mode: mode.conf 写成原子替换（A-16）"
+
+sm="$SBSHELL_SRC/openwrt/switch_mode.sh"
+assert_no_grep 'mktemp /tmp/sbshell-mode' "$sm" "mode.conf 的临时文件不再放在 /tmp（跨设备 → 只能就地截断）"
+assert_grep 'mktemp "$MODE_DIR/.mode.conf.XXXXXX"' "$sm" "临时文件与目标同目录（可 rename）"
+assert_grep 'mv -f "$TMP_MODE" "$MODE_FILE"' "$sm" "用 rename 原子替换 mode.conf"
+assert_grep 'mv -f "$BACKUP_MODE" "$MODE_FILE"' "$sm" "回滚同样走原子替换"
+
 suite_end

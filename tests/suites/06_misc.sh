@@ -123,8 +123,8 @@ set -uo pipefail
 . /tmp/va.sh
 validate_archive /tmp/ui-fake.zip
 EOS
-PATH="$shim:$PATH" bash /tmp/va_test.sh > /tmp/va.out 2>&1
-assert_not_rc "$?" 0 "zipinfo 不可用时拒绝（旧代码空转返回 0）"
+PATH="$shim:$PATH" timeout -k 5 60 bash /tmp/va_test.sh > /tmp/va.out 2>&1
+assert_not_rc "$?" 0 "无法解析的压缩包被拒绝（假 zip：unzip -Z1 先失败）"
 rm -rf "$shim"
 
 # 上面那条其实命中的是 **unzip** 分支（假 zip 让 `unzip -Z1` 先失败）。下面用真实 zip
@@ -140,34 +140,51 @@ set -uo pipefail
 validate_archive /tmp/ui-real.zip
 EOS
 
-# 1) unzip 成功、zipinfo 不可用 → 必须拒绝（不能当成"没有链接、体积也合法"而通过）
+# 1) unzip 可用、zipinfo 不可用 → 必须**通过**（A-13）：`unzip -Z -l` 与 `zipinfo -l` 输出相同
+#    且本是同一个二进制，而 OpenWrt 的 unzip 包不一定提供 zipinfo；旧行为直接拒绝，于是
+#    "刚确认安装过 unzip"之后 UI 仍然永远装不上。
 shim1=$(mktemp -d)
 printf '#!/bin/bash\necho "zipinfo: unavailable" >&2\nexit 127\n' > "$shim1/zipinfo"
 chmod +x "$shim1/zipinfo"
-PATH="$shim1:$PATH" bash /tmp/va_real.sh > /tmp/va1.out 2>&1
-assert_not_rc "$?" 0 "unzip 成功但 zipinfo 不可用时拒绝"
+PATH="$shim1:$PATH" timeout -k 5 60 bash /tmp/va_real.sh > /tmp/va1.out 2>&1
+assert_rc "$?" 0 "unzip 可用、zipinfo 不可用时仍能校验（unzip -Z -l 回退）"
 rm -rf "$shim1"
 
-# 2) zipinfo 报告符号链接条目 → 必须拒绝
+# 2) 列表里有符号链接条目 → 必须拒绝。zipinfo 现在是**回退**路径，主路径是 unzip -Z -l，
+#    所以 shim 挂在 unzip 上：只伪造带 -l 的列表调用，-Z1 与解压仍交给真 unzip。
 shim2=$(mktemp -d)
-cat > "$shim2/zipinfo" <<'EOS'
+real_unzip=$(command -v unzip)
+cat > "$shim2/unzip" <<EOS
 #!/bin/bash
-printf '%s\n' '-rw-r--r--  3.0 unx       12 tx defN 25-Sep-20 11:00 index.html' \
-              'lrwxrwxrwx  3.0 unx        7 tx defN 25-Sep-20 11:00 link -> index.html'
+for a in "\$@"; do
+    if [ "\$a" = "-l" ]; then
+        printf '%s\n' '-rw-r--r--  3.0 unx       12 tx defN 25-Sep-20 11:00 index.html' \\
+                      'lrwxrwxrwx  3.0 unx        7 tx defN 25-Sep-20 11:00 link -> index.html'
+        exit 0
+    fi
+done
+exec $real_unzip "\$@"
 EOS
-chmod +x "$shim2/zipinfo"
-PATH="$shim2:$PATH" bash /tmp/va_real.sh > /tmp/va2.out 2>&1
+chmod +x "$shim2/unzip"
+PATH="$shim2:$PATH" timeout -k 5 60 bash /tmp/va_real.sh > /tmp/va2.out 2>&1
 assert_not_rc "$?" 0 "含链接条目时拒绝"
 rm -rf "$shim2"
 
-# 3) 展开体积超过 200 MiB → 必须拒绝
+# 3) 展开体积超过 200 MiB → 必须拒绝（同样挂在 unzip -Z -l 上）
 shim3=$(mktemp -d)
-cat > "$shim3/zipinfo" <<'EOS'
+real_unzip=$(command -v unzip)
+cat > "$shim3/unzip" <<EOS
 #!/bin/bash
-printf '%s\n' '-rw-r--r--  3.0 unx 314572800 tx defN 25-Sep-20 11:00 index.html'
+for a in "\$@"; do
+    if [ "\$a" = "-l" ]; then
+        printf '%s\n' '-rw-r--r--  3.0 unx 314572800 tx defN 25-Sep-20 11:00 index.html'
+        exit 0
+    fi
+done
+exec $real_unzip "\$@"
 EOS
-chmod +x "$shim3/zipinfo"
-PATH="$shim3:$PATH" bash /tmp/va_real.sh > /tmp/va3.out 2>&1
+chmod +x "$shim3/unzip"
+PATH="$shim3:$PATH" timeout -k 5 60 bash /tmp/va_real.sh > /tmp/va3.out 2>&1
 assert_not_rc "$?" 0 "展开体积超限时拒绝"
 rm -rf "$shim3"
 

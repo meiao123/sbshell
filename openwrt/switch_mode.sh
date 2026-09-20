@@ -84,8 +84,14 @@ if [ "$OLD_MODE" = "$NEW_MODE" ]; then
 fi
 
 /etc/init.d/sing-box stop 2> >(sed '/^Command failed:.*Not found/d' >&2)
-TMP_MODE=$(mktemp /tmp/sbshell-mode.XXXXXX)
-BACKUP_MODE=$(mktemp /tmp/sbshell-mode-backup.XXXXXX)
+# 原子写（A-16）：mode.conf 是"当前模式"的唯一真相源，而 /tmp 与 /etc 通常不在同一个文件
+# 系统（tmpfs vs overlay）。旧写法用 install（OpenWrt 上是就地截断的 cp -f），窗口内被读到
+# 空内容时，configure_tproxy.sh/configure_tun.sh 的 `[ "$MODE" = … ] || exit 0` 会静默什么都
+# 不做——表现为"启动成功但没有规则"。临时文件与备份都放到目标同目录，再用 mv 原子替换。
+MODE_DIR=$(dirname "$MODE_FILE")
+mkdir -p "$MODE_DIR"
+TMP_MODE=$(mktemp "$MODE_DIR/.mode.conf.XXXXXX")
+BACKUP_MODE=$(mktemp "$MODE_DIR/.mode.conf.backup.XXXXXX")
 trap 'rm -f "$TMP_MODE" "$BACKUP_MODE"' EXIT
 if [ -n "$OLD_MODE" ]; then
     printf 'MODE=%s\n' "$OLD_MODE" > "$BACKUP_MODE"
@@ -93,10 +99,12 @@ else
     : > "$BACKUP_MODE"
 fi
 printf 'MODE=%s\n' "$NEW_MODE" > "$TMP_MODE"
-install -o root -g root -m 0644 "$TMP_MODE" "$MODE_FILE"
+chmod 0644 "$TMP_MODE"; chown root:root "$TMP_MODE"
+mv -f "$TMP_MODE" "$MODE_FILE"
 
 if ! bash "$SCRIPT_DIR/clean_nft.sh"; then
-    install -o root -g root -m 0644 "$BACKUP_MODE" "$MODE_FILE"
+    chmod 0644 "$BACKUP_MODE"; chown root:root "$BACKUP_MODE"
+    mv -f "$BACKUP_MODE" "$MODE_FILE"
     echo -e "${RED}旧模式的防火墙状态无法安全清理，已恢复原模式: ${OLD_MODE:-未设置}${NC}" >&2
     exit 1
 fi
