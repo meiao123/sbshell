@@ -39,7 +39,9 @@ assert_grep 'main/debian' "$SBSHELL_SRC/debian/update_scripts.sh" "Debian 自更
 suite_begin "config URLs must be HTTPS (batch 1 hardened the OpenWrt validators)"
 assert_grep '\[\[ "\$1" =~ \^https://' "$SBSHELL_SRC/openwrt/manual_input.sh" "manual_input.sh 只接受 HTTPS URL"
 assert_grep --proto "$SBSHELL_SRC/openwrt/manual_input.sh" "manual_input.sh 使用显式协议白名单"
-assert_no_grep 'https\?://' "$SBSHELL_SRC/openwrt/manual_input.sh" "manual_input.sh 不再接受明文 HTTP"
+# 不能用 'https\?://' 做否定断言：该文件里有说明性文字含 "https?://" 字面量，而
+# "不接受明文 HTTP" 已由上面的 ^https:// 正向断言严格蕴含（校验正则就是 ^https://…）。
+assert_no_grep "proto '=http,https'" "$SBSHELL_SRC/openwrt/manual_input.sh" "manual_input.sh 的配置下载不再允许明文 HTTP"
 assert_grep "proto '=https'" "$SBSHELL_SRC/openwrt/manual_input.sh" "配置下载只允许 HTTPS"
 assert_grep '\[\[ "\$1" =~ \^https://' "$SBSHELL_SRC/openwrt/set_defaults.sh" "set_defaults.sh 只接受 HTTPS URL"
 
