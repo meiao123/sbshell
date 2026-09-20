@@ -132,14 +132,12 @@ for name in route_default_exists rule_pref_for_mark; do
 done
 
 # A-12：同一段「按 SHA256SUMS 校验下载内容」的逻辑内联在脚本更新的两个入口里。
-for name in verify_script_hashes; do
-    a=$(fn_hash "$SRC/openwrt/update_scripts.sh" "$name")
-    b=$(fn_hash "$SRC/openwrt/menu.sh" "$name")
-    if [ -n "$a" ] && [ "$a" = "$b" ]; then
-        pass "$name 在 update_scripts.sh 与 menu.sh 中逐字相同"
-    else
-        fail "$name 的两份副本已经漂移（'$a' vs '$b'）—— 请同步修改或在此处说明原因"
-    fi
-done
+copy_a=$(fn_hash "$SRC/openwrt/update_scripts.sh" verify_script_hashes)
+copy_b=$(fn_hash "$SRC/openwrt/menu.sh" verify_script_hashes)
+if [ -n "$copy_a" ] && [ "$copy_a" = "$copy_b" ]; then
+    pass "verify_script_hashes 在 update_scripts.sh 与 menu.sh 中逐字相同"
+else
+    fail "verify_script_hashes 的两份副本已经漂移（'$copy_a' vs '$copy_b'）—— 请同步修改或在此处说明原因"
+fi
 
 suite_end
