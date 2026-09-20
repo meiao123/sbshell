@@ -32,7 +32,6 @@ if ! command -v install >/dev/null 2>&1; then
 fi
 SCRIPT_DIR=/etc/sing-box/scripts
 REPO_RAW="https://raw.githubusercontent.com/meiao123/sbshell"
-BASE_URL="$REPO_RAW/main/openwrt"
 github_api_download() {
     local path="$1" ref="$2" output="$3"
     curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \

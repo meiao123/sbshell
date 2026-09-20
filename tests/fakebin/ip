@@ -22,6 +22,21 @@ done
 set -- "${args[@]+"${args[@]}"}"
 
 sub="${1:-} ${2:-}"
+
+# 失败注入：用于验证"未预期的失败也必须回滚"（configure_tproxy.sh 的 ERR trap）。
+# 这些点**没有**显式 `rollback; exit 1` 保护，所以只有 ERR trap 能兜住。
+if [ "${SBSHELL_IP_FAIL_RULE_SHOW:-0}" = 1 ] && [ "$sub" = "rule show" ]; then
+    log 'rule show FAILED (injected)'
+    exit 2
+fi
+if [ "${SBSHELL_IP_FAIL_RULE_ADD:-0}" = 1 ] && [ "$sub" = "rule add" ]; then
+    log 'rule add FAILED (injected)'
+    exit 2
+fi
+if [ "${SBSHELL_IP_FAIL_ROUTE_ADD:-0}" = 1 ] && [ "$sub" = "route add" ]; then
+    log 'route add FAILED (injected)'
+    exit 2
+fi
 case "$sub" in
     "route show")
         if [ "${3:-}" = "default" ]; then

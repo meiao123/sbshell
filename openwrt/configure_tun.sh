@@ -111,6 +111,7 @@ restore_prev() {
     return 0
 }
 trap 'restore_prev || true' ERR
+trap 'restore_prev || true; exit 1' INT TERM
 
 ip -4 rule show > "$OLD_RULE" 2>/dev/null || true
 ip -4 route show table "$PROXY_ROUTE_TABLE" > "$OLD_ROUTE" 2>/dev/null || true
@@ -175,13 +176,16 @@ if ! nft -f "$TMP"; then
 fi
 
 install -o root -g root -m 0644 "$TMP" "$NFT_FILE"
-cat > "$TUN_STATE_FILE" <<EOF
+# 同目录临时文件 + rename，避免掉电/中断留下半写的 state（见 configure_tproxy.sh 的同类处理）。
+TUN_STATE_TMP=$(mktemp /etc/sing-box/.tun.state.XXXXXX) || { restore_prev; exit 1; }
+cat > "$TUN_STATE_TMP" <<EOF
 OWNER=sbshell
 MODE=TUN
 TUN_TABLE_CREATED=1
 INTERFACE=$INTERFACE
 EOF
-chown root:root "$TUN_STATE_FILE"
-chmod 0600 "$TUN_STATE_FILE"
+chown root:root "$TUN_STATE_TMP"
+chmod 0600 "$TUN_STATE_TMP"
+mv -f "$TUN_STATE_TMP" "$TUN_STATE_FILE"
 APPLIED=1
 echo 'TUN 模式防火墙规则已安全应用。'
