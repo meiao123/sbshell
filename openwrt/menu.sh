@@ -242,7 +242,7 @@ install_default_ui() {
         printf '%s\n' "$ui_output" | tail -n1
         return 0
     fi
-    echo -e "${YELLOW}警告：默认 UI 安装失败，可稍后从菜单“10. 更新控制面板”重试。${NC}" >&2
+    echo -e "${YELLOW}警告：默认 UI 安装失败，可稍后从菜单「10. 更新控制面板」重试。${NC}" >&2
     printf '%s\n' "$ui_output" | tail -n1 >&2
     return 1
 }

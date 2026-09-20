@@ -104,6 +104,21 @@ for rel in sbshall.sh openwrt/menu.sh openwrt/update_scripts.sh; do
         "$rel: 首行前缀用参数展开取，不经管道"
 done
 
+# ------------------------------- 防火墙脚本：trap 与原子落盘必须一致
+suite_begin "inline copies: 两个 configure 脚本的 trap 与 state 落盘方式必须一致"
+
+for rel in openwrt/configure_tproxy.sh openwrt/configure_tun.sh; do
+    f="$SRC/$rel"
+    assert_grep "|| true' ERR" "$f" "$rel: 有 ERR trap（未预期失败也要回滚）"
+    assert_grep "INT TERM" "$f" "$rel: 处理 INT/TERM（信号路径也要回滚退出）"
+    assert_no_grep 'cat > "$STATE_FILE"\|cat > "$TUN_STATE_FILE"' "$f" \
+        "$rel: state 不直接 cat > 目标文件（掉电会留下半写）"
+done
+assert_grep 'mv -f "\$STATE_TMP" "\$STATE_FILE"' "$SRC/openwrt/configure_tproxy.sh" \
+    "configure_tproxy.sh: state 走同目录临时文件 + rename"
+assert_grep 'mv -f "\$TUN_STATE_TMP" "\$TUN_STATE_FILE"' "$SRC/openwrt/configure_tun.sh" \
+    "configure_tun.sh: state 走同目录临时文件 + rename"
+
 suite_begin "inline copies: 逐字相同的副本必须保持一致"
 
 for name in route_default_exists rule_pref_for_mark; do

@@ -1,5 +1,8 @@
-#!/bin/sh
+#!/bin/bash
 set -eu
+# 这里必须是 bash：下面依赖 `trap ... ERR` 才能在**未预期**失败时回滚，而 POSIX sh/busybox ash
+# 不支持 ERR trap（SC3047）。所有调用方（manage_autostart.sh、start_singbox.sh、menu.sh）
+# 本来就是 `bash <脚本>` 调用，改 shebang 与实际执行方式一致。
 
 
 
@@ -65,7 +68,12 @@ OLD_TUN_STATE=$(mktemp /tmp/sbshell-tun-state.XXXXXX)
 STATE_FILE=/etc/sing-box/tproxy.state
 TUN_STATE_FILE=/etc/sing-box/tun.state
 TUN_NFT_FILE=/etc/sing-box/tun/nftables.conf
-trap 'rm -f "$TMP" "$OLD_TABLE" "$OLD_TUN_TABLE" "$OLD_TUN_STATE"' EXIT
+STATE_TMP=''
+cleanup() {
+    rm -f "$TMP" "$OLD_TABLE" "$OLD_TUN_TABLE" "$OLD_TUN_STATE"
+    [ -z "${STATE_TMP:-}" ] || rm -f "$STATE_TMP"
+}
+trap cleanup EXIT
 mkdir -p /etc/sing-box
 
 cat > "$TMP" <<EOF
@@ -167,6 +175,12 @@ rollback() {
     fi
 }
 
+# 与 configure_tun.sh 对齐：任何**未预期**的失败（不是下面那几处显式 `rollback; exit 1`）
+# 也必须回滚，否则会留下"表已拆掉、state 还声称拥有它"的半拆状态。rollback 定义在上面，
+# 所以这条 trap 只能到这里才安装：更早的几步（拆 TUN 表）依赖显式调用。
+trap 'rollback || true' ERR
+trap 'rollback || true; exit 1' INT TERM
+
 # table 100 里是否已有我们需要的 local default 路由（幂等判断与回滚恢复共用）。
 route_default_exists() {
     ip -4 route show table "$PROXY_ROUTE_TABLE" | awk -v ifc="$1" '$0 == "local default dev " ifc || index($0, "local default dev " ifc " ") == 1 {found=1} END {exit !found}'
@@ -210,7 +224,10 @@ fi
 
 if [ "$prior_rule_created" -eq 1 ]; then RULE_CREATED=0; fi
 if [ "$prior_route_created" -eq 1 ] && [ "$ROUTE_CREATED" -eq 0 ]; then ROUTE_CREATED=0; fi
-cat > "$STATE_FILE" <<EOF
+# 同目录临时文件 + rename：掉电或被中断时不会留下**半写**的 state 文件。半写的 state 会让
+# 这张表既不能被重配也不能被清理 —— clean_nft.sh 必须看到 OWNER=sbshell 才肯删它。
+STATE_TMP=$(mktemp /etc/sing-box/.tproxy.state.XXXXXX) || { rollback; exit 1; }
+cat > "$STATE_TMP" <<EOF
 OWNER=sbshell
 MODE=TProxy
 TUN_TABLE_CREATED=0
@@ -221,6 +238,8 @@ ROUTE_CREATED=$ROUTE_CREATED
 RULE_OWNED=$RULE_OWNED
 ROUTE_OWNED=$ROUTE_OWNED
 EOF
-chown root:root "$STATE_FILE"; chmod 0600 "$STATE_FILE"
+chown root:root "$STATE_TMP"; chmod 0600 "$STATE_TMP"
+mv -f "$STATE_TMP" "$STATE_FILE"
+STATE_TMP=''
 rm -f "$TUN_STATE_FILE" "$TUN_NFT_FILE"
 echo 'TProxy 模式防火墙规则已安全应用。'
