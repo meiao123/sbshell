@@ -279,8 +279,14 @@ install_ui() {
         # 先清掉半成品目标：mv 目标已存在时会把备份移"进"目录里，旧 UI 会变成
         # $UI_DIR/.ui-backup.XXXXXX 而路径上留下半成品。
         rm -rf "$UI_DIR"
-        [ -z "$backup" ] || mv "$backup" "$UI_DIR"
-        echo -e "${RED}部署新 UI 失败，已恢复旧 UI。${NC}" >&2
+        # A-25：旧写法把恢复命令放在 `A || B` 的 B 位（B 是列表最后一条命令），恢复失败
+        # 会触发 errexit，下面的告警与 cleanup_ui_tmp 都执行不到。改成显式 if，
+        # 两种故障各有明确的告警（注释不照抄旧写法，以免被否定断言命中）。
+        if [ -n "$backup" ] && ! mv "$backup" "$UI_DIR"; then
+            echo -e "${RED}部署新 UI 失败，且旧 UI 恢复也失败，请手工检查 $backup。${NC}" >&2
+        else
+            echo -e "${RED}部署新 UI 失败，已恢复旧 UI。${NC}" >&2
+        fi
         cleanup_ui_tmp
         return 1
     fi

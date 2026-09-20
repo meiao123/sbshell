@@ -45,7 +45,8 @@ function handle_submenu_choice() {
             0) return 0 ;;
             *) echo -e "${RED}无效的选择${NC}" ;;
         esac
-        show_submenu
+        # A-20：菜单由外层 while 统一打印（下方 `while $menu_active` 里的 show_submenu），
+        # 这里再打一次会在选 0 退出时多印一遍。
     done
     return 0  # 确保函数结束时返回 0
 }
