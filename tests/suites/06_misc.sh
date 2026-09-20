@@ -123,7 +123,7 @@ set -uo pipefail
 . /tmp/va.sh
 validate_archive /tmp/ui-fake.zip
 EOS
-PATH="$shim:$PATH" bash /tmp/va_test.sh > /tmp/va.out 2>&1
+PATH="$shim:$PATH" timeout -k 5 60 bash /tmp/va_test.sh > /tmp/va.out 2>&1
 assert_not_rc "$?" 0 "无法解析的压缩包被拒绝（假 zip：unzip -Z1 先失败）"
 rm -rf "$shim"
 
@@ -146,7 +146,7 @@ EOS
 shim1=$(mktemp -d)
 printf '#!/bin/bash\necho "zipinfo: unavailable" >&2\nexit 127\n' > "$shim1/zipinfo"
 chmod +x "$shim1/zipinfo"
-PATH="$shim1:$PATH" bash /tmp/va_real.sh > /tmp/va1.out 2>&1
+PATH="$shim1:$PATH" timeout -k 5 60 bash /tmp/va_real.sh > /tmp/va1.out 2>&1
 assert_rc "$?" 0 "unzip 可用、zipinfo 不可用时仍能校验（unzip -Z -l 回退）"
 rm -rf "$shim1"
 
@@ -166,7 +166,7 @@ done
 exec $real_unzip "\$@"
 EOS
 chmod +x "$shim2/unzip"
-PATH="$shim2:$PATH" bash /tmp/va_real.sh > /tmp/va2.out 2>&1
+PATH="$shim2:$PATH" timeout -k 5 60 bash /tmp/va_real.sh > /tmp/va2.out 2>&1
 assert_not_rc "$?" 0 "含链接条目时拒绝"
 rm -rf "$shim2"
 
@@ -184,7 +184,7 @@ done
 exec $real_unzip "\$@"
 EOS
 chmod +x "$shim3/unzip"
-PATH="$shim3:$PATH" bash /tmp/va_real.sh > /tmp/va3.out 2>&1
+PATH="$shim3:$PATH" timeout -k 5 60 bash /tmp/va_real.sh > /tmp/va3.out 2>&1
 assert_not_rc "$?" 0 "展开体积超限时拒绝"
 rm -rf "$shim3"
 
