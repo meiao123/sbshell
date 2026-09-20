@@ -60,6 +60,7 @@ nft 表、ip rule/route、state 文件、锁目录、cron 文件等可观测结�
 | `14_batch2_integrity.sh` | 批次 2 数据完整性：`install()` 兜底必须先 unlink（否则覆盖运行中的脚本）、cron 更新备份移出 `$TMP`、配置原子替换 |
 | `15_ui_atomic_deploy.sh` | 批次 2 F8：UI 部署必须同文件系统 staging + rename，回滚前显式删除目标 |
 | `16_guardrails.sh` | 批次 3 测试护栏：空套件集/忘记 `suite_end` 必须判失败、断言失败带实际输出、nft 桩保真度 |
+| `17_uninstall.sh` | 批次 3 补：卸载路径的行为覆盖（它是唯一执行 `rm -rf /etc/sing-box` 的代码）—— 回答 n 不动任何东西、停止失败必须中止并保留配置与 cron 条目、正常卸载清干净且不误删无关 init 脚本 |
 
 ## 本地开发
 
