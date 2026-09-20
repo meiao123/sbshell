@@ -218,7 +218,7 @@ assert_rc "$UI_READY_RC" 0 "面板可达时收尾检查成功"
 assert_contains "$UI_READY_OUT" "UI 安装完成。" "面板可达时报安装完成"
 assert_not_contains "$UI_READY_OUT" "正在重启 sing-box" "面板可达时不重启 sing-box"
 assert_grep '/ui/index.html' "$SBSHELL_STUB_STATE/curl.log" "探测地址取自配置的 external_controller 端口与 /ui 路径"
-assert_not_contains "$(stub_log initd)" "restart" "面板可达时没有调用 init 脚本"
+assert_eq "$(stub_log initd)" "" "面板可达时没有调用 init 脚本"
 
 # ② 面板无应答 + sing-box 在运行：必须重启一次，并明确告警但仍不阻断（文件已装好）
 reset_stub_state
@@ -233,7 +233,10 @@ UI_READY_OUT=$(run_with_timeout bash "$DRIVER" ready 2>&1); UI_READY_RC=$?
 
 assert_rc "$UI_READY_RC" 0 "面板不可达不阻断安装（UI 文件已经装好）"
 assert_contains "$UI_READY_OUT" "正在重启 sing-box" "面板不可达时主动重启 sing-box 以挂载 /ui"
-assert_contains "$(stub_log initd)" "restart" "确实调用了 /etc/init.d/sing-box restart"
+# 真机（以及本夹具的 rc.common）里 `restart` 的语义是 stop 再 start，
+# 所以断言这两步都发生，而不是去找字面量 "restart"。
+assert_contains "$(stub_log initd)" "stop" "面板不可达时确实重启了服务（init 脚本收到 stop）"
+assert_contains "$(stub_log initd)" "start" "重启会重新拉起 sing-box（init 脚本收到 start）"
 assert_contains "$UI_READY_OUT" "但面板仍未响应" "重启后仍不可达要明确告警，而不是继续报成功"
 
 # ③ sing-box 未运行：只提示，不擅自拉起服务
@@ -248,7 +251,7 @@ UI_READY_OUT=$(run_with_timeout bash "$DRIVER" ready 2>&1); UI_READY_RC=$?
 
 assert_rc "$UI_READY_RC" 0 "sing-box 未运行时收尾检查不失败"
 assert_contains "$UI_READY_OUT" "sing-box 当前未运行" "未运行时给出提示而不是偷偷启动服务"
-assert_not_contains "$(stub_log initd)" "restart" "未运行时不去重启 sing-box"
+assert_eq "$(stub_log initd)" "" "未运行时不去重启 sing-box"
 
 # ④ external_ui 指向别的目录：面板不由我们负责，不重启
 reset_stub_state
@@ -263,7 +266,7 @@ UI_READY_OUT=$(run_with_timeout bash "$DRIVER" ready 2>&1); UI_READY_RC=$?
 
 assert_rc "$UI_READY_RC" 0 "external_ui 不是本目录时收尾检查仍成功"
 assert_contains "$UI_READY_OUT" "无法自动确认面板" "无法判定时如实说明，不谎称已确认"
-assert_not_contains "$(stub_log initd)" "restart" "external_ui 指向别处时不得替用户重启 sing-box"
+assert_eq "$(stub_log initd)" "" "external_ui 指向别处时不得替用户重启 sing-box"
 
 # ⑤ install_ui 的收尾必须走可达性通知；生成的 cron 版也要有同样的收尾检查
 awk '/^install_ui\(\)/{p=1} p{print} p&&/^\}$/{exit}' "$SRC/update_ui.sh" > /tmp/ui12-install.sh
