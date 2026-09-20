@@ -84,6 +84,10 @@ reset_fixtures() {
     rm -rf "$SBSHELL_FIXTURES"
     mkdir -p "$SBSHELL_FIXTURES"
     export SBSHELL_FIXTURES
+    # 自更新（A-12）会额外下载仓库根的 SHA256SUMS 并逐文件校验。夹具里放的是仓库**真实**
+    # 脚本，所以清单一并放进来即可保持一致；否则校验必然失败、更新路径整条变红。
+    [ -f "$SBSHELL_SRC/SHA256SUMS" ] || { echo "缺少 $SBSHELL_SRC/SHA256SUMS（更新路径需要它）" >&2; return 1; }
+    cp "$SBSHELL_SRC/SHA256SUMS" "$SBSHELL_FIXTURES/"
 }
 fixture_from_repo() { cp "$SBSHELL_SRC/$1" "$SBSHELL_FIXTURES/$(basename "$1")"; }
 fixture_write() { printf '%s\n' "$2" > "$SBSHELL_FIXTURES/$1"; }

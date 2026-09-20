@@ -98,7 +98,9 @@ assert_eq "$(run_scenario "$va/missing.manifest")" "rc=1" "清单里的文件缺
 assert_eq "$(run_scenario "$va/prefix.manifest")" "rc=1" "清单没有本目录条目（checked=0）→ 拒绝"
 
 # 没有 sha256sum 时按设计放行（但必须给出显式警告），否则裁剪过的 busybox 上更新会彻底坏掉。
-out=$(env PATH=/nonexistent bash "$va/driver.sh" "$va" "$va/scripts" "$va/good.manifest" 2>&1 | tail -n2)
+# 注意 bash 要用绝对路径：受限 PATH 下 `env PATH=/nonexistent bash …` 会找不到解释器。
+BASH_BIN=$(command -v bash)
+out=$(env PATH=/nonexistent "$BASH_BIN" "$va/driver.sh" "$va" "$va/scripts" "$va/good.manifest" 2>&1 | tail -n2)
 assert_contains "$out" "跳过下载内容校验" "缺少 sha256sum 时打印显式警告"
 assert_contains "$out" "rc=0" "缺少 sha256sum 时放行（有意取舍，已在 docs 记录）"
 
