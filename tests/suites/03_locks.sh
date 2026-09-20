@@ -92,8 +92,10 @@ assert_grep 'release_scripts_lock; rm -rf' "$SBSHELL_SRC/openwrt/update_scripts.
     "update_scripts.sh 的 EXIT trap 会释放脚本锁"
 assert_eq "$(grep -c 'update_scripts_locked' "$SBSHELL_SRC/openwrt/menu.sh")" "4" \
     "menu.sh：1 处定义 + 3 处调用都走持锁包装"
-assert_no_grep '^    update_scripts || ' "$SBSHELL_SRC/openwrt/menu.sh" \
-    "menu.sh 不再直接调用无锁的 update_scripts"
+assert_eq "$(grep -cE '^[[:space:]]*update_scripts( |$)' "$SBSHELL_SRC/openwrt/menu.sh")" "1" \
+    "menu.sh 只剩包装函数内部那一处无锁调用（其余入口都走 update_scripts_locked）"
+assert_grep '^update_scripts_locked() {' "$SBSHELL_SRC/openwrt/menu.sh" \
+    "menu.sh 定义了持锁包装 update_scripts_locked"
 
 # 行为：抽出锁实现并用 2 秒阈值驱动（真机阈值是 900 秒，不能真的等）。
 driver=$(mktemp -d)
