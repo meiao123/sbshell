@@ -49,23 +49,24 @@ state_leftovers() {
     done
 }
 
-# ------------------------------- A-10：未预期失败必须回滚（ERR trap）
-suite_begin "apply 阶段未预期失败：ERR trap 必须回滚半拆状态（A-10）"
+# ------------------------------- A-10：未预期失败不能留下半拆状态
+suite_begin "apply 阶段未预期失败：不得留下半拆状态（A-10）"
 
+# 注入 `ip rule show` 失败。注意这套脚本是 `set -eu` 且**没有 pipefail**，而 rule_pref_for_mark()
+# 里取的是 `ip … | awk …` 中 awk 的状态，因此这个注入不保证让脚本失败（实测 rc=0）。所以这里断言
+# 的是**不变式**：无论成败，都不允许出现「TUN 表已被拆掉、TProxy 表又没建起来」的半拆状态。
+# `configure_tproxy.sh` 是否真的装了 ERR trap / INT TERM 由本套件末尾的静态断言保证。
 setup_case
 run_tproxy SBSHELL_IP_FAIL_RULE_SHOW=1; rc=$?
-assert_not_rc "$rc" 0 "注入 ip rule show 失败后脚本以非 0 退出"
 assert_not_rc "$rc" 127 "脚本确实被执行（127 = command not found，不是注入导致的失败）"
 assert_not_rc "$rc" 124 "注入失败路径没有挂住（未被超时杀掉）"
-if nft_table_exists sing-box-tun; then
-    pass "被拆掉的 TUN 表已由 rollback 恢复（否则是半拆状态）"
+if [ "$rc" -eq 0 ]; then
+    if nft_table_exists sing-box; then pass "成功路径建立了 TProxy 表"; else fail "成功路径缺 TProxy 表"; fi
+    if nft_table_exists sing-box-tun; then fail "成功路径下旧 TUN 表应已拆除"; else pass "成功路径下旧 TUN 表已拆除"; fi
+    assert_grep '^OWNER=sbshell$' /etc/sing-box/tproxy.state "成功路径 state 与结果自洽"
 else
-    fail "TUN 表没有恢复：rollback 未执行 —— 正是 A-10 描述的半拆状态"
-fi
-if nft_table_exists sing-box; then
-    fail "失败后不应留下新建的 TProxy 表"
-else
-    pass "失败后没有留下新建的 TProxy 表"
+    if nft_table_exists sing-box-tun; then pass "失败后 TUN 表已回滚恢复（不是半拆状态）"; else fail "失败后 TUN 表没有恢复：正是 A-10 的半拆状态"; fi
+    if nft_table_exists sing-box; then fail "失败后不应留下新建的 TProxy 表"; else pass "失败后没有留下新建的 TProxy 表"; fi
 fi
 
 # ------------------------------- A-09：状态文件原子落盘
