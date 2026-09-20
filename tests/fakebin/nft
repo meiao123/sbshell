@@ -11,7 +11,19 @@ case "${1:-}" in
         # nft -c -f FILE -> 语法检查（可用 SBSHELL_NFT_CHECK_FAIL=1 注入失败）
         [ "${SBSHELL_NFT_CHECK_FAIL:-0}" = 1 ] && { log "check FAIL"; echo "nft: check failed" >&2; exit 1; }
         shift
-        while [ $# -gt 0 ]; do case "$1" in -f) shift;; *) shift;; esac; done
+        cf=''
+        while [ $# -gt 0 ]; do
+            case "$1" in
+                -f) shift; cf="${1:-}"; shift;;
+                *) shift;;
+            esac
+        done
+        # 保真度：真 nft 会拒绝不存在的文件和不含任何语句的规则集。旧桩无条件成功，
+        # 于是"规则文件根本没生成/路径算错"这类回归会被静默放过。
+        [ -n "$cf" ] || { log "check no-file"; echo "nft: -c 需要 -f FILE" >&2; exit 1; }
+        [ -f "$cf" ] || { log "check missing $cf"; echo "nft: cannot open $cf" >&2; exit 1; }
+        grep -qE '^[[:space:]]*(table|add|delete|flush)[[:space:]]' "$cf" \
+            || { log "check empty $cf"; echo "nft: 规则集不含任何语句" >&2; exit 1; }
         log "check"
         exit 0
         ;;
@@ -20,7 +32,9 @@ case "${1:-}" in
         [ -f "$f" ] || { echo "nft: cannot open $f" >&2; exit 1; }
         fam=$(awk '/^[[:space:]]*table[[:space:]]/ {print $2; exit}' "$f")
         name=$(awk '/^[[:space:]]*table[[:space:]]/ {print $3; exit}' "$f")
-        [ -n "$fam" ] && [ -n "$name" ] || { log "apply noop"; exit 0; }
+        # 没有 table 声明的规则集不是合法 nftables 规则集（旧桩当成 noop 成功返回）。
+        [ -n "$fam" ] && [ -n "$name" ] \
+            || { log "apply invalid $f"; echo "nft: $f 没有 table 声明" >&2; exit 1; }
         if [ -n "${SBSHELL_NFT_FAIL:-}" ] && [ "${SBSHELL_NFT_FAIL}" = "$name" ]; then
             log "apply FAIL $fam/$name"
             echo "nft: apply failed for $name" >&2
@@ -62,4 +76,8 @@ case "${1:-}" in
         exit 1
         ;;
 esac
-exit 0
+# 未知/未支持的调用必须失败：旧实现静默 exit 0，让拼错的动词（或换成 add/insert 之后
+# 桩跟不上）在测试里表现为"成功"。
+log "unsupported ${1:-<none>}"
+echo "nft: 不支持的调用: $*" >&2
+exit 1

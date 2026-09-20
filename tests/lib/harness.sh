@@ -25,8 +25,20 @@ assert_no_file() { if [ -e "$1" ]; then fail "$2 (unexpected $1)"; else pass "$2
 assert_dir() { if [ -d "$1" ]; then pass "$2"; else fail "$2 (missing dir $1)"; fi; }
 assert_grep() { if grep -q -- "$1" "$2" 2>/dev/null; then pass "$3"; else fail "$3 (pattern '$1' not found in $2)"; fi; }
 assert_no_grep() { if grep -q -- "$1" "$2" 2>/dev/null; then fail "$3 (pattern '$1' found in $2)"; else pass "$3"; fi; }
-assert_contains() { case "$1" in *"$2"*) pass "$3" ;; *) fail "$3 ('$2' not in output)" ;; esac; }
-assert_not_contains() { case "$1" in *"$2"*) fail "$3 ('$2' present in output)" ;; *) pass "$3" ;; esac; }
+# 失败时带上实际输出（截断到 200 字符、换行折成 |）：否则 CI 里只看到
+# "not in output"，完全无法判断脚本到底打印了什么（12_ui_install 曾因此不可诊断）。
+assert_contains() {
+    case "$1" in
+        *"$2"*) pass "$3" ;;
+        *) fail "$3 ('$2' not in output; got: $(printf '%s' "$1" | tr '\n' '|' | head -c 200))" ;;
+    esac
+}
+assert_not_contains() {
+    case "$1" in
+        *"$2"*) fail "$3 ('$2' present in output; got: $(printf '%s' "$1" | tr '\n' '|' | head -c 200))" ;;
+        *) pass "$3" ;;
+    esac
+}
 
 run_with_timeout() { timeout "${SBSHELL_TIMEOUT:-90}" "$@"; }
 

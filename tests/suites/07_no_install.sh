@@ -86,7 +86,11 @@ SUBSCRIPTION_URL=tk?token=demo
 TEMPLATE_URL=https://tpl.test/template.json
 EOS
 fixture_write template.json "$VALID_CLIENT_CONFIG"
-printf '1\n12\n' | run_with_timeout bash "$SCRIPTS/auto_update.sh" > /tmp/no-install-au.out 2>&1 || true
+au_rc=0
+printf '1\n12\n' | run_with_timeout bash "$SCRIPTS/auto_update.sh" > /tmp/no-install-au.out 2>&1 || au_rc=$?
+# 旧写法用 `|| true` 吞掉退出码，只断言"文件存在"：auto_update.sh 失败但恰好留下了
+# 半个文件时同样会通过。
+assert_rc "$au_rc" 0 "auto_update.sh 在无 install 环境下成功"
 assert_file /etc/sing-box/update-singbox.sh "生成 cron 更新脚本"
 rm -f /etc/sing-box/config.json
 PATH="$NOPATH" run_with_timeout bash /etc/sing-box/update-singbox.sh > /tmp/no-install-cron.out 2>&1
