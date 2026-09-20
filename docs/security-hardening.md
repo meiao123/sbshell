@@ -170,6 +170,33 @@ chown 失败 → 显式容忍（所有权不构成安全边界，且 vfat/extroo
 
 ## 第四轮补充：引用与超时取值现状（批次 4）
 
+### busybox 兼容性盘点（批次 3）
+
+CI 的 Debian 镜像装着 GNU coreutils，而真机的 OpenWrt/ImmortalWrt 用 busybox：这类差异
+**在容器测试里看不到**（第一轮的 `install: command not found` 就是这么漏掉的）。逐项盘点与结论：
+
+- **`install`**：busybox 常常没有该 applet，因此 `sbshall.sh` 与 `openwrt/*.sh` 共 10 个文件
+  （含 `auto_update.sh` heredoc 里那份 cron 版）内联了兜底实现，且每份都先 `rm -f` 再写
+  （避免覆盖正在运行的脚本触发 ETXTBSY）。守护测试：`tests/suites/07_no_install.sh`、
+  `tests/suites/20_inline_copies.sh`。
+- **`stat -c %Y`**：锁过期判断依赖它（5 处）。上游 busybox `coreutils/stat.c` 的 usage 明确列出
+  `%Y	Time of last modification as seconds since Epoch`，实现里是 `} else if (m == 'Y') {`，
+  因此**在 busybox 上可用**，无需改写。（此前记为"待真机确认"，现已按上游源码确认。）
+- **`timeout`**：脚本里的 16 处 "timeout" 全部是 curl 的 `--connect-timeout`，没有把 `timeout`
+  当外部命令用（busybox 不保证提供该 applet）。
+- **`unzip` / `zipinfo`**：`openwrt/update_ui.sh` 在两者缺失时会用 `pkg_install`（opkg/apk 自适应）
+  自动安装，不必手工预装。
+- **`grep -oP`**：busybox 不支持 PCRE，历史上修过；现在一律用 `sed`。
+- **shell 解析器**：17 个脚本是 `#!/bin/bash`（用 `set -Eeuo pipefail`、`[[ ]]`、数组），
+  只有 `configure_tproxy.sh` 与 `install_singbox.sh` 是 `#!/bin/sh`，两者都不含 bash 专有语法
+  （`configure_tproxy.sh` 里提到 pipefail 的只是注释）。
+- **cron 生成体**：`auto_update.sh` 生成的是 `#!/bin/sh` + `set -eu`（POSIX，且含 install 兜底），
+  `update_ui.sh` 生成的是 `#!/bin/bash` + `set -Eeuo pipefail` —— 各与其调用方式一致。
+
+守护测试：`tests/suites/21_busybox_compat.sh`（shebang 白名单、`#!/bin/sh` 脚本的 bash 专有语法、
+GNU 专有选项黑名单、`timeout` 命令调用、`stat -c` 格式串白名单、unzip 自动安装）。
+注释里的提法不算违规，因此所有检查都在"去掉整行注释"的代码行上做。
+
 ### 引用（供应链）
 
 - **脚本与自更新**：直接读 `main`，既没有 `RELEASE` 指针，也没有提交 SHA 固定 —— 这是维护者

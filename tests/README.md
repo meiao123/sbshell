@@ -24,7 +24,7 @@ tests/run.sh --local    # 在本地 Linux 主机以 root 直接运行
 | `fakebin/` | `nft` `ip` `systemctl` `sing-box` `curl` `sysctl` `ss` `pidof` `opkg` `apk` `uci` `logread` `ufw` `sshd` 等 stub |
 | `fakebin-busybox/` | 模拟 busybox `grep`（不支持 `-P`），用于 OpenWrt 兼容性测试 |
 | `rc.common` / `initd/` | 极简 `/etc/rc.common` 与 OpenWrt 风格 init 脚本（`sing-box` 极简桩、`sing-box-package` 复刻包里的 UCI 门控桩） |
-| `suites/` | 13 个行为测试套件 |
+| `suites/` | 20 个行为测试套件 |
 
 状态都保存在 `$SBSHELL_STUB_STATE`（默认 `/tmp/sbshell-stub-state`），断言直接检查
 nft 表、ip rule/route、state 文件、锁目录、cron 文件等可观测结果。
@@ -60,6 +60,9 @@ nft 表、ip rule/route、state 文件、锁目录、cron 文件等可观测结�
 | `15_ui_atomic_deploy.sh` | 批次 2 F8：UI 部署必须同文件系统 staging + rename，回滚前显式删除目标 |
 | `16_guardrails.sh` | 批次 3 测试护栏：空套件集/忘记 `suite_end` 必须判失败、断言失败带实际输出、nft 桩保真度 |
 | `17_uninstall.sh` | 批次 3 补：卸载路径的行为覆盖（它是唯一执行 `rm -rf /etc/sing-box` 的代码）—— 回答 n 不动任何东西、停止失败必须中止并保留配置与 cron 条目、正常卸载清干净且不误删无关 init 脚本 |
+| `19_openwrt_entrypoints.sh` | 批次 3 补：此前只有静态 grep 的 OpenWrt 入口 —— `manage_autostart.sh apply_firewall` 必须先于交互 read（空 stdin 下完成并下发 TProxy/TUN 表）、启用/禁用自启动（写 `START=40` 的 init 脚本、注册两个 rc.d 条目、服务在跑时跳过重载、重复启用幂等）、`switch_mode.sh`（非普通文件拒绝、同模式无需切换、**清理失败必须恢复原模式**、正常切换清旧表与 state）、`start_singbox.sh`/`stop_singbox.sh`/`check_config.sh` 各路径 |
+| `20_inline_copies.sh` | 批次 4 补：内联副本一致性 —— 实测这些副本**并非逐字相同**（1 份注释差异、下载链只差 `--show-error`/`2>/dev/null`），因此断言每份副本的**必备行为**（`rm -f "$2"`、`mkdir -p "$@"`、`chmod "$m"`、`chown "$o${g:+:$g}"`、`--proto '=https'`、`--tlsv1.2`、`*..*|/*` 穿越防护、`[ -s "$output" ]`），只对确实逐字相同的 `route_default_exists`/`rule_pref_for_mark` 断言哈希；另有“用 `install -` 却没带兜底就失败”与“内联兜底文件数=10” |
+| `21_busybox_compat.sh` | 批次 3 补：busybox 兼容性护栏 —— shebang 白名单、`#!/bin/sh` 脚本不得含 bash 专有语法、GNU 专有选项黑名单、`timeout` 不得当命令调用、`stat -c` 只用 `%Y`（上游 `busybox/coreutils/stat.c` 已确认支持）、`unzip/zipinfo` 自动安装。全部在**去掉整行注释**的代码行上断言（整篇匹配被骗过三次） |
 
 ## 本地开发
 
