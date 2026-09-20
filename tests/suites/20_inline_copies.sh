@@ -74,7 +74,8 @@ for rel in sbshall.sh openwrt/menu.sh openwrt/update_scripts.sh; do
     f="$SRC/$rel"
     assert_min_count "$f" "--proto '=https'" 3 "$rel: 三层下载都限定 HTTPS"
     assert_min_count "$f" '--tlsv1.2' 3 "$rel: 三层下载都要求 TLS 1.2 以上"
-    assert_no_grep "proto '=http" "$f" "$rel: 不允许明文 HTTP 下载"
+    # 注意必须带逗号：裸 "proto '=http" 是 "proto '=https" 的前缀，会自己命中自己。
+    assert_no_grep "proto '=http,https'" "$f" "$rel: 不允许明文 HTTP 下载"
     assert_min_count "$f" '"\$prefix/\$path"' 1 "$rel: 归档下载按 prefix 拼条目"
 done
 
