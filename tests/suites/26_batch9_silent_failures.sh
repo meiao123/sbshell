@@ -13,9 +13,12 @@ set -uo pipefail
 SRC="${SBSHELL_SRC:-/src}"
 
 # 统计匹配行数：把模式单独传进来，避免在命令替换里嵌套引号。
+# 用 ERE（grep -cE）：本套件要在模式里匹配**字面**的 `||`，而 GNU BRE 里 `\|` 是“或”
+# 运算符 —— 写成 BRE 会让模式变成「A 或 空 或 B」，空分支匹配每一行（CI 上表现为 got 135/509/237，
+# 正好是三个文件的总行数）。ERE 下 `\|` 才是字面 `|`。
 count_in() {
     local pattern="$1" file="$2"
-    grep -c -- "$pattern" "$file" 2>/dev/null || true
+    grep -cE -- "$pattern" "$file" 2>/dev/null || true
 }
 
 suite_begin "批次9 A-23：失败不再被吞掉"
