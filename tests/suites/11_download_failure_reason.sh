@@ -49,6 +49,11 @@ assert_grep '配置文件下载失败' "$OUT" "报告的是下载失败"
 assert_no_grep '配置文件下载超时' "$OUT" "不再误报为下载超时"
 assert_grep 'HTTP 500' "$OUT" "失败原因里指出服务端返回 500"
 assert_grep '请求地址: http' "$OUT" "失败时打印请求地址，便于直接复制排查"
+# A-11：FULL_URL 里含用户 token，失败输出只保留 scheme+host（这里刻意只检查"请求地址"那一行：
+# 交互确认阶段回显用户刚输入的订阅地址是必要的，不算泄露）。
+addr_line=$(grep '请求地址:' "$OUT" | head -n1)
+assert_not_contains "$addr_line" 'tk?token=demo' "请求地址那行不含订阅 token 原文"
+assert_contains "$addr_line" 'https://backend.test/***' "请求地址已脱敏为 scheme+host/***"
 if [ "$MANUAL_ELAPSED" -lt 15 ]; then
     pass "立即失败（${MANUAL_ELAPSED}s），不再空等 30 秒"
 else

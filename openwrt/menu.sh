@@ -62,7 +62,16 @@ github_archive_download() {
         return 1
     fi
     [ -s "$archive" ] || { rm -f "$archive"; return 1; }
-    prefix=$(tar -tzf "$archive" 2>/dev/null | head -n1 | cut -d/ -f1)
+    # 不要写成 `tar -tzf "$archive" | head -n1`：head 先退出会让 tar 收到 SIGPIPE（rc=141），
+    # 在 set -o pipefail 下赋值失败、脚本直接中止 —— 只有大归档才会命中（小归档碰巧正常）。
+    list=$(mktemp /tmp/sbshell-archive-list.XXXXXX) || { rm -f "$archive"; return 1; }
+    if ! tar -tzf "$archive" > "$list" 2>/dev/null; then
+        rm -f "$archive" "$list"
+        return 1
+    fi
+    first=$(head -n1 "$list") || true
+    prefix=${first%%/*}
+    rm -f "$list"
     [ -n "$prefix" ] || { rm -f "$archive"; return 1; }
     entry="$prefix/$path"
     case "$entry" in
@@ -146,6 +155,19 @@ uninstall_sbshell() {
     rm -f /usr/local/bin/sb /usr/bin/sb /etc/cron.d/sbshell-ui /etc/cron.d/sbshell-singbox /etc/sing-box/update-ui.sh /etc/sing-box/update-singbox.sh
     rm -f /etc/crontabs/sbshell-ui 2>/dev/null || true
     if [ -f /etc/crontabs/root ]; then sed -i '/[[:space:]]# sbshell-singbox-auto-update$/d; /[[:space:]]# sbshell-ui-auto-update$/d' /etc/crontabs/root; fi
+    # 卸载后不能留下指向已删除脚本的开机启动项：/etc/sing-box 紧接着就会被删掉，
+    # 而 Sbshell 自己写的 /etc/init.d/sbshell-firewall（START=40）每次开机都会去执行
+    # 已经不存在的 manage_autostart.sh，在 init 日志里留下失败记录。
+    if [ -f /etc/init.d/sbshell-firewall ]; then
+        /etc/init.d/sbshell-firewall disable >/dev/null 2>&1 || true
+    fi
+    rm -f /etc/init.d/sbshell-firewall /etc/rc.d/S40sbshell-firewall
+    # sing-box 软件包确实已不在时，Sbshell 写过的 /etc/init.d/sing-box 与它的 rc.d 链接同样
+    # 指向不存在的二进制；包仍然存在时那属于包自己的文件，不能碰。
+    if ! command -v sing-box >/dev/null 2>&1; then
+        /etc/init.d/sing-box disable >/dev/null 2>&1 || true
+        rm -f /etc/init.d/sing-box /etc/rc.d/S99sing-box
+    fi
     rm -rf /etc/sing-box
     echo -e "${GREEN}Sbshell 与 sing-box 配置目录已清理；若软件包存在依赖冲突，sing-box 软件包本身会继续保留。${NC}"
     exit 0
