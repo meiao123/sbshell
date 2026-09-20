@@ -28,9 +28,21 @@ else
     pkg_update() { echo '未找到 opkg 或 apk 包管理器。' >&2; return 1; }
     pkg_install() { echo '未找到 opkg 或 apk 包管理器。' >&2; return 1; }
 fi
-command -v curl >/dev/null 2>&1 || { pkg_update && pkg_install curl; }
-command -v unzip >/dev/null 2>&1 || { pkg_update && pkg_install unzip; }
-command -v zipinfo >/dev/null 2>&1 || { pkg_update && pkg_install unzip; }
+# 依赖探测下沉到真正使用点（A-13）：旧写法在脚本顶层无条件探测 zipinfo/unzip，只要设备上
+# 没有 zipinfo，**每次**进入菜单 10（哪怕只是「检查 UI」）都会先跑一次 `opkg update` 网络
+# 往返，而且 `pkg_update && pkg_install …` 是行尾命令，失败会被 set -e 直接带走整个脚本。
+ensure_curl() {
+    command -v curl >/dev/null 2>&1 && return 0
+    { pkg_update && pkg_install curl; } || true
+    command -v curl >/dev/null 2>&1 || { echo -e "${RED}缺少 curl，无法下载 UI。${NC}" >&2; return 1; }
+}
+# 只在实际解析压缩包时按需安装；zipinfo 不再是必需项（见 validate_archive 的 unzip -Z 回退）。
+ensure_unzip() {
+    command -v unzip >/dev/null 2>&1 && return 0
+    { pkg_update && pkg_install unzip; } || true
+    command -v unzip >/dev/null 2>&1
+}
+if ! command -v curl >/dev/null 2>&1; then ensure_curl || exit 1; fi
 valid_url() { [[ "$1" =~ ^https://[^[:space:]]+$ ]]; }
 get_config_url() { sed -n 's/.*"external_ui_download_url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' /etc/sing-box/config.json 2>/dev/null | head -n1; }
 release_ui_lock() {
@@ -67,6 +79,12 @@ acquire_ui_lock() {
     }
 validate_archive() {
     local zip="$1" mode size total=0 count=0 entry list
+    # 先按需安装/探测 unzip，再解析清单：本函数第一件事就是 `unzip -Z1`，旧顺序会在缺 unzip
+    # 的固件上直接 return 1，永远走不到下面那段按需安装 —— 等于 A-13 根本没生效
+    # （行为测试抓到的真实缺陷：断言"缺 unzip 时必须 apk add unzip"一直不成立）。
+    if ! command -v unzip >/dev/null 2>&1; then
+        ensure_unzip || { echo -e "${RED}缺少 unzip，无法校验 UI 压缩包。${NC}" >&2; return 1; }
+    fi
     list=$(mktemp) || { echo -e "${RED}无法创建临时文件。${NC}" >&2; return 1; }
     if ! unzip -Z1 "$zip" > "$list" 2>/dev/null; then
         echo -e "${RED}UI 压缩包无法解析。${NC}" >&2; rm -f "$list"; return 1
@@ -80,8 +98,13 @@ validate_archive() {
         [ "$count" -le 10000 ] || { echo -e "${RED}UI 压缩包条目过多。${NC}" >&2; rm -f "$list"; return 1; }
     done < "$list"
     [ "$count" -gt 0 ] || { echo -e "${RED}UI 压缩包为空或无法解析。${NC}" >&2; rm -f "$list"; return 1; }
-    if ! zipinfo -l "$zip" > "$list" 2>/dev/null; then
-        echo -e "${RED}UI 压缩包无法解析，请确认已安装 unzip。${NC}" >&2; rm -f "$list"; return 1
+    # `unzip -Z -l` 与 `zipinfo -l` 输出相同，而且它们本来就是同一个二进制——OpenWrt 的
+    # unzip 包不一定提供 /usr/bin/zipinfo，旧代码会在"刚确认安装过 unzip"之后仍然拒绝
+    # 安装 UI（用户看到互相矛盾的提示）。两者都不可用才算失败。
+    if ! unzip -Z -l "$zip" > "$list" 2>/dev/null; then
+        if ! zipinfo -l "$zip" > "$list" 2>/dev/null; then
+            echo -e "${RED}UI 压缩包无法解析，请确认已安装 unzip。${NC}" >&2; rm -f "$list"; return 1
+        fi
     fi
     while read -r mode size; do
         [ -n "$mode" ] || continue
@@ -341,8 +364,22 @@ acquire_lock() {
 acquire_lock
 TMP=$(mktemp -d /tmp/sbshell-ui-auto.XXXXXX)
 mkdir -p "$BACKUP_DIR"
+# cron 路径没有交互机会：缺 unzip 时自己装一次（apk/opkg），装不上再 fail-closed，
+# 否则缺 unzip 的设备上自动更新会永久失败（交互路径能装，cron 路径不能）。
+ensure_unzip_auto() {
+  command -v unzip >/dev/null 2>&1 && return 0
+  if command -v apk >/dev/null 2>&1; then
+    apk update >/dev/null 2>&1 || true
+    apk add unzip >/dev/null 2>&1 || true
+  elif command -v opkg >/dev/null 2>&1; then
+    opkg update >/dev/null 2>&1 || true
+    opkg install unzip >/dev/null 2>&1 || true
+  fi
+  command -v unzip >/dev/null 2>&1
+}
 validate_archive() {
   local zip="$1" entry mode size total=0 count=0 list
+  ensure_unzip_auto || { echo '缺少 unzip，无法校验 UI 压缩包。' >&2; exit 1; }
   list=$(mktemp) || exit 1
   unzip -Z1 "$zip" > "$list" 2>/dev/null || { rm -f "$list"; exit 1; }
   while IFS= read -r entry; do
@@ -351,7 +388,9 @@ validate_archive() {
     count=$((count + 1)); [ "$count" -le 10000 ] || { rm -f "$list"; exit 1; }
   done < "$list"
   [ "$count" -gt 0 ] || { rm -f "$list"; exit 1; }
-  zipinfo -l "$zip" > "$list" 2>/dev/null || { rm -f "$list"; exit 1; }
+  # 与交互路径一致（A-13）：unzip -Z -l 与 zipinfo -l 输出相同，而且本来就是同一个二进制；
+  # OpenWrt 的 unzip 包不一定提供 zipinfo，旧写法会让 cron 自动更新在那些设备上永远失败。
+  unzip -Z -l "$zip" > "$list" 2>/dev/null || zipinfo -l "$zip" > "$list" 2>/dev/null || { rm -f "$list"; exit 1; }
   while read -r mode size; do
     [ -n "$mode" ] || continue
     case "$mode" in l*|b*|c*|p*) rm -f "$list"; exit 1;; esac

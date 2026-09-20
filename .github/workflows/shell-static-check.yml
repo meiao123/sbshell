@@ -102,7 +102,13 @@ jobs:
           rc=0
           bash tests/run.sh > /tmp/suite.log 2>&1 || rc=$?
           if [ "$rc" -ne 0 ]; then
-            echo "::error::行为测试失败（rc=$rc），下面是套件日志尾部："
+            echo "::error::行为测试失败（rc=$rc）"
+            # 逐条失败断言也做成注解：Actions 的**作业日志**只保留开头，而注解接口很小，
+            # 所以只发一个标题等于没有可诊断信息（这一条就是这么暴露出来的）。
+            grep -nE '  FAIL |^########## .* FAILED|个套件失败|没有输出小结行' /tmp/suite.log \
+              | head -n 10 | while IFS= read -r line; do
+                  echo "::error::$line"
+                done || true
             echo "----- 套件小结与失败断言 -----"
             grep -nE '^########## |^-- [0-9]+ checks|  FAIL ' /tmp/suite.log || true
           fi

@@ -92,7 +92,7 @@ assert_grep '^opkg install kmod-nft-tproxy sing-box$' "$OPKG_LOG" "老固件仍�
 assert_grep '^opkg install kmod-tun$' "$OPKG_LOG" "老固件仍用 opkg install kmod-tun"
 assert_no_file "$APK_LOG" "老固件不会调用 apk"
 
-suite_begin "openwrt: update_ui.sh installs unzip/zipinfo through apk instead of dying"
+suite_begin "openwrt: update_ui.sh 只在真正解析压缩包时才按需装 unzip（A-13）"
 reset_stub_state
 reset_singbox_dir
 reset_openwrt_dirs
@@ -103,11 +103,35 @@ if (PATH="$APKONLY" command -v unzip >/dev/null 2>&1); then
 else
     pass "受限 PATH 里没有 unzip/zipinfo（模拟缺解压工具的固件）"
 fi
+
+# ① 入口不再探测/安装依赖：依赖齐全时进入脚本不得调用任何包管理器
+#    （旧代码顶层无条件探测 zipinfo → 每次进菜单都可能先跑一次 opkg update）。
 rm -f "$APK_LOG" "$OPKG_LOG"
-out=$(printf '0\n' | PATH="$APKONLY" run_with_timeout bash "$SCRIPTS/update_ui.sh" 2>&1); rc=$?
-assert_not_contains "$out" "command not found" "不再因为缺 opkg 而直接中止"
-assert_grep '^apk add unzip$' "$APK_LOG" "通过 apk 安装 unzip"
+out=$(printf '0\n' | run_with_timeout bash "$SCRIPTS/update_ui.sh" 2>&1); rc=$?
+assert_not_contains "$out" "command not found" "缺 opkg 的设备上不再直接中止"
+assert_no_file "$APK_LOG" "依赖齐全时进入脚本不触发 apk 安装"
+assert_no_file "$OPKG_LOG" "依赖齐全时进入脚本不触发 opkg 安装"
 assert_not_rc "$rc" 127 "退出码不是 127（旧代码 opkg 缺失时的 command not found）"
+
+# ② 真正解析压缩包且缺 unzip 时才安装：抽出 ensure_unzip + validate_archive 驱动一次。
+#    受限 PATH 里 apk 只是桩（不会真的装），因此装完仍缺 unzip，必须 fail-closed。
+rm -rf /tmp/ui10-src; mkdir -p /tmp/ui10-src
+printf '<html></html>\n' > /tmp/ui10-src/index.html
+rm -f /tmp/ui10-real.zip
+(cd /tmp/ui10-src && zip -q /tmp/ui10-real.zip index.html)
+awk '/^ensure_unzip\(\)/{p=1} p{print} p&&/^\}$/{exit}' "$SCRIPTS/update_ui.sh" > /tmp/ui10-va.sh
+awk '/^validate_archive\(\)/{p=1} p{print} p&&/^\}$/{exit}' "$SCRIPTS/update_ui.sh" >> /tmp/ui10-va.sh
+rm -f "$APK_LOG" "$OPKG_LOG"
+PATH="$APKONLY" run_with_timeout bash -c '
+    pkg_update() { apk update; }
+    pkg_install() { apk add "$@"; }
+    RED=""; NC=""
+    . /tmp/ui10-va.sh
+    validate_archive /tmp/ui10-real.zip' > /tmp/ui10-va.out 2>&1; rc=$?
+assert_grep '^apk add unzip$' "$APK_LOG" "缺 unzip 时才通过 apk 安装 unzip"
+assert_grep '缺少 unzip' /tmp/ui10-va.out "装不上时 fail-closed，并说明缺的是 unzip"
+assert_grep 'ensure_unzip_auto' "$SBSHELL_SRC/openwrt/update_ui.sh" "cron 生成体也会自己装 unzip（否则缺 unzip 的设备上自动更新永久失败）"
+assert_not_rc "$rc" 0 "受限 PATH 里装不上 unzip 时必须拒绝（fail-closed）"
 
 suite_begin "bootstrap: sbshall.sh install_package supports apk"
 awk '/^# 修复点 2/{p=1} p{print} p&&/^}$/{exit}' "$SBSHELL_SRC/sbshall.sh" > /tmp/sbshell-bootstrap-pkg.sh
