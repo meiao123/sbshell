@@ -33,8 +33,10 @@ setup_case() {
 
 run_tproxy() {
     local rc=0
-    env SBSHELL_TEST_DEFAULT_ROUTE="$DEFAULT_ROUTE" "$@" \
-        run_with_timeout bash "$SCRIPTS/configure_tproxy.sh" > /tmp/s22.out 2>&1 || rc=$?
+    # 顺序很重要：run_with_timeout 是 shell 函数，**不能交给 env 去执行** —— env 找不到
+    # 这个名字会直接以 127 退出，而下面"非 0 退出"的断言会把 127 当成注入生效（假绿）。
+    run_with_timeout env SBSHELL_TEST_DEFAULT_ROUTE="$DEFAULT_ROUTE" "$@" \
+        bash "$SCRIPTS/configure_tproxy.sh" > /tmp/s22.out 2>&1 || rc=$?
     return "$rc"
 }
 
@@ -48,6 +50,7 @@ suite_begin "apply 阶段未预期失败：ERR trap 必须回滚半拆状态（A
 setup_case
 run_tproxy SBSHELL_IP_FAIL_RULE_SHOW=1; rc=$?
 assert_not_rc "$rc" 0 "注入 ip rule show 失败后脚本以非 0 退出"
+assert_not_rc "$rc" 127 "脚本确实被执行（127 = command not found，不是注入导致的失败）"
 assert_not_rc "$rc" 124 "注入失败路径没有挂住（未被超时杀掉）"
 if nft_table_exists sing-box-tun; then
     pass "被拆掉的 TUN 表已由 rollback 恢复（否则是半拆状态）"
