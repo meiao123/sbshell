@@ -81,4 +81,27 @@ assert_no_file /etc/cron.d/sbshell-ui "面板 cron 文件已删除"
 assert_no_grep 'sbshell-ui-auto-update' /etc/crontabs/root "crontab 里的 sbshell 条目已删除"
 assert_file /etc/init.d/cron "无关 init 脚本未被误删"
 
+# ------------------------- 4) install 兜底必须早于第一次 install 调用
+# 背景：测试镜像装了 coreutils，`install` 一直存在，所以"busybox 没有 install"这类问题
+# 只能靠套件 07 的 PATH 农场发现；而兜底块写错位置（在第一次 install 调用之后）时，
+# 07 只断言"文件里有兜底"是抓不到的。这里做行序断言。
+suite_begin "install 兜底：每个用 install 的脚本都必须先定义兜底再调用"
+for f in "$SBSHELL_SRC"/openwrt/*.sh "$SBSHELL_SRC"/sbshall.sh; do
+    [ -f "$f" ] || continue
+    # 排除包管理器自身的 `opkg install -y` / `apk install`，否则会出现假阳性
+    # （批次 2 已踩过一次：正则 `install ` 误判 `opkg install curl`）。
+    calls=$(grep -nE '(^|[^[:alnum:]_])install[[:space:]]+-' "$f" | grep -vE '(opkg|apk)[[:space:]]+install' || true)
+    [ -n "$calls" ] || continue
+    name=$(basename "$f")
+    shim=$(grep -n 'command -v install' "$f" | head -n1 | cut -d: -f1 || true)
+    first=$(printf '%s\n' "$calls" | head -n1 | cut -d: -f1)
+    if [ -z "$shim" ]; then
+        fail "$name 使用 install 但没有内联兜底"
+    elif [ "$shim" -lt "$first" ]; then
+        pass "$name 的兜底在第一次 install 调用之前（$shim < $first）"
+    else
+        fail "$name 的兜底晚于第一次 install 调用（$shim vs $first）"
+    fi
+done
+
 suite_end
