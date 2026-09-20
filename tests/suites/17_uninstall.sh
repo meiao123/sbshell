@@ -43,12 +43,16 @@ setup_uninstall_case() {
     : > "$SBSHELL_STUB_STATE/nft/inet__sing-box"  # 让 clean_nft 有表可删
 }
 
-# 注意：这里**不能**写成 `out=$(run_uninstall ...)`。被抽出的 uninstall_sbshell 里有
-# `2> >(sed ...)` 进程替换，sed 会继承命令替换的写端；timeout 杀掉主进程后 sed 仍持有
-# 管道，`$( )` 就会一直等下去（CI 里表现为作业长时间不结束）。改成写文件再读。
+# 注意：这里**不能**写成 `out=$(run_uninstall ...)`，也不能用管道喂 stdin。
+# 被抽出的 uninstall_sbshell 里有 `2> >(sed ...)` 进程替换；只要有孙进程继承了那个管道
+# 的写端，bash 在退出前就会一直等它 —— 在 CI 里表现为整个作业挂住。因此：
+#   * stdin 走文件（不产生管道）
+#   * 输出写文件再读（不产生命令替换的等待）
+#   * `timeout -k` 保证即使 TERM 无效也会 KILL，硬上限 20s
 run_uninstall() {
     local rc=0
-    printf '%b' "$1" | run_with_timeout bash /tmp/u17-driver.sh > /tmp/u17.out 2>&1 || rc=$?
+    printf '%b' "$1" > /tmp/u17.in
+    timeout -k 5 20 bash /tmp/u17-driver.sh < /tmp/u17.in > /tmp/u17.out 2>&1 || rc=$?
     return "$rc"
 }
 
@@ -58,6 +62,7 @@ setup_uninstall_case
 run_uninstall 'n\n'; rc=$?
 out=$(cat /tmp/u17.out)
 assert_contains "$out" "已取消卸载" "回答 n 时提示已取消"
+assert_not_rc "$rc" 124 "取消路径没有挂住（未被超时杀掉）"
 assert_rc "$rc" 0 "取消卸载返回 0"
 assert_dir /etc/sing-box "取消卸载后配置目录仍在"
 assert_file /etc/cron.d/sbshell-ui "取消卸载后面板 cron 文件仍在"
@@ -70,6 +75,7 @@ chmod 0755 /etc/init.d/sing-box
 run_uninstall 'y\n'; rc=$?
 out=$(cat /tmp/u17.out)
 assert_contains "$out" "停止 sing-box 失败，已取消卸载" "停止失败时明确中止"
+assert_not_rc "$rc" 124 "停止失败路径没有挂住（未被超时杀掉）"
 assert_not_rc "$rc" 0 "停止失败时返回非 0"
 assert_dir /etc/sing-box "停止失败后配置目录必须保留（否则留下半拆状态）"
 assert_file /etc/cron.d/sbshell-ui "停止失败后面板 cron 文件保留"
@@ -80,6 +86,7 @@ setup_uninstall_case
 run_uninstall 'y\n'; rc=$?
 out=$(cat /tmp/u17.out)
 assert_rc "$rc" 0 "正常卸载返回 0"
+assert_not_rc "$rc" 124 "正常卸载路径没有挂住（未被超时杀掉）"
 assert_contains "$out" "Sbshell 与 sing-box 配置目录已清理" "给出卸载完成提示"
 assert_no_file /etc/sing-box "配置目录已删除"
 assert_no_file /etc/cron.d/sbshell-ui "面板 cron 文件已删除"
