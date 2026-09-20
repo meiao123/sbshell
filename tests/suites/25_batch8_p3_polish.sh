@@ -14,8 +14,10 @@ SRC="${SBSHELL_SRC:-/src}"
 # ------------------------------------------- A-20 死代码与文案/行为一致
 suite_begin "批次8 A-20：卸载清单与二级菜单"
 
-assert_no_grep 'rm -f.*/etc/cron\.d/sbshell' "$SRC/openwrt/menu.sh" \
-    "menu.sh 不再删 /etc/cron.d/sbshell-*（全仓库没有任何地方创建过它们）"
+# A-20(1)：这两个路径现行版本已不再创建（UI 计划任务写在 /etc/crontabs/root），
+# 但卸载仍继续清理它们以兼容早期版本 —— 断言注释说明了这一点，避免被误读成现行布局。
+assert_grep '兼容旧安装' "$SRC/openwrt/menu.sh" "menu.sh 注明 cron.d 路径是历史遗留清理"
+assert_grep 'rm -f.*/etc/cron\.d/sbshell' "$SRC/openwrt/menu.sh" "继续清理早期版本留下的 cron.d 文件"
 assert_eq "$(grep -cE '^[[:space:]]*show_submenu$' "$SRC/openwrt/commands.sh")" "1" \
     "二级菜单只由外层 while 打印（选 0 退出时不再多印一遍）"
 # A-20(2)/(3) 经核对已自洽：批次 1 把 valid_url 收窄为仅 https 后文案一致，
