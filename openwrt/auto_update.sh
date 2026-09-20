@@ -35,6 +35,8 @@ if ! command -v install >/dev/null 2>&1; then
         else
             # 本仓库只用 `install [-m M] [-o U] [-g G] SRC DST`
             [ $# -eq 2 ] || return 1
+            # 先 rm 再写，避免覆盖正在运行脚本的 inode（写正在执行的脚本会 ETXTBSY 而失败）。
+            rm -f "$2" 2>/dev/null || true
             cp -f "$1" "$2" || return 1
             [ -z "$m" ] || { chmod "$m" "$2" 2>/dev/null || return 1; }
             set -- "$2"
@@ -89,6 +91,8 @@ if ! command -v install >/dev/null 2>&1; then
         else
             # 本仓库只用 `install [-m M] [-o U] [-g G] SRC DST`
             [ $# -eq 2 ] || return 1
+            # 先 rm 再写，避免覆盖正在运行脚本的 inode（写正在执行的脚本会 ETXTBSY 而失败）。
+            rm -f "$2" 2>/dev/null || true
             cp -f "$1" "$2" || return 1
             [ -z "$m" ] || { chmod "$m" "$2" 2>/dev/null || return 1; }
             set -- "$2"
@@ -99,6 +103,9 @@ if ! command -v install >/dev/null 2>&1; then
 fi
 MANUAL_FILE=/etc/sing-box/manual.conf
 CONFIG_FILE=/etc/sing-box/config.json
+# 回滚来源必须放在 $TMP 之外：$TMP 会被 cleanup() 在 EXIT 时 rm -rf，
+# 而失败路径上那份备份是唯一的回滚依据（放在 $TMP 里等于退出即销毁）。
+BACKUP_FILE=/etc/sing-box/config.json.bak
 LOCK_DIR=/tmp/sbshell-config.lock
 LOCK_TIMEOUT=900
 TMP=$(mktemp -d /tmp/sbshell-auto.XXXXXX)
@@ -177,8 +184,12 @@ if [ -t 1 ]; then printf '\r配置文件下载中，超时倒计时: 00s\n'; fi
 [ "$download_rc" -eq 0 ] || { echo '配置下载失败。' >&2; exit 1; }
 [ -s "$TMP/config.json" ] || { echo '下载的配置为空。' >&2; exit 1; }
 sing-box check -c "$TMP/config.json"
-[ ! -f "$CONFIG_FILE" ] || cp -a "$CONFIG_FILE" "$TMP/config.backup"
-install -o root -g root -m 0600 "$TMP/config.json" "$CONFIG_FILE"
+[ ! -f "$CONFIG_FILE" ] || cp -a "$CONFIG_FILE" "$BACKUP_FILE"
+# 原子替换：先在同一目录落一份临时文件，再用 mv（同文件系统 rename）替换 config.json。
+# 直接写 config.json 时若被中断/断电，会留下半截配置且没有可用的回滚来源，sing-box 起不来。
+NEW_CONFIG="$CONFIG_FILE.new.$$"
+install -o root -g root -m 0600 "$TMP/config.json" "$NEW_CONFIG" || { echo '写入新配置失败。' >&2; rm -f "$NEW_CONFIG"; exit 1; }
+mv -f "$NEW_CONFIG" "$CONFIG_FILE" || { echo '替换配置失败。' >&2; rm -f "$NEW_CONFIG"; exit 1; }
 # rc.common/procd 在没有已注册实例时会回显 ubus 噪音（短形态 `Command failed: Not found` 与
 # 带命令名的长形态 `Command failed: ubus call service delete { "name": "sing-box" } (Not found)`）。
 # 本脚本是 #!/bin/sh（busybox 的 ash 没有进程替换），故用可移植写法过滤，同时保留真实退出码。
@@ -190,7 +201,7 @@ restart_singbox() {
     return "$rc"
 }
 if ! restart_singbox || ! sleep 2 || ! pidof sing-box >/dev/null 2>&1; then
-    [ ! -f "$TMP/config.backup" ] || install -o root -g root -m 0600 "$TMP/config.backup" "$CONFIG_FILE"
+    [ ! -f "$BACKUP_FILE" ] || install -o root -g root -m 0600 "$BACKUP_FILE" "$CONFIG_FILE"
     restart_singbox || true
     exit 1
 fi

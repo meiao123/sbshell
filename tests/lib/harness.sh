@@ -85,3 +85,22 @@ nft_table_dump() { cat "$SBSHELL_STUB_STATE/nft/inet__$1" 2>/dev/null; }
 ip_rules() { cat "$SBSHELL_STUB_STATE/ip_rules" 2>/dev/null; }
 ip_route_table() { cat "$SBSHELL_STUB_STATE/ip_routes_$1" 2>/dev/null; }
 stub_log() { cat "$SBSHELL_STUB_STATE/$1.log" 2>/dev/null; }
+
+# 构造一个"包含当前 PATH 里全部可执行文件、唯独没有 install"的目录，用来模拟 busybox
+# （OpenWrt/ImmortalWrt 没有 install applet；而测试镜像装了 coreutils，真 install 始终存在，
+# 所以断言 install() 兜底的行为必须在受限 PATH 下做，否则测到的是 GNU install）。
+path_without_install() {
+    local out p f b
+    out=$(mktemp -d)
+    for p in $(printf '%s' "$PATH" | tr ':' '\n'); do
+        [ -d "$p" ] || continue
+        for f in "$p"/*; do
+            [ -f "$f" ] || continue
+            b=${f##*/}
+            b=${b%.exe}                 # MSYS/Cygwin 上真名可能是 install.exe
+            [ "$b" = install ] && continue
+            [ -e "$out/$b" ] || ln -s "$f" "$out/$b" 2>/dev/null || true
+        done
+    done
+    printf '%s' "$out"
+}

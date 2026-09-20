@@ -20,7 +20,7 @@ if ! command -v install >/dev/null 2>&1; then
             [ -z "$m" ] || { chmod "$m" "$@" 2>/dev/null || return 1; }
         else
             [ $# -eq 2 ] || return 1
-            # 关键修复：先 rm 避免覆盖正在运行中的脚本 inode 导致 Bash 崩溃
+            # 先 rm 再写，避免覆盖正在运行脚本的 inode（写正在执行的脚本会 ETXTBSY 而失败）。
             rm -f "$2" 2>/dev/null || true
             cp -f "$1" "$2" || return 1
             [ -z "$m" ] || { chmod "$m" "$2" 2>/dev/null || return 1; }
