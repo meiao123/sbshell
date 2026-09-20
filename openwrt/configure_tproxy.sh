@@ -61,19 +61,29 @@ MODE=$(sed -n 's/^MODE=//p' /etc/sing-box/mode.conf 2>/dev/null | head -n1)
 command -v nft >/dev/null 2>&1 || { echo '缺少 nft。' >&2; exit 1; }
 RESERVED='{ 127.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 169.254.0.0/16, 172.16.0.0/12, 192.0.0.0/24, 192.0.2.0/24, 198.51.100.0/24, 192.168.0.0/16, 203.0.113.0/24, 224.0.0.0/4, 240.0.0.0/4, 255.255.255.255/32 }'
 BYPASS='{ 192.168.0.0/16, 10.0.0.0/8 }'
-TMP=$(mktemp /tmp/sbshell-tproxy.XXXXXX)
-OLD_TABLE=$(mktemp /tmp/sbshell-tproxy-table.XXXXXX)
-OLD_TUN_TABLE=$(mktemp /tmp/sbshell-tun-table.XXXXXX)
-OLD_TUN_STATE=$(mktemp /tmp/sbshell-tun-state.XXXXXX)
 STATE_FILE=/etc/sing-box/tproxy.state
 TUN_STATE_FILE=/etc/sing-box/tun.state
 TUN_NFT_FILE=/etc/sing-box/tun/nftables.conf
+# A-18：先装清理 trap、再创建临时文件（每个都检查），cleanup 内一律用 ${VAR:-} 保护 ——
+# 反过来写时，中途失败会残留 /tmp（tmpfs 即内存），或 trap 引用未赋值变量在 set -u 下二次报错。
+TMP=''
+OLD_TABLE=''
+OLD_TUN_TABLE=''
+OLD_TUN_STATE=''
 STATE_TMP=''
 cleanup() {
-    rm -f "$TMP" "$OLD_TABLE" "$OLD_TUN_TABLE" "$OLD_TUN_STATE"
+    [ -z "${TMP:-}" ] || rm -f "$TMP"
+    [ -z "${OLD_TABLE:-}" ] || rm -f "$OLD_TABLE"
+    [ -z "${OLD_TUN_TABLE:-}" ] || rm -f "$OLD_TUN_TABLE"
+    [ -z "${OLD_TUN_STATE:-}" ] || rm -f "$OLD_TUN_STATE"
     [ -z "${STATE_TMP:-}" ] || rm -f "$STATE_TMP"
 }
 trap cleanup EXIT
+tmp_fail() { echo '无法创建临时文件（/tmp 是否可写？）。' >&2; exit 1; }
+TMP=$(mktemp /tmp/sbshell-tproxy.XXXXXX) || tmp_fail
+OLD_TABLE=$(mktemp /tmp/sbshell-tproxy-table.XXXXXX) || tmp_fail
+OLD_TUN_TABLE=$(mktemp /tmp/sbshell-tun-table.XXXXXX) || tmp_fail
+OLD_TUN_STATE=$(mktemp /tmp/sbshell-tun-state.XXXXXX) || tmp_fail
 mkdir -p /etc/sing-box
 
 cat > "$TMP" <<EOF

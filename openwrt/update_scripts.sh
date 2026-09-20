@@ -143,9 +143,16 @@ verify_script_hashes() {
     [ "$checked" -gt 0 ] || { echo 'SHA256SUMS 中没有本目录的条目，拒绝安装。' >&2; return 1; }
     return 0
 }
-TMP_DIR=$(mktemp -d /tmp/sbshell-update.XXXXXX)
-BACKUP_DIR=$(mktemp -d /tmp/sbshell-update-backup.XXXXXX)
-trap 'release_scripts_lock; rm -rf "$TMP_DIR" "$BACKUP_DIR"' EXIT
+# A-18：先装清理 trap（不引用尚未赋值的变量），再逐个创建并检查临时目录。
+TMP_DIR=''
+BACKUP_DIR=''
+cleanup_update_tmp() {
+    [ -z "${TMP_DIR:-}" ] || rm -rf "$TMP_DIR"
+    [ -z "${BACKUP_DIR:-}" ] || rm -rf "$BACKUP_DIR"
+}
+trap 'release_scripts_lock; cleanup_update_tmp' EXIT
+TMP_DIR=$(mktemp -d /tmp/sbshell-update.XXXXXX) || { echo '无法创建临时目录（/tmp 是否可写？）。' >&2; exit 1; }
+BACKUP_DIR=$(mktemp -d /tmp/sbshell-update-backup.XXXXXX) || { echo '无法创建临时目录（/tmp 是否可写？）。' >&2; exit 1; }
 [ "$(id -u)" -eq 0 ] || { echo '请以 root 运行。' >&2; exit 1; }
 install -d -m 0755 "$SCRIPT_DIR"
 # 取锁失败（另一个入口正在更新）就退出，绝不与它交错写入。
