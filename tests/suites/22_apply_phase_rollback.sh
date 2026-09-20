@@ -41,7 +41,12 @@ run_tproxy() {
 }
 
 state_leftovers() {
-    ls -A /etc/sing-box/ 2>/dev/null | grep -E '^\.[a-z]+\.state\.' || true
+    # 用 glob 而不是 `ls | grep`（SC2010）：文件名里可能有空格/特殊字符。
+    local f
+    for f in /etc/sing-box/.*.state.*; do
+        [ -e "$f" ] || continue
+        printf '%s\n' "${f##*/}"
+    done
 }
 
 # ------------------------------- A-10：未预期失败必须回滚（ERR trap）
