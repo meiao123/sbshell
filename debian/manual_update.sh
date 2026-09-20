@@ -5,8 +5,12 @@ GREEN='\033[0;32m'; RED='\033[0;31m'; NC='\033[0m'
 MANUAL_FILE=/etc/sing-box/manual.conf
 DEFAULTS_FILE=/etc/sing-box/defaults.conf
 CONFIG_FILE=/etc/sing-box/config.json
-TMP_DIR=/tmp/sbshell-config
 LOCK_FILE=/run/sbshell/config.lock
+# 与 auto_update.sh/manual_input.sh/update_config.sh 一致：配置含凭据（SS 密码/VLESS UUID/
+# REALITY 私钥/hysteria2 密码），必须 0640；组存在用 sing-box，缺失则回落 root
+# （回落 root 时仍不可被其它本地用户读取）。
+CONFIG_GROUP=sing-box
+getent group sing-box >/dev/null 2>&1 || CONFIG_GROUP=root
 
 [ "$(id -u)" -eq 0 ] || exec sudo bash "$0" "$@"
 install -d -o root -g root -m 0700 /run/sbshell
@@ -42,7 +46,9 @@ validate_endpoints() {
 }
 
 MODE=$(read_value MODE /etc/sing-box/mode.conf)
-mkdir -p "$TMP_DIR"; chmod 0700 "$TMP_DIR"; trap 'rm -rf "$TMP_DIR"' EXIT
+# 临时目录改用 mktemp，并在取得 flock 之后创建（见下方 flock -x 9 之后）：
+# 旧的固定名 /tmp/sbshell-config 位于世界可写的 /tmp，本地用户可预置指向任意路径的
+# 符号链接让 root 写入被劫持（chmod 也跟随符号链接）；并发实例还会互相 rm -rf 目录。
 
 # 参数只接受 yes/y（交互式重新录入）；旧代码用 ^[Yy]$ 判定提示、却用 = 'yes' 判定写回，
 # 导致 `manual_update.sh yes` 既不提示也不更新 manual.conf。
@@ -83,6 +89,9 @@ fi
 [ ! -L "$LOCK_FILE" ] || { echo "锁文件是符号链接，拒绝使用: $LOCK_FILE" >&2; exit 1; }
 exec 9>"$LOCK_FILE"
 flock -x 9
+# 唯一化 + 0700 的临时目录，先持锁再创建，避免并发实例共用目录后被彼此的 EXIT trap 删除。
+TMP_DIR=$(mktemp -d /tmp/sbshell-config.XXXXXX) || { echo '无法创建临时目录。' >&2; exit 1; }
+trap 'rm -rf "$TMP_DIR"' EXIT
 if [ "$PROMPT_FLAG" -eq 1 ]; then
     printf 'BACKEND_URL=%s\nSUBSCRIPTION_URL=%s\nTEMPLATE_URL=%s\n' "$BACKEND_URL" "$SUBSCRIPTION_URL" "$TEMPLATE_URL" > "$TMP_DIR/manual.conf"
 fi
@@ -93,10 +102,10 @@ TMP_CONFIG="$TMP_DIR/config.json"
 curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 60 "$FULL_URL" -o "$TMP_CONFIG" || { echo -e "${RED}配置下载失败。${NC}"; exit 1; }
 sing-box check -c "$TMP_CONFIG" || { echo -e "${RED}新配置验证失败。${NC}"; exit 1; }
 if [ "$PROMPT_FLAG" -eq 1 ]; then install -o root -g root -m 0600 "$TMP_DIR/manual.conf" "$MANUAL_FILE"; fi
-install -o root -g root -m 0644 "$TMP_CONFIG" "$CONFIG_FILE"
+install -o root -g "$CONFIG_GROUP" -m 0640 "$TMP_CONFIG" "$CONFIG_FILE"
 if ! systemctl restart sing-box || ! systemctl is-active --quiet sing-box; then
     [ ! -f "$TMP_DIR/manual.backup" ] || install -o root -g root -m 0600 "$TMP_DIR/manual.backup" "$MANUAL_FILE"
-    [ ! -f "$TMP_DIR/config.backup" ] || install -o root -g root -m 0644 "$TMP_DIR/config.backup" "$CONFIG_FILE"
+    [ ! -f "$TMP_DIR/config.backup" ] || install -o root -g "$CONFIG_GROUP" -m 0640 "$TMP_DIR/config.backup" "$CONFIG_FILE"
     systemctl restart sing-box || true
     echo -e "${RED}新配置启动失败，已恢复旧配置。${NC}" >&2
     exit 1

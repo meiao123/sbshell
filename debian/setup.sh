@@ -6,8 +6,12 @@ trap 'echo -e "\033[31m脚本在 [${BASH_SOURCE}:${LINENO}] 行发生错误\033[
 RED='\033[31m'; GREEN='\033[32m'; YELLOW='\033[33m'; BOLD='\033[1m'; RESET='\033[0m'
 DOMAIN=''; EMAIL=''; CA_SERVER=letsencrypt; OS_TYPE=''; PKG_MANAGER=''; ACME_INSTALL_PATH="$HOME/.acme.sh"; CERT_KEY_DIR=''; ACME_CMD=''
 ACME_VERSION=3.1.5
+# acme.sh 的版本标签是**轻量标签**（GitHub API: refs/tags/3.1.5 的 object.type=commit），
+# 而 `git verify-tag` 只接受附注标签对象 —— 旧写法 `git verify-tag 3.1.5` 是恒假条件，
+# 证书申请 100% 失败（用户只看到"签名验证失败"）。改为固定提交 SHA 比对：
+# 不可变、可离线复核、不依赖标签类型，也不需要 git ≥ 2.34 的 allowedSignersFile 支持。
+ACME_COMMIT=d5fc938d80e266dba3239f54cf4665432f17c00b
 ACME_REPO=https://github.com/acmesh-official/acme.sh.git
-ACME_SIGNER='github@neilpang.com namespaces="git" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBTjI0HBJn3uhfT2DsNcFybfAZi3ADbIacMpz1BItKdB'
 TMP_DIR=$(mktemp -d /tmp/sbshell-acme.XXXXXX)
 trap 'rm -rf "$TMP_DIR"' EXIT
 
@@ -55,16 +59,16 @@ configure_firewall() {
     fi
 }
 download_acme() {
-    local clone_dir="$TMP_DIR/acme.sh" allowed_signers="$TMP_DIR/allowed_signers"
-    printf '%s\n' "$ACME_SIGNER" > "$allowed_signers"
-    git clone --depth 1 --branch "$ACME_VERSION" "$ACME_REPO" "$clone_dir" >/dev/null 2>&1
-    git -C "$clone_dir" config gpg.ssh.allowedSignersFile "$allowed_signers"
-    git -C "$clone_dir" verify-tag "$ACME_VERSION" >/dev/null 2>&1 || { echo -e "${RED}acme.sh 签名验证失败。${RESET}" >&2; exit 1; }
+    local clone_dir="$TMP_DIR/acme.sh" actual
+    git clone --depth 1 --branch "$ACME_VERSION" "$ACME_REPO" "$clone_dir" >/dev/null 2>&1 || { echo -e "${RED}acme.sh $ACME_VERSION 下载失败。${RESET}" >&2; exit 1; }
+    # 校验下载到的提交与常量一致（浅克隆下 HEAD 即该标签指向的提交）。
+    actual=$(git -C "$clone_dir" rev-parse HEAD 2>/dev/null) || actual=''
+    [ "$actual" = "$ACME_COMMIT" ] || { echo -e "${RED}acme.sh $ACME_VERSION 提交校验失败（期望 $ACME_COMMIT，实际 ${actual:-未知}）。${RESET}" >&2; exit 1; }
     bash "$clone_dir/acme.sh" --install --home "$ACME_INSTALL_PATH" -m "$EMAIL" >/dev/null
-    echo -e "${GREEN}acme.sh $ACME_VERSION 已通过签名验证并刷新安装。${RESET}"
+    echo -e "${GREEN}acme.sh $ACME_VERSION 已通过提交校验（$ACME_COMMIT）并刷新安装。${RESET}"
 }
 find_acme_cmd() { export PATH="$ACME_INSTALL_PATH:$PATH"; ACME_CMD=$(command -v acme.sh || true); [ -n "$ACME_CMD" ] || { echo -e "${RED}找不到 acme.sh。${RESET}" >&2; exit 1; }; }
-update_acme() { echo -e "${GREEN}使用固定签名版本 acme.sh $ACME_VERSION，不自动执行远程自更新。${RESET}"; }
+update_acme() { echo -e "${GREEN}使用固定提交版本 acme.sh $ACME_VERSION，不自动执行远程自更新。${RESET}"; }
 issue_cert() {
     "$ACME_CMD" --issue --standalone -d "$DOMAIN" --server "$CA_SERVER" --force --pre-hook 'systemctl stop nginx 2>/dev/null || systemctl stop apache2 2>/dev/null || true' --post-hook 'systemctl start nginx 2>/dev/null || systemctl start apache2 2>/dev/null || true' >/dev/null 2>&1 || { echo -e "${RED}证书申请失败。${RESET}" >&2; exit 1; }
 }

@@ -61,7 +61,7 @@ get_default() {
     local key="$1"
     grep -m1 "^${key}=" "$DEFAULTS_FILE" 2>/dev/null | cut -d'=' -f2- || true
 }
-valid_url() { [[ "$1" =~ ^https?://[^[:space:]]+$ ]]; }
+valid_url() { [[ "$1" =~ ^https://[^[:space:]]+$ ]]; }
 valid_subscription() {
     local value="$1"
     [ -z "$value" ] && return 0
@@ -163,8 +163,8 @@ while true; do
     read -rp '确认输入的配置信息？(y/n): ' confirm_choice
     [[ "$confirm_choice" =~ ^[Yy]$ ]] || { echo -e "${RED}请重新输入配置信息。${NC}"; continue; }
 
-    if [ -n "$BACKEND_URL" ] && ! valid_url "$BACKEND_URL"; then echo -e "${RED}后端地址必须是 HTTP 或 HTTPS URL。${NC}"; continue; fi
-    if [ -n "$TEMPLATE_URL" ] && ! valid_url "$TEMPLATE_URL"; then echo -e "${RED}配置文件地址必须是 HTTP 或 HTTPS URL。${NC}"; continue; fi
+    if [ -n "$BACKEND_URL" ] && ! valid_url "$BACKEND_URL"; then echo -e "${RED}后端地址必须是 HTTPS URL。${NC}"; continue; fi
+    if [ -n "$TEMPLATE_URL" ] && ! valid_url "$TEMPLATE_URL"; then echo -e "${RED}配置文件地址必须是 HTTPS URL。${NC}"; continue; fi
     if ! valid_subscription "$SUBSCRIPTION_URL"; then echo -e "${RED}订阅地址包含非法字符（空白、# 或 &file=）。${NC}"; continue; fi
     if [ -n "$BACKEND_URL" ] && [ -z "$SUBSCRIPTION_URL" ]; then echo -e "${RED}使用后端地址时订阅地址不能为空。${NC}"; continue; fi
 
@@ -197,7 +197,8 @@ while true; do
         # 只能空转到 30 秒，把后端返回的 HTTP 500 误报成"配置文件下载超时"。必须用
         # `|| rc=$?` 兜住退出码，并在子 shell 结尾显式 exit 0。
         rc=0
-        curl --fail --silent --show-error --location --proto '=http,https' --tlsv1.2 --connect-timeout 10 --max-time 30 -w '%{http_code}' "$FULL_URL" -o "$tmp_config" > "$download_http" || rc=$?
+        # 只允许 HTTPS：配置文件内含节点凭据，明文 HTTP 会在链路上泄露（与 debian 侧一致）。
+        curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 30 -w '%{http_code}' "$FULL_URL" -o "$tmp_config" > "$download_http" || rc=$?
         printf '%s\n' "$rc" > "$download_status"
         exit 0
     ) &
