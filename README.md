@@ -2,9 +2,8 @@
 ⚠️⚠️请注意禁止搬运到中国大陆，请遵守属地法律法律⚠️⚠️  
 Sbshell 是一款针对 官方sing-box 的辅助运行脚本，旨在让官方sing-box更方便使用：
 
-- **系统支持**：支持系统为Debian/Ubuntu/Armbian以及OpenWrt。
+- **系统支持**：仅支持 OpenWrt / ImmortalWrt（Debian / Ubuntu / Armbian 支持已移除）。
 - **客户端运行**：客户端保持 sing-box 以官方裸核形式运行，追求极致精简与性能。
-- **服务端运行**：支持服务端配置搭建使用，使用方法自行google油管教程和翻阅sing-box官方文档。
 - **双模支持**：兼容 TUN 和 TProxy 模式，可随时一键切换，灵活适应不同需求。
 - **版本管理**：支持一键切换稳定版与测试版内核，检测并更新至最新版本，操作简单高效。
 - **灵活配置**：支持手动输入后端地址、订阅链接、配置文件链接，并可设置默认值，提升使用效率。
@@ -61,11 +60,9 @@ https://raw.githubusercontent.com/meiao123/sbshell/baf5d7ea412edff2318b6ae59154d
 
 ## 安全与运维说明：
 
-- **服务端凭据请本地生成**：仓库里的 `config_template/server/config.json` 只是字段参考
-  （带 `REPLACE_ME_*` 占位符，`sing-box check` 不会通过）。请使用
-  `debian/gen_server_config.sh`（菜单 → 服务端 → 6. 更新服务端配置文件 → 直接回车），
-  它会在本机随机生成 SS 密码 / VLESS UUID / REALITY 密钥对 / hysteria2 密码，并在写入前
-  做 `sing-box check`。
+- **不含服务端搭建**：服务端配置生成脚本（`gen_server_config.sh`）与 `config_template/server/`
+  已随 Debian/Ubuntu 支持一并移除。OpenWrt 路径只管理客户端；如需服务端，请按 sing-box
+  官方文档自行编写配置，并在写入前用 `sing-box check` 校验。
 - **控制面板默认只监听本机**：客户端模板的 `clash_api.external_controller` 已改为
   `127.0.0.1:9095`、`secret` 为空。需要从局域网访问面板时，请自行改成 `0.0.0.0:9095`
   并**同时设置一个随机 `secret`**，否则同网段任何人都能控制代理；更安全的做法是保持本机
@@ -79,9 +76,8 @@ https://raw.githubusercontent.com/meiao123/sbshell/baf5d7ea412edff2318b6ae59154d
   配置时请保留这个前提（或改到 `/var/lib/sing-box/`）。
 - **自定义 SSH 端口**：服务端初始化会先探测当前 sshd 端口再开启 ufw 的
   `default deny incoming`，但仍建议在控制台旁操作，避免误锁自己。
-- **开机自启动**：nftables 规则不跨重启保留。Debian 侧由 `nftables-singbox.service`
-  恢复，OpenWrt 侧由 `/etc/init.d/sbshell-firewall` 恢复（启用自启动时自动安装），
-  两平台都不需要手工重新下发规则。
+- **开机自启动**：nftables 规则不跨重启保留，由 `/etc/init.d/sbshell-firewall` 恢复
+  （启用自启动时自动安装），不需要手工重新下发规则。
 
 ## 其他问题：
 

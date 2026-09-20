@@ -6,13 +6,7 @@ set -uo pipefail
 
 SCRIPTS=/etc/sing-box/scripts
 
-suite_begin "kernel.sh: /proc/cpuinfo flags parsing (P0-2)"
-
-if awk '!/^[[:space:]]*#/ && /\$1 == "flags"/' "$SBSHELL_SRC/debian/kernel.sh" | grep -q .; then
-    fail "kernel.sh 仍在使用 \$1 == \"flags\"（对 /proc/cpuinfo 永远不匹配）"
-else
-    pass "kernel.sh 不再使用错误的字段比较"
-fi
+suite_begin "cpuinfo flags parsing: the recommended awk pattern (P0-2)"
 
 printf 'processor\t: 0\nvendor_id\t: GenuineIntel\nflags\t\t: fpu vme de pse tsc msr sse sse2 avx avx2\n' > /tmp/cpuinfo.fixture
 new_flags=$(awk -F: '/^flags/ {print $2; exit}' /tmp/cpuinfo.fixture)
@@ -30,7 +24,7 @@ fi
 reset_stub_state
 reset_singbox_dir
 reset_fixtures
-install_repo_scripts debian
+install_repo_scripts openwrt
 
 suite_begin "check_environment.sh: tolerant to missing IPv6 sysctl (P1-3.8)"
 
@@ -49,62 +43,12 @@ unset SBSHELL_IPV4_FORWARD
 assert_not_rc "$rc" 0 "IPv4 转发确实无法开启时报错"
 assert_grep "IPv4 转发启用失败" /tmp/env2.out "错误信息明确"
 
-suite_begin "optimize.sh: qdisc probe and sysctl tolerance (P1-3.8)"
-
-if grep -q 'grep -qw fq /proc/sys/net/core/default_qdisc' "$SBSHELL_SRC/debian/optimize.sh"; then
-    fail "optimize.sh 仍用 default_qdisc 的当前值判断 fq 可用性"
-else
-    pass "optimize.sh 已改为直接尝试设置 fq"
-fi
-run_with_timeout bash "$SCRIPTS/optimize.sh" >/tmp/opt.out 2>&1
-assert_rc "$?" 0 "optimize.sh 在无 modprobe 的容器里也能完成"
-assert_grep "网络参数优化完成" /tmp/opt.out "输出完成提示"
-
-suite_begin "delaytest.sh: log rotation keeps header and trims (P1-3.8)"
-
-LOG_FILE=$(mktemp); LOG_MAX_BYTES=200
-awk '/^rotate_log_if_needed\(\)/{p=1} p{print} p&&/^\}$/{exit}' "$SCRIPTS/delaytest.sh" > /tmp/rot.sh
-printf 'Timestamp,Target,Run,Connect_Time_s,TLS_Time_s,Total_Time_s\n' > "$LOG_FILE"
-i=1; while [ "$i" -le 40 ]; do printf '2026-01-01T00:00:00Z,example.com,%s,0.01,0.02,0.03\n' "$i" >> "$LOG_FILE"; i=$((i+1)); done
-before=$(wc -l < "$LOG_FILE")
-# shellcheck disable=SC1090
-. /tmp/rot.sh
-rotate_log_if_needed
-assert_eq "$(wc -l < "$LOG_FILE")" "$before" "小于上限行数不丢数据"
-assert_eq "$(grep -c '^Timestamp' "$LOG_FILE")" "1" "表头不重复"
-rm -f "$LOG_FILE"
-
-LOG_FILE=$(mktemp); LOG_MAX_BYTES=1000
-printf 'Timestamp,Target,Run,Connect_Time_s,TLS_Time_s,Total_Time_s\n' > "$LOG_FILE"
-i=1; while [ "$i" -le 2500 ]; do printf '2026-01-01T00:00:00Z,example.com,%s,0.01,0.02,0.03\n' "$i" >> "$LOG_FILE"; i=$((i+1)); done
-rotate_log_if_needed
-assert_eq "$(wc -l < "$LOG_FILE")" "2000" "超出上限时裁剪到 2000 行"
-assert_eq "$(grep -c '^Timestamp' "$LOG_FILE")" "1" "裁剪后仍只有一个表头"
-assert_eq "$(tail -n1 "$LOG_FILE" | cut -d, -f3)" "2500" "保留最新记录"
-rm -f "$LOG_FILE"
-
-suite_begin "ufw.sh: keep current SSH port and open sing-box ports (P2-6)"
-
-reset_stub_state
-: > "$SBSHELL_STUB_STATE/ufw.log"
-mkdir -p /etc/ssh
-printf 'Port 2222\n#Port 22\n' > /etc/ssh/sshd_config
-mkdir -p /etc/sing-box
-cat > /etc/sing-box/config.json <<'EOF'
-{"inbounds":[{"type":"hysteria2","listen_port":52021},{"type":"shadowsocks","listen_port":8388}],"outbounds":[{"type":"direct"}]}
-EOF
-run_with_timeout bash "$SCRIPTS/ufw.sh" --auto >/tmp/ufw.out 2>&1
-assert_rc "$?" 0 "ufw.sh --auto 成功"
-assert_grep 'allow 2222/tcp' "$SBSHELL_STUB_STATE/ufw.log" "放行 sshd_config 里的自定义 SSH 端口"
-assert_grep 'allow 52021/udp' "$SBSHELL_STUB_STATE/ufw.log" "放行 sing-box 的 hysteria2 端口"
-assert_grep 'allow 8388/tcp' "$SBSHELL_STUB_STATE/ufw.log" "放行 sing-box 的 TCP 端口"
-
 suite_begin "supply chain: main is the only update source (P2-4)"
 
 # 维护者已移除 RELEASE 发布声明与不可变 SHA 固定机制：main 是唯一更新源
 # （README「代码来源」与 docs/security-hardening.md 均如此描述）。
 # 这一段与 .github/workflows/shell-static-check.yml 的 "Verify update source is main" 对齐。
-for f in sbshall.sh debian/menu.sh debian/update_scripts.sh openwrt/menu.sh openwrt/update_scripts.sh; do
+for f in sbshall.sh openwrt/menu.sh openwrt/update_scripts.sh; do
     if grep -nE 'BASE_REF|RELEASE_REF|RELEASE_DECL_URL|resolve_release_ref' "$SBSHELL_SRC/$f" >/dev/null 2>&1; then
         fail "$f 仍残留不可变发布引用机制"
     else
@@ -133,15 +77,12 @@ if grep -q 'eol=lf' "$SBSHELL_SRC/.gitattributes" 2>/dev/null; then pass ".gitat
 # 现在更新源就是 main，直接请求脚本真正消费的 raw URL。
 if [ "${SBSHELL_ONLINE:-0}" = 1 ]; then
     if command -v curl >/dev/null 2>&1; then
-        for u in \
-            "https://raw.githubusercontent.com/meiao123/sbshell/main/debian/menu.sh" \
-            "https://raw.githubusercontent.com/meiao123/sbshell/main/openwrt/menu.sh"; do
-            if curl -fsS --max-time 20 -o /dev/null "$u"; then
-                pass "更新源可下载: $u"
-            else
-                fail "更新源不可下载（安装/自更新会 404）: $u"
-            fi
-        done
+        u="https://raw.githubusercontent.com/meiao123/sbshell/main/openwrt/menu.sh"
+        if curl -fsS --max-time 20 -o /dev/null "$u"; then
+            pass "更新源可下载: $u"
+        else
+            fail "更新源不可下载（安装/自更新会 404）: $u"
+        fi
     else
         pass "无 curl：跳过更新源联网校验（CI 里由 workflow 的 raw URL 步骤负责）"
     fi
@@ -153,7 +94,7 @@ suite_begin "configure scripts: a missing mode.conf must be a silent no-op (P2)"
 
 reset_stub_state
 reset_singbox_dir
-install_repo_scripts debian
+install_repo_scripts openwrt
 for s in configure_tproxy.sh configure_tun.sh; do
     rm -f /etc/sing-box/mode.conf
     run_with_timeout bash "$SCRIPTS/$s" >/tmp/mode-missing.out 2>&1
@@ -176,22 +117,6 @@ elapsed=$(( $(date +%s) - start ))
 assert_not_rc "$rc" 0 "EOF 时 confirm_yes 返回非 0（视为取消）"
 [ "$elapsed" -le 5 ] && pass "EOF 时立即返回（${elapsed}s）" || fail "仍在循环（${elapsed}s）"
 assert_eq "$(wc -l < /tmp/confirm_yes.out)" "1" "只输出一行提示（旧实现会刷屏死循环）"
-
-suite_begin "debian cron updater keeps the credential file at 0640 (B3)"
-
-cat > /etc/sing-box/manual.conf <<'EOS'
-BACKEND_URL=https://backend.test
-SUBSCRIPTION_URL=tk?token=demo
-TEMPLATE_URL=https://tpl.test/template.json
-EOS
-printf '1\n12\n' | run_with_timeout bash "$SCRIPTS/auto_update.sh" >/dev/null 2>&1
-assert_file /etc/sing-box/update-singbox.sh "生成 cron 更新脚本"
-assert_grep 'm 0640' /etc/sing-box/update-singbox.sh "生成的 cron 更新脚本使用 0640"
-if grep -qE 'install .*-m 0644 "\$TMP_CONFIG"' /etc/sing-box/update-singbox.sh; then
-    fail "生成的 cron 更新脚本仍以 0644 写配置（本地任意用户可读凭据）"
-else
-    pass "生成的 cron 更新脚本不再以 0644 写配置"
-fi
 
 suite_begin "update_ui: refuse to install when the archive cannot be validated (B5)"
 
@@ -256,7 +181,7 @@ rm -rf "$shim3"
 suite_begin "release pin removed: updates download from main, not a pinned commit"
 
 assert_no_file "$SBSHELL_SRC/RELEASE" "仓库不再包含 RELEASE 发布声明"
-for f in sbshall.sh debian/menu.sh debian/update_scripts.sh openwrt/menu.sh openwrt/update_scripts.sh; do
+for f in sbshall.sh openwrt/menu.sh openwrt/update_scripts.sh; do
     if grep -q 'resolve_release_ref' "$SBSHELL_SRC/$f"; then
         fail "$f 仍在解析 RELEASE 声明"
     else
@@ -268,8 +193,8 @@ done
 # 而不是从任何写死的提交 SHA 下载（那正是维护者移除的“一跳回退”保护）。
 reset_stub_state
 reset_singbox_dir
-install_repo_scripts debian
-for f in "$SBSHELL_SRC"/debian/*.sh; do cp "$f" "$SBSHELL_FIXTURES/"; done
+install_repo_scripts openwrt
+for f in "$SBSHELL_SRC"/openwrt/*.sh; do cp "$f" "$SBSHELL_FIXTURES/"; done
 run_with_timeout bash "$SCRIPTS/update_scripts.sh" > /tmp/main-only.out 2>&1
 rc=$?
 if [ "$rc" -ne 0 ]; then
@@ -282,7 +207,7 @@ if [ "$rc" -ne 0 ]; then
 else
     pass "更新脚本按 main 更新源执行完成"
 fi
-assert_grep 'main/debian/' "$SBSHELL_STUB_STATE/curl.log" "更新按 main 分支下载脚本"
+assert_grep 'main/openwrt/' "$SBSHELL_STUB_STATE/curl.log" "更新按 main 分支下载脚本"
 if grep -qE 'raw\.githubusercontent\.com/[^/]+/sbshell/[0-9a-f]{40}/' "$SBSHELL_STUB_STATE/curl.log"; then
     fail "仍按写死的提交 SHA 下载（RELEASE 固定引用残留）"
 else

@@ -11,7 +11,7 @@ suite_begin "manual_update: empty backend (direct template URL) is supported (P1
 reset_stub_state
 reset_singbox_dir
 reset_fixtures
-install_repo_scripts debian
+install_repo_scripts openwrt
 printf '%s\n' "$VALID_CLIENT_CONFIG" > /etc/sing-box/config.json
 cat > /etc/sing-box/manual.conf <<'EOF'
 BACKEND_URL=
@@ -62,7 +62,7 @@ suite_begin "update_config.sh: empty input keeps the stored URL (P1-3.8)"
 reset_stub_state
 reset_singbox_dir
 reset_fixtures
-install_repo_scripts debian
+install_repo_scripts openwrt
 fixture_write template.json "$NEW_CONFIG"
 printf '%s\n' "$VALID_CLIENT_CONFIG" > /etc/sing-box/config.json
 
@@ -74,23 +74,6 @@ printf 'y\n\n' | run_with_timeout bash /etc/sing-box/scripts/update_config.sh >/
 rc=$?
 assert_rc "$rc" 0 "选择更换但直接回车时不应报错（旧代码会清空链接并 exit 1）"
 assert_grep 'tpl.test/template.json' /etc/sing-box/config.url "原链接被保留"
-
-suite_begin "update_config.sh: Enter generates a local random-credential config (P2-1)"
-
-reset_stub_state
-reset_singbox_dir
-reset_fixtures
-install_repo_scripts debian
-printf '%s\n' "$VALID_CLIENT_CONFIG" > /etc/sing-box/config.json
-
-printf '\n\n\n\nn\n' | run_with_timeout bash /etc/sing-box/scripts/update_config.sh >/tmp/uc3.out 2>&1
-rc=$?
-assert_rc "$rc" 0 "回车走本地生成路径"
-assert_file /etc/sing-box/config.json "config.json 已生成"
-if jq empty /etc/sing-box/config.json 2>/dev/null; then pass "生成的配置是合法 JSON"; else fail "生成的配置不是合法 JSON"; fi
-assert_eq "$(jq -r '.inbounds | length' /etc/sing-box/config.json)" "2" "默认生成 SS + VLESS-REALITY 两个入站"
-if grep -q 'REPLACE_ME' /etc/sing-box/config.json; then fail "生成结果里存在占位符"; else pass "凭据为本地随机生成"; fi
-assert_eq "$(jq -r '.inbounds[0].password | length > 10' /etc/sing-box/config.json)" "true" "SS 密码已随机生成"
 
 suite_begin "manual_update: ubus 'Command failed' noise from the init script must not leak"
 

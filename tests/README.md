@@ -46,17 +46,16 @@ nft 表、ip rule/route、state 文件、锁目录、cron 文件等可观测结�
 
 | 套件 | 覆盖的审计项 |
 | --- | --- |
-| `01_debian_menu_flow.sh` | P0-1（RETURN trap 使菜单中止） |
 | `02_mode_state.sh` | P1-3.1 TProxy/TUN 对称清理、P1-3.4 fwmark 精确匹配、P1-3.5 快照恢复、P2-7 TUN 表收窄、回滚与外来表拒绝 |
-| `03_locks.sh` | P0-3 锁不释放、P2-18 锁/临时文件清理、debian flock 并发 |
-| `04_config_update.sh` | P1-3.2 空后端地址、P1-3.3 参数语义、P2-15 订阅校验、P2-1 服务端凭据本地生成、配置更新原子性 |
+| `03_locks.sh` | P0-3 锁不释放、P2-18 锁/临时文件清理 |
+| `04_config_update.sh` | P1-3.2 空后端地址、P1-3.3 参数语义、P2-15 订阅校验、配置更新原子性 |
 | `05_openwrt.sh` | P0-4 开机防火墙恢复、P1-3.6 busybox grep、P1-3.7 initialize 失败传播、P2-13 kmod-tun、包管理器 init 脚本的 UCI 启用开关、各入口过滤 ubus `Command failed: … Not found` 噪音（短形态与带命令名的长形态都算，均为真机回归）、兼容性坏配置不再中断初始化、模板 DNS 用 1.12 写法 |
-| `06_misc.sh` | P0-2 cpuinfo flags、P1-3.8 环境/优化/延迟测试、P2-6 ufw 端口、P2-4 固定发布引用 |
+| `06_misc.sh` | P1-3.8 环境/优化/延迟测试、P2-6 ufw 端口、P2-4 固定发布引用 |
 | `07_no_install.sh` | 真机回归（ImmortalWrt）：busybox 没有 `install` applet 时，一键引导与 OpenWrt 脚本仍须可用（含生成的 cron 脚本） |
 | `10_package_manager.sh` | 真机回归（ImmortalWrt 25.12.2 / apk-tools 3.0.5）：OpenWrt 25.12 起 apk 取代 opkg，安装/UI 更新/引导/卸载四处都须按可用包管理器分派，且老固件的 opkg 调用序列不变 |
 | `11_download_failure_reason.sh` | 真机回归（ImmortalWrt 25.12.2）：`set -Eeuo pipefail` + 后台子 shell 跑 curl 时，errexit 会在 curl 失败时跳过状态写入，导致后端 HTTP 500 被误报成“配置文件下载超时”；现在失败必须立刻给出真实原因（HTTP 状态 / DNS / 连接被拒绝 / curl 超时）并打印请求地址，且现有配置不被改动 |
 | `12_ui_install.sh` | 真机回归（ImmortalWrt 25.12.2）：① 安装流程必须主动安装默认 UI（配置下载/启动失败也要装，否则 UI 永远装不上）；② UI 的完成通知或失败警告必须先于主菜单出现，且 UI 失败不能挡住菜单；③ 配置下载/更新统一 30s 超时并显示倒计时（`manual_update.sh` 与 `auto_update.sh` 的 cron 脚本，cron 下用 `[ -t 1 ]` 静默） |
-| `13_batch1_hardening.sh` | 批次 1 安全回归：`--local` 未确认必须拒绝、acme.sh 固定提交校验、配置 0640、临时目录 mktemp、OpenWrt 仅 HTTPS |
+| `13_batch1_hardening.sh` | 批次 1 安全回归：`--local` 未确认必须拒绝、OpenWrt 仅 HTTPS |
 | `14_batch2_integrity.sh` | 批次 2 数据完整性：`install()` 兜底必须先 unlink（否则覆盖运行中的脚本）、cron 更新备份移出 `$TMP`、配置原子替换 |
 | `15_ui_atomic_deploy.sh` | 批次 2 F8：UI 部署必须同文件系统 staging + rename，回滚前显式删除目标 |
 | `16_guardrails.sh` | 批次 3 测试护栏：空套件集/忘记 `suite_end` 必须判失败、断言失败带实际输出、nft 桩保真度 |
