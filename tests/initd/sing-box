@@ -5,6 +5,7 @@ S=${SBSHELL_STUB_STATE:-/tmp/sbshell-stub-state}
 
 start() {
     mkdir -p "$S" 2>/dev/null || true
+    printf 'start\n' >> "$S/initd.log" 2>/dev/null || true
     if [ ! -s /etc/sing-box/config.json ]; then
         echo "sing-box: no config" >&2
         return 1
@@ -14,6 +15,7 @@ start() {
 }
 
 stop() {
+    printf 'stop\n' >> "$S/initd.log" 2>/dev/null || true
     rm -f "$S/singbox_active" 2>/dev/null || true
     # 真机上包管理器的脚本走 ubus 删除实例，没有已注册实例时 rc.common/ubus 会回显两种噪音形态：
     # 短形态 `Command failed: Not found`，以及带命令名的长形态
@@ -27,6 +29,7 @@ stop() {
 }
 
 restart() {
+    printf 'restart\n' >> "$S/initd.log" 2>/dev/null || true
     stop
     start
 }

@@ -113,6 +113,94 @@ prune_backups() {
     local i; backups=$(ls -1dt "$BACKUP_DIR"/.ui-backup.* 2>/dev/null || true); i=0
     for backup in $backups; do i=$((i + 1)); [ "$i" -le 3 ] || rm -rf -- "$backup"; done
 }
+# 面板可达性检查（真机踩坑，2026-09-11）：
+#   experimental.clash_api.external_ui 是 sing-box **启动时**解析的，所以「UI 文件装好了」
+#   不等于「面板能打开」——运行中的实例不会挂载后来才出现的目录，真机表现就是菜单报
+#   「UI 安装完成。」但浏览器打开是连接被拒/404，直到手动 /etc/init.d/sing-box restart。
+#   安装器此前从不重启、也不校验，只按「文件已复制」报成功（面板还打不开却告诉用户成功）。
+# 这里改为：部署后按配置探测本机面板，必要时重启一次服务再确认，仍不通就明确告警。
+SINGBOX_INITD=/etc/init.d/sing-box
+CONFIG_FILE=/etc/sing-box/config.json
+
+config_value() { sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" "$CONFIG_FILE" 2>/dev/null | head -n1; }
+
+# 打印本机探测 URL（http://<host>:<port>/ui/index.html）。
+# 返回 1 表示配置里没有可用的 external_controller/external_ui，或 external_ui 不指向本目录
+# ——面板由别处提供时我们不该替用户重启 sing-box。
+ui_panel_url() {
+    local cc ui_path host port
+    cc=$(config_value external_controller)
+    ui_path=$(config_value external_ui)
+    [ -n "$cc" ] && [ -n "$ui_path" ] || return 1
+    [ "$ui_path" = "$UI_DIR" ] || return 1
+    case "$cc" in
+        *:*) host="${cc%:*}"; port="${cc##*:}" ;;
+        *)   host="$cc"; port=9090 ;;
+    esac
+    case "$host" in ''|0.0.0.0|'::'|'[::]') host=127.0.0.1 ;; esac
+    case "$port" in ''|*[!0-9]*) return 1 ;; esac
+    printf 'http://%s:%s/ui/index.html\n' "$host" "$port"
+}
+
+# 0=有 HTTP 应答（含 401/403：Secret 只挡 API，服务本身已在监听），1=连不上，2=无法判定。
+ui_panel_reachable() {
+    local url code
+    url=$(ui_panel_url) || return 2
+    code=$(curl --silent --show-error --location --proto '=http,https' \
+        --connect-timeout 3 --max-time 5 -o /dev/null -w '%{http_code}' "$url" 2>/dev/null) || return 1
+    case "$code" in ''|000) return 1 ;; *) return 0 ;; esac
+}
+
+# 判不出 pidof 时按「在运行」处理：面板不可达时重启才是正确动作。
+singbox_running() {
+    command -v pidof >/dev/null 2>&1 || return 0
+    pidof sing-box >/dev/null 2>&1
+}
+
+restart_singbox() {
+    [ -x "$SINGBOX_INITD" ] || return 1
+    local err rc
+    err=$(mktemp /tmp/sbshell-ui-restart.XXXXXX 2>/dev/null || echo "/tmp/sbshell-ui-restart.$$")
+    if "$SINGBOX_INITD" restart 2>"$err"; then rc=0; else rc=$?; fi
+    # procd/rc.common 在没有已注册实例时会回显 ubus 噪音，与 install_singbox.sh 同一套过滤。
+    sed '/^Command failed:.*Not found/d' "$err" >&2
+    rm -f "$err"
+    return "$rc"
+}
+
+# 只有确认面板在响应（或确认无法自动探测）才报成功；不可达时重启一次再确认，
+# 仍不可达就给出 URL 与下一步，而不是继续打印一句「安装完成」了事。
+notify_ui_ready() {
+    local url i=0
+    if url=$(ui_panel_url); then
+        if ui_panel_reachable; then
+            echo -e "${GREEN}UI 安装完成。${NC}"
+            return 0
+        fi
+        if ! singbox_running; then
+            echo -e "${GREEN}UI 安装完成。${NC}"
+            echo -e "${YELLOW}提示：sing-box 当前未运行，启动后即可访问面板（$url）。${NC}"
+            return 0
+        fi
+        echo -e "${YELLOW}面板尚未响应，正在重启 sing-box 以挂载 /ui 静态路由...${NC}"
+        restart_singbox || true
+        while [ "$i" -lt 3 ]; do
+            sleep 1
+            if ui_panel_reachable; then
+                echo -e "${GREEN}UI 安装完成（已重启 sing-box，面板已就绪）。${NC}"
+                return 0
+            fi
+            i=$((i + 1))
+        done
+        echo -e "${GREEN}UI 安装完成。${NC}"
+        echo -e "${RED}但面板仍未响应：$url${NC}" >&2
+        echo -e "${YELLOW}请查日志：logread | grep sing-box；若你用局域网浏览器访问，还要确认配置里的 external_controller 不是 127.0.0.1（仅监听本机时局域网打不开面板）。${NC}" >&2
+        return 0
+    fi
+    echo -e "${GREEN}UI 安装完成。${NC}"
+    echo -e "${YELLOW}提示：配置里没有可用的 external_controller/external_ui，无法自动确认面板是否可访问。${NC}"
+    return 0
+}
 install_ui() {
     local url="$1" tmp top backup failed_ui
     acquire_ui_lock
@@ -150,13 +238,23 @@ install_ui() {
     fi
     prune_backups
     cleanup_ui_tmp
-    echo -e "${GREEN}UI 安装完成。${NC}"
+    notify_ui_ready
 }
 check_ui() {
-    if [ -f "$UI_DIR/index.html" ]; then
-        echo -e "${GREEN}UI 面板已安装。${NC}"
-    else
+    local url
+    if [ ! -f "$UI_DIR/index.html" ]; then
         echo -e "${RED}UI 面板未安装或不完整。${NC}" >&2
+        return 0
+    fi
+    echo -e "${GREEN}UI 面板已安装。${NC}"
+    if url=$(ui_panel_url); then
+        if ui_panel_reachable; then
+            echo -e "${GREEN}面板正在响应：$url${NC}"
+        else
+            echo -e "${RED}但面板当前无响应：$url（可执行 /etc/init.d/sing-box restart 后重试）${NC}" >&2
+        fi
+    else
+        echo -e "${YELLOW}配置里没有可用的 external_controller/external_ui，无法探测面板。${NC}" >&2
     fi
     return 0
 }
@@ -258,6 +356,26 @@ if ! chown -R root:root "$UI_DIR"; then
   exit 1
 fi
 i=0; backups=$(ls -1dt "$BACKUP_DIR"/.ui-backup.* 2>/dev/null || true); for backup in $backups; do i=$((i + 1)); [ "$i" -le 3 ] || rm -rf -- "$backup"; done
+# 与交互式安装同一原因：external_ui 是 sing-box 启动时解析的，目录在实例启动之后才出现
+# （或刚被整体替换）时面板不会响应。这里探测一次并按需重启，否则 cron 更新完面板依旧打不开。
+panel_url() {
+  cc=$(sed -n 's/.*"external_controller"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$CONFIG_FILE" 2>/dev/null | head -n1)
+  ui_path=$(sed -n 's/.*"external_ui"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$CONFIG_FILE" 2>/dev/null | head -n1)
+  [ -n "$cc" ] && [ -n "$ui_path" ] || return 1
+  [ "$ui_path" = "$UI_DIR" ] || return 1
+  case "$cc" in *:*) host="${cc%:*}"; port="${cc##*:}" ;; *) host="$cc"; port=9090 ;; esac
+  case "$host" in ''|0.0.0.0|'::'|'[::]') host=127.0.0.1 ;; esac
+  case "$port" in ''|*[!0-9]*) return 1 ;; esac
+  printf 'http://%s:%s/ui/index.html\n' "$host" "$port"
+}
+if url=$(panel_url) && ! curl --silent --show-error --location --proto '=http,https' \
+        --connect-timeout 3 --max-time 5 -o /dev/null -w '%{http_code}' "$url" >/dev/null 2>&1 \
+        && pidof sing-box >/dev/null 2>&1; then
+  /etc/init.d/sing-box restart >/dev/null 2>&1 || true
+  sleep 2
+  curl --silent --location --max-time 5 -o /dev/null "$url" >/dev/null 2>&1 \
+    || echo "UI 已更新，但面板仍未响应：$url" >&2
+fi
 EOF
 chmod 0755 /etc/sing-box/update-ui.sh; chown root:root /etc/sing-box/update-ui.sh
 touch "$CRON_FILE"; sed -i "/[[:space:]]$CRON_MARK\$/d" "$CRON_FILE"; printf '%s /etc/sing-box/update-ui.sh %s\n' "$schedule" "$CRON_MARK" >> "$CRON_FILE"; chmod 0600 "$CRON_FILE"; chown root:root "$CRON_FILE"; /etc/init.d/cron restart >/dev/null 2>&1 || true
