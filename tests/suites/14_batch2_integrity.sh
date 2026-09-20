@@ -42,9 +42,13 @@ else
     fail "无法抽到 install 兜底块"
 fi
 
-printf 'old-content\n' > /tmp/b2-inode-dst
-printf 'new-content\n' > /tmp/b2-inode-src
-inode_before=$(stat -c %i /tmp/b2-inode-dst)
+printf 'old-content\n' > /tmp/b2-replace-dst
+printf 'new-content\n' > /tmp/b2-replace-src
+# 用硬链接判定"是否就地改写"：就地写会同时改到 .link（同一个 inode），
+# 而先 unlink 再写会让路径指向新 inode、.link 保持旧内容。
+# 注意不能用 stat -c %i 比较：overlayfs/tmpfs 上删除后立即重建极易复用同一个 inode 号。
+rm -f /tmp/b2-replace-dst.link
+ln /tmp/b2-replace-dst /tmp/b2-replace-dst.link
 
 cat > /tmp/b2-shim-run.sh <<'EOS'
 set -uo pipefail
@@ -53,7 +57,7 @@ if [ "$(type -t install)" != "function" ]; then
     echo "not-a-function"
     exit 9
 fi
-install -m 0644 /tmp/b2-inode-src /tmp/b2-inode-dst
+install -m 0644 /tmp/b2-replace-src /tmp/b2-replace-dst
 EOS
 
 # 必须在"没有 install"的 PATH 下跑，否则兜底块里的 `command -v install` 为真、函数根本不会定义，
@@ -61,17 +65,12 @@ EOS
 NOPATH=$(path_without_install)
 shim_out=$(PATH="$NOPATH" bash /tmp/b2-shim-run.sh 2>&1)
 shim_rc=$?
-inode_after=$(stat -c %i /tmp/b2-inode-dst)
 
 assert_rc "$shim_rc" 0 "受限 PATH 下兜底 install 调用成功"
 assert_not_contains "$shim_out" "not-a-function" "断言对象确实是兜底函数而非 GNU install"
-assert_eq "$(cat /tmp/b2-inode-dst)" "new-content" "目标文件内容已替换"
-assert_eq "$(stat -c %a /tmp/b2-inode-dst)" "644" "-m 0644 生效"
-if [ "$inode_before" != "$inode_after" ]; then
-    pass "替换使用新 inode（不会写正在运行的脚本）"
-else
-    fail "仍是同 inode 就地覆盖（F6 回归）"
-fi
+assert_eq "$(cat /tmp/b2-replace-dst)" "new-content" "目标路径已是新内容"
+assert_eq "$(stat -c %a /tmp/b2-replace-dst)" "644" "-m 0644 生效"
+assert_eq "$(cat /tmp/b2-replace-dst.link)" "old-content" "旧 inode 未被就地改写（硬链接仍指向旧内容）"
 
 # ------------------------------------------------------------------ F7 静态
 suite_begin "batch2 F7: cron 更新脚本原子替换配置，备份活过 EXIT trap"
@@ -111,9 +110,16 @@ assert_file /etc/sing-box/config.json.bak "更新后仍保留 config.json.bak（
 assert_eq "$(cat /etc/sing-box/config.json.bak)" "OLD-CONFIG" "备份内容是本次更新前的配置"
 assert_not_contains "$(cat /etc/sing-box/config.json)" "OLD-CONFIG" "config.json 已替换为新配置"
 
-# 失败场景：服务起不来（pidof 失败）时必须回滚到本次更新前的配置。
-rm -f "$SBSHELL_STUB_STATE/singbox_active"
+# 失败场景：服务起不来（重启返回非 0）时必须回滚到本次更新前的配置。
+# 注意：不能靠删 $SBSHELL_STUB_STATE/singbox_active 来制造失败 —— tests/initd/sing-box 的
+# start() 自己会 touch 这个标志，restart 之后 pidof 一定成功。这里直接换成一个必定失败的服务脚本。
 printf 'PRE-RESTORE\n' > /etc/sing-box/config.json
+cat > /etc/init.d/sing-box <<'EOS'
+#!/bin/sh
+echo 'simulated restart failure' >&2
+exit 1
+EOS
+chmod 0755 /etc/init.d/sing-box
 run_with_timeout bash /etc/sing-box/update-singbox.sh > /tmp/b2-cron-fail.out 2>&1
 cron_fail_rc=$?
 assert_not_rc "$cron_fail_rc" 0 "服务起不来时 cron 脚本返回非 0"
