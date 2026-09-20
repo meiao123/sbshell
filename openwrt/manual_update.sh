@@ -219,7 +219,7 @@ if ! sing-box check -c "$TMP_DIR/config.json"; then
     exit 1
 fi
 
-if [ "$TMP_DIR/manual.conf" != '' ] && [ -f "$TMP_DIR/manual.conf" ]; then
+if [ -f "$TMP_DIR/manual.conf" ]; then
     install -o root -g root -m 0600 "$TMP_DIR/manual.conf" "$MANUAL_FILE" || { echo -e "${RED}新地址保存失败，已保留之前的配置。${NC}" >&2; exit 1; }
 fi
 install -o root -g root -m 0600 "$TMP_DIR/config.json" "$CONFIG_FILE" || {

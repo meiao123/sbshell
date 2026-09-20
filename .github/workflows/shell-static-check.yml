@@ -1,19 +1,28 @@
 name: Shell static checks and behavioural tests
 
 on:
+  # security-release-* 分支早已删除，保留它只会让触发器与现状不符。
   push:
-    branches: [main, 'security-release-*']
+    branches: [main]
   pull_request:
-    branches: [main, 'security-release-*']
+    branches: [main]
 
 permissions:
   contents: read
 
+concurrency:
+  # 同一分支连续推送时取消仍在跑的旧工作流：避免两个作业同时写同一 runner 资源，
+  # 也让 PR 的检查结果始终对应最新提交。
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   syntax:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v5.1.0
+      # 动作固定到提交 SHA（tag 可被上游移动到其它提交）。下同。
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Check Bash syntax
         shell: bash
         run: |
@@ -56,12 +65,12 @@ jobs:
           grep -q 'main/debian' debian/update_scripts.sh
           test ! -e RELEASE
       - name: Run ShellCheck (errors, blocking)
-        uses: ludeeus/action-shellcheck@2.0.0
+        uses: ludeeus/action-shellcheck@00cae500b08a931fb5698e11e79bfbd38e612a38 # 2.0.0
         with:
           scandir: .
           severity: error
       - name: Run ShellCheck (warnings, non-blocking)
-        uses: ludeeus/action-shellcheck@2.0.0
+        uses: ludeeus/action-shellcheck@00cae500b08a931fb5698e11e79bfbd38e612a38 # 2.0.0
         continue-on-error: true
         with:
           scandir: .
@@ -69,8 +78,10 @@ jobs:
 
   behavioural:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v5.1.0
+      # 动作固定到提交 SHA（tag 可被上游移动到其它提交）。下同。
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Run containerised behavioural tests
         shell: bash
         run: |
@@ -87,3 +98,12 @@ jobs:
           fi
           tail -40 /tmp/suite.log
           exit "$rc"
+      - name: Upload behavioural test log
+        # 这一步必须 always()：失败时的日志才是唯一线索（容器 --rm 会丢掉所有 /tmp/*.out），
+        # 而 Actions 的界面只保留日志开头，artifactId 才能拿到完整套件输出。
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: behavioural-suite-log
+          path: /tmp/suite.log
+          if-no-files-found: warn
