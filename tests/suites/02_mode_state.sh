@@ -5,7 +5,7 @@ set -uo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/../lib/harness.sh"
 
 SCRIPTS=/etc/sing-box/scripts
-setup_mode_case() { reset_stub_state; reset_singbox_dir; install_repo_scripts debian; }
+setup_mode_case() { reset_stub_state; reset_singbox_dir; install_repo_scripts openwrt; }
 set_mode() { printf 'MODE=%s\n' "$1" > /etc/sing-box/mode.conf; }
 
 suite_begin "firewall state machine: TProxy apply / idempotency"
@@ -52,7 +52,7 @@ set_mode TProxy
 run_with_timeout bash "$SCRIPTS/configure_tproxy.sh" >/tmp/tproxy3.out 2>&1
 rc=$?
 assert_rc "$rc" 0 "切回 TProxy 成功"
-if nft_table_exists sing-box-tun; then fail "切回 TProxy 后 TUN 表应被删除（旧 Debian 脚本会残留）"; else pass "TUN 表已删除"; fi
+if nft_table_exists sing-box-tun; then fail "切回 TProxy 后 TUN 表应被删除"; else pass "TUN 表已删除"; fi
 assert_no_file /etc/sing-box/tun.state "tun.state 已清理"
 assert_no_file /etc/sing-box/tun/nftables.conf "tun/nftables.conf 已清理"
 if nft_table_exists sing-box; then pass "TProxy 表重新建立"; else fail "TProxy 表缺失"; fi

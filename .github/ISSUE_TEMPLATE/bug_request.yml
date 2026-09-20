@@ -6,8 +6,6 @@ body:
       label: 操作系统
       description: 请提供操作系统类型
       options:
-        - ubuntu
-        - debian
         - openwrt
     validations:
       required: true

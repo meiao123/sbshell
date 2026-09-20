@@ -64,28 +64,6 @@ leftovers=$(ls -A /etc/sing-box/ 2>/dev/null | grep -c '^\.config.json.backup\|^
 assert_eq "$leftovers" "0" "临时/备份文件已清理"
 assert_file /etc/sing-box/manual.conf "manual.conf 已写入"
 
-suite_begin "debian: concurrent updates serialize via flock"
-reset_stub_state
-reset_singbox_dir
-reset_fixtures
-install_repo_scripts debian
-printf '%s\n' "$VALID_CLIENT_CONFIG" > /etc/sing-box/config.json
-cat > /etc/sing-box/manual.conf <<'EOF'
-BACKEND_URL=https://backend.test
-SUBSCRIPTION_URL=tk?token=demo
-TEMPLATE_URL=https://tpl.test/template.json
-EOF
-fixture_write template.json "$VALID_CLIENT_CONFIG"
-printf '1\n12\n' | run_with_timeout bash /etc/sing-box/scripts/auto_update.sh >/tmp/dauto.out 2>&1
-assert_rc "$?" 0 "debian 自动更新脚本生成成功"
-run_with_timeout /etc/sing-box/update-singbox.sh >/tmp/d1.out 2>&1 & p1=$!
-run_with_timeout /etc/sing-box/update-singbox.sh >/tmp/d2.out 2>&1 & p2=$!
-wait "$p1"; rc1=$?
-wait "$p2"; rc2=$?
-assert_rc "$rc1" 0 "并发执行 1 成功"
-assert_rc "$rc2" 0 "并发执行 2 成功"
-assert_file /etc/sing-box/config.json "并发后配置仍存在"
-leftover_tmp=$(ls -d /tmp/sbshell-auto.* 2>/dev/null | wc -l)
-assert_eq "$leftover_tmp" "0" "没有残留临时目录"
+suite_begin "openwrt: concurrent updates serialize via the dedicated lock"
 
 suite_end

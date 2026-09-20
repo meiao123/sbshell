@@ -86,4 +86,24 @@ assert_no_grep 'auto_update.sh" > /tmp/no-install-au.out 2>&1 || true' "$SBSHELL
 assert_grep 'assert_rc "\$au_rc" 0' "$SBSHELL_SRC/tests/suites/07_no_install.sh" \
     "改为断言 auto_update.sh 的退出码为 0"
 
+# ------------------------------------------- g) 仓库已不再包含 Debian 侧
+suite_begin "guardrail: 仓库已不再包含 Debian 侧内容"
+
+if [ -e "$SBSHELL_SRC/debian" ]; then fail "debian/ 目录仍存在"; else pass "debian/ 目录已删除"; fi
+if [ -e "$SBSHELL_SRC/config_template/server" ]; then
+    fail "config_template/server/ 仍存在"
+else
+    pass "config_template/server/ 已删除"
+fi
+# 功能面（引导、OpenWrt 脚本、测试、CI）不得再引用 debian/ 路径；
+# docs 里的历史记录与 README 的「已移除」说明不算。
+# 必须排除本文件自身：下面的断言文本里就写着 debian/，否则会自己数到自己。
+refs=$(grep -rn --exclude-dir=.git --exclude=16_guardrails.sh 'debian/' \
+        "$SBSHELL_SRC/openwrt" "$SBSHELL_SRC/tests" "$SBSHELL_SRC/.github" "$SBSHELL_SRC/sbshall.sh" 2>/dev/null |
+    grep -v ':[0-9]*:[[:space:]]*#' | wc -l)
+assert_eq "$refs" "0" "功能面上没有 debian/ 路径引用"
+assert_grep '仅支持 OpenWrt' "$SBSHELL_SRC/sbshall.sh" "引导脚本只接受 OpenWrt / ImmortalWrt"
+assert_grep '仅支持 OpenWrt' "$SBSHELL_SRC/README.md" "README 声明仅支持 OpenWrt"
+assert_no_grep 'debian' "$SBSHELL_SRC/.github/ISSUE_TEMPLATE/bug_request.yml" "issue 模板不再提供 debian 选项"
+
 suite_end

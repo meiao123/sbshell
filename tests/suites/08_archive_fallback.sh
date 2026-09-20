@@ -20,7 +20,7 @@ done
 assert_grep '^export REPO_RAW=' "$SBSHELL_SRC/openwrt/menu.sh" "openwrt/menu.sh 定义 REPO_RAW，避免 set -u 下变量未定义"
 
 suite_begin "release pin has been removed; main is the only update source"
-for f in sbshall.sh openwrt/menu.sh openwrt/update_scripts.sh debian/menu.sh; do
+for f in sbshall.sh openwrt/menu.sh openwrt/update_scripts.sh; do
     # 去掉注释行再判断：脚本里保留“已移除 RELEASE 声明”的说明是好事，
     # 这里只禁止代码/下载路径仍然依赖发布指针（与 workflow 的令牌检查一致）。
     if grep -vE '^[[:space:]]*#' "$SBSHELL_SRC/$f" | grep -Eq 'RELEASE|RELEASE_REF|resolve_release_ref'; then
@@ -31,11 +31,9 @@ for f in sbshall.sh openwrt/menu.sh openwrt/update_scripts.sh debian/menu.sh; do
 done
 assert_grep '"main"' "$SBSHELL_SRC/sbshall.sh" "sbshall.sh 使用 main 作为最新代码来源"
 assert_grep 'download_repo_file "openwrt/[^"]*" "main"' "$SBSHELL_SRC/openwrt/menu.sh" "OpenWrt 更新路径直接取自 main"
-assert_grep 'main/debian' "$SBSHELL_SRC/debian/menu.sh" "Debian 更新路径直接指向 main"
-assert_grep 'main/debian' "$SBSHELL_SRC/debian/update_scripts.sh" "Debian 自更新路径直接指向 main"
 
 # 批次 1 收紧：配置文件含节点凭据，OpenWrt 侧的 URL 校验与下载一律只允许 HTTPS
-# （此前接受明文 HTTP，与 Debian 平台以及 OpenWrt 自己的错误文案都不一致）。
+# （此前接受明文 HTTP，与 OpenWrt 自己的错误文案都不一致）。
 suite_begin "config URLs must be HTTPS (batch 1 hardened the OpenWrt validators)"
 assert_grep '\[\[ "\$1" =~ \^https://' "$SBSHELL_SRC/openwrt/manual_input.sh" "manual_input.sh 只接受 HTTPS URL"
 assert_grep --proto "$SBSHELL_SRC/openwrt/manual_input.sh" "manual_input.sh 使用显式协议白名单"

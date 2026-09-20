@@ -94,14 +94,11 @@ GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
 [ "$(uname -s)" = Linux ] || { echo -e "${RED}当前系统不支持运行此脚本。${NC}" >&2; exit 1; }
 [ -r /etc/os-release ] || { echo -e "${RED}无法识别操作系统。${NC}" >&2; exit 1; }
 
-is_openwrt=false
-if grep -qi openwrt /etc/os-release; then
-    is_openwrt=true
+# 本仓库只支持 OpenWrt / ImmortalWrt：Debian/Ubuntu/Armbian 分支及其 apt 路径已移除。
+if grep -qiE 'openwrt|immortalwrt' /etc/os-release; then
     echo -e "${GREEN}系统为 OpenWrt。${NC}"
-elif grep -Eqi 'debian|ubuntu|armbian' /etc/os-release; then
-    echo -e "${GREEN}系统为 Debian/Ubuntu/Armbian。${NC}"
 else
-    echo -e "${RED}当前系统不是受支持的 Debian/Ubuntu/Armbian/OpenWrt。${NC}" >&2
+    echo -e "${RED}本脚本仅支持 OpenWrt / ImmortalWrt（当前系统不受支持）。${NC}" >&2
     exit 1
 fi
 
@@ -119,26 +116,18 @@ PKG_UPDATED=false
 install_package() {
     local package="$1"
     if ! $PKG_UPDATED; then
-        if $is_openwrt; then
-            case "$PKG_MGR" in
-                opkg) opkg update ;;
-                apk)  apk update ;;
-                none) echo -e "${RED}未找到 opkg 或 apk 包管理器。${NC}" >&2; return 1 ;;
-            esac
-        else
-            apt-get update
-        fi
-        PKG_UPDATED=true
-    fi
-    if $is_openwrt; then 
         case "$PKG_MGR" in
-            opkg) opkg install "$package" ;;
-            apk)  apk add "$package" ;;
+            opkg) opkg update ;;
+            apk)  apk update ;;
             none) echo -e "${RED}未找到 opkg 或 apk 包管理器。${NC}" >&2; return 1 ;;
         esac
-    else
-        apt-get install -y "$package"
+        PKG_UPDATED=true
     fi
+    case "$PKG_MGR" in
+        opkg) opkg install "$package" ;;
+        apk)  apk add "$package" ;;
+        none) echo -e "${RED}未找到 opkg 或 apk 包管理器。${NC}" >&2; return 1 ;;
+    esac
 }
 
 ensure_command() {
@@ -159,23 +148,17 @@ install -d -o root -g root -m 0755 "$SCRIPT_DIR"
 tmp=$(mktemp /tmp/sbshell-menu.XXXXXX)
 trap 'rm -f "$tmp"' EXIT
 
-if $is_openwrt; then
-    download_repo_file "openwrt/menu.sh" "main" "$tmp"
-else
-    download_repo_file "debian/menu.sh" "main" "$tmp"
-fi
+download_repo_file "openwrt/menu.sh" "main" "$tmp"
 
 [ -s "$tmp" ] || { echo -e "${RED}主脚本下载失败或为空。${NC}" >&2; exit 1; }
 bash -n "$tmp"
 install -o root -g root -m 0755 "$tmp" "$SCRIPT_DIR/menu.sh"
 
-if $is_openwrt; then
-    if [ -e /usr/bin/sb ] && [ ! -L /usr/bin/sb ]; then
-        echo -e "${RED}/usr/bin/sb 已存在且不是符号链接，拒绝覆盖。${NC}" >&2
-        exit 1
-    fi
-    ln -sfn "$SCRIPT_DIR/menu.sh" /usr/bin/sb
+if [ -e /usr/bin/sb ] && [ ! -L /usr/bin/sb ]; then
+    echo -e "${RED}/usr/bin/sb 已存在且不是符号链接，拒绝覆盖。${NC}" >&2
+    exit 1
 fi
+ln -sfn "$SCRIPT_DIR/menu.sh" /usr/bin/sb
 
 echo -e "${GREEN}主脚本下载并校验完成（代码引用: main）。${NC}"
 echo -e "${YELLOW}注意：脚本会修改系统网络、防火墙和 sing-box 配置，请确认已做好备份。${NC}"

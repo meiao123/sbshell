@@ -3,6 +3,11 @@
 本文件记录一轮代码审计（边界漏洞 / 逻辑错误 / 需要优化的地方）的结论与修复落点，
 便于评审与回归。每一条都给出了：问题 → 修复 → 守护它的行为测试。
 
+> **范围变更**：本仓库已改为 **OpenWrt / ImmortalWrt 专用**，`debian/` 与
+> `config_template/server/` 已删除。下文表格中涉及 Debian 路径的条目**保留为历史记录**
+> （用于追溯当时的审计结论与修复理由），但其代码已不在仓库中；守护它们的 Debian 测试
+> 套件同样已移除。当前生效的回归套件见 [tests/README.md](../tests/README.md)。
+
 测试运行方式见 [tests/README.md](../tests/README.md)：
 
 ```sh

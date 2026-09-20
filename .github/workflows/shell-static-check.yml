@@ -45,7 +45,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for f in config_template/*.json config_template/server/*.json; do
+          for f in config_template/*.json; do
             echo "jq empty $f"
             jq empty "$f"
           done
@@ -53,7 +53,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          files=(sbshall.sh debian/menu.sh debian/update_scripts.sh openwrt/menu.sh openwrt/update_scripts.sh)
+          files=(sbshall.sh openwrt/menu.sh openwrt/update_scripts.sh)
           ! grep -nE 'BASE_REF|RELEASE_REF|RELEASE_DECL_URL|resolve_release_ref' "${files[@]}"
           ! grep -nE "download_repo_file ['\"]?RELEASE|['\"]RELEASE['\"]" "${files[@]}"
           grep -q '"main"' sbshall.sh
@@ -61,8 +61,6 @@ jobs:
           # 字面量 "main/openwrt/" 不复存在：改为断言“下载 ref 是 main”。
           grep -qE 'download_repo_file "openwrt/[^"]*" "main"' openwrt/menu.sh
           grep -q '"main"' openwrt/update_scripts.sh
-          grep -q 'main/debian' debian/menu.sh
-          grep -q 'main/debian' debian/update_scripts.sh
           test ! -e RELEASE
       - name: Run ShellCheck (errors, blocking)
         uses: ludeeus/action-shellcheck@00cae500b08a931fb5698e11e79bfbd38e612a38 # 2.0.0
