@@ -142,13 +142,24 @@ ui_panel_url() {
     printf 'http://%s:%s/ui/index.html\n' "$host" "$port"
 }
 
-# 0=有 HTTP 应答（含 401/403：Secret 只挡 API，服务本身已在监听），1=连不上，2=无法判定。
+# 探测结果（A-06）：
+#   0 = 面板真的在服务（HTTP 2xx）—— 这才叫"可达"
+#   1 = 连不上/无应答（curl 没给出状态码，或 000）
+#   2 = 配置里没有可用的 external_controller/external_ui，无法自动判定
+#   3 = 服务在监听，但**没有提供面板**（404/5xx/401…），状态码放进 UI_PANEL_HTTP_CODE
+# 旧实现把任何非 000 的状态码都当"可达"：真 curl 不带 --fail 时对 404 返回 0，于是
+# "UI 路由没挂上"会被判成安装成功；而测试桩把 404 建模成 exit 22，正好掩盖了这个差异。
 ui_panel_reachable() {
     local url code
+    UI_PANEL_HTTP_CODE=''
     url=$(ui_panel_url) || return 2
     code=$(curl --silent --show-error --location --proto '=http,https' \
-        --connect-timeout 3 --max-time 5 -o /dev/null -w '%{http_code}' "$url" 2>/dev/null) || return 1
-    case "$code" in ''|000) return 1 ;; *) return 0 ;; esac
+        --connect-timeout 3 --max-time 5 -o /dev/null -w '%{http_code}' "$url" 2>/dev/null) || true
+    case "$code" in
+        ''|000) return 1 ;;
+        2*) return 0 ;;
+        *) UI_PANEL_HTTP_CODE="$code"; return 3 ;;
+    esac
 }
 
 # 判不出 pidof 时按「在运行」处理：面板不可达时重启才是正确动作。
@@ -171,9 +182,10 @@ restart_singbox() {
 # 只有确认面板在响应（或确认无法自动探测）才报成功；不可达时重启一次再确认，
 # 仍不可达就给出 URL 与下一步，而不是继续打印一句「安装完成」了事。
 notify_ui_ready() {
-    local url i=0
+    local url i=0 st=0
     if url=$(ui_panel_url); then
-        if ui_panel_reachable; then
+        ui_panel_reachable || st=$?
+        if [ "$st" -eq 0 ]; then
             echo -e "${GREEN}UI 安装完成。${NC}"
             return 0
         fi
@@ -182,19 +194,30 @@ notify_ui_ready() {
             echo -e "${YELLOW}提示：sing-box 当前未运行，启动后即可访问面板（$url）。${NC}"
             return 0
         fi
-        echo -e "${YELLOW}面板尚未响应，正在重启 sing-box 以挂载 /ui 静态路由...${NC}"
+        if [ "$st" -eq 3 ]; then
+            echo -e "${YELLOW}服务在监听但没有提供面板（HTTP ${UI_PANEL_HTTP_CODE}），正在重启 sing-box 以挂载 /ui 静态路由...${NC}"
+        else
+            echo -e "${YELLOW}面板尚未响应，正在重启 sing-box 以挂载 /ui 静态路由...${NC}"
+        fi
         restart_singbox || true
         while [ "$i" -lt 3 ]; do
             sleep 1
-            if ui_panel_reachable; then
+            st=0
+            ui_panel_reachable || st=$?
+            if [ "$st" -eq 0 ]; then
                 echo -e "${GREEN}UI 安装完成（已重启 sing-box，面板已就绪）。${NC}"
                 return 0
             fi
             i=$((i + 1))
         done
         echo -e "${GREEN}UI 安装完成。${NC}"
-        echo -e "${RED}但面板仍未响应：$url${NC}" >&2
-        echo -e "${YELLOW}请查日志：logread | grep sing-box；若你用局域网浏览器访问，还要确认配置里的 external_controller 不是 127.0.0.1（仅监听本机时局域网打不开面板）。${NC}" >&2
+        if [ "$st" -eq 3 ]; then
+            echo -e "${RED}但面板仍未响应：$url（HTTP ${UI_PANEL_HTTP_CODE}：服务在监听，但没有提供面板）${NC}" >&2
+            echo -e "${YELLOW}请确认 external_ui 指向的目录里确实有 index.html；若用局域网浏览器访问，还要确认 external_controller 不是 127.0.0.1（仅监听本机时局域网打不开面板）。${NC}" >&2
+        else
+            echo -e "${RED}但面板仍未响应：$url${NC}" >&2
+            echo -e "${YELLOW}请查日志：logread | grep sing-box；若你用局域网浏览器访问，还要确认配置里的 external_controller 不是 127.0.0.1（仅监听本机时局域网打不开面板）。${NC}" >&2
+        fi
         return 0
     fi
     echo -e "${GREEN}UI 安装完成。${NC}"
@@ -389,13 +412,24 @@ panel_url() {
   case "$port" in ''|*[!0-9]*) return 1 ;; esac
   printf 'http://%s:%s/ui/index.html\n' "$host" "$port"
 }
-if url=$(panel_url) && ! curl --silent --show-error --location --proto '=http,https' \
-        --connect-timeout 3 --max-time 5 -o /dev/null -w '%{http_code}' "$url" >/dev/null 2>&1 \
-        && pidof sing-box >/dev/null 2>&1; then
-  /etc/init.d/sing-box restart >/dev/null 2>&1 || true
-  sleep 2
-  curl --silent --location --max-time 5 -o /dev/null "$url" >/dev/null 2>&1 \
-    || echo "UI 已更新，但面板仍未响应：$url" >&2
+if url=$(panel_url) && pidof sing-box >/dev/null 2>&1; then
+  # 只把 2xx 当作"面板可用"（A-06）：真 curl 不带 --fail 时对 404/5xx 也返回 0，旧写法
+  # 因此会把"UI 路由没挂上"当成成功，cron 更新完用户照样打不开面板。
+  probe=$(curl --silent --show-error --location --proto '=http,https' \
+      --connect-timeout 3 --max-time 5 -o /dev/null -w '%{http_code}' "$url" 2>/dev/null) || true
+  case "$probe" in
+    2*) : ;;
+    *)
+      /etc/init.d/sing-box restart >/dev/null 2>&1 || true
+      sleep 2
+      probe=$(curl --silent --location --proto '=http,https' --max-time 5 \
+          -o /dev/null -w '%{http_code}' "$url" 2>/dev/null) || true
+      case "$probe" in
+        2*) echo "UI 已更新并已重启 sing-box，面板已就绪。" >&2 ;;
+        *)  echo "UI 已更新，但面板仍未响应：$url（HTTP ${probe:-000}）" >&2 ;;
+      esac
+      ;;
+  esac
 fi
 EOF
 chmod 0755 /etc/sing-box/update-ui.sh; chown root:root /etc/sing-box/update-ui.sh

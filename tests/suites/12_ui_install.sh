@@ -274,4 +274,40 @@ assert_grep 'notify_ui_ready' /tmp/ui12-install.sh "install_ui 收尾走「确�
 assert_grep 'panel_url()' "$SRC/update_ui.sh" "生成的 cron 自动更新脚本也探测面板"
 assert_grep 'sing-box restart' "$SRC/update_ui.sh" "cron 版面板不可达时也会重启 sing-box"
 
+# ⑥ A-06：服务在监听但**没有提供面板**（404/5xx）不能被当成"可达"。
+# 真 curl 不带 --fail 时对 404 返回 0；旧实现只看 curl 退出码 → 判成可达、不重启，
+# 用户看到"UI 安装完成"却打不开面板。夹具此前也把 404 建模成 exit 22，正好掩盖了它。
+reset_stub_state
+reset_singbox_dir
+reset_openwrt_dirs
+mkdir -p /etc/sing-box/ui
+printf '<html></html>\n' > /etc/sing-box/ui/index.html
+write_ui_config /etc/sing-box/ui
+reset_fixtures
+fixture_write index.html '<html>ok</html>'
+touch "$SBSHELL_STUB_STATE/singbox_active"
+UI_READY_OUT=$(run_with_timeout env SBSHELL_CURL_HTTP=404 bash "$DRIVER" ready 2>&1); UI_READY_RC=$?
+assert_rc "$UI_READY_RC" 0 "面板返回 404 时收尾检查不阻断"
+assert_contains "$UI_READY_OUT" "正在重启 sing-box" "只把 2xx 当可达：404 也必须重启一次"
+assert_contains "$UI_READY_OUT" "404" "告警里要带真实 HTTP 状态码（便于定位）"
+assert_contains "$(stub_log initd)" "stop" "404 时确实重启了服务"
+
+# ⑥b 同一场景，但用"像真 curl 那样对 404 返回 0"的桩（SBSHELL_CURL_HTTP_REAL=1）
+reset_stub_state
+reset_singbox_dir
+reset_openwrt_dirs
+mkdir -p /etc/sing-box/ui
+printf '<html></html>\n' > /etc/sing-box/ui/index.html
+write_ui_config /etc/sing-box/ui
+reset_fixtures
+touch "$SBSHELL_STUB_STATE/singbox_active"
+UI_READY_OUT=$(run_with_timeout env SBSHELL_CURL_HTTP=404 SBSHELL_CURL_HTTP_REAL=1 bash "$DRIVER" ready 2>&1)
+assert_contains "$UI_READY_OUT" "正在重启 sing-box" "桩忠实模拟真 curl（404→rc 0）时仍必须重启"
+assert_contains "$UI_READY_OUT" "404" "这种场景下同样要报出状态码"
+
+# ⑦ A-05 固化：cron 版自动更新器读不到 config.json 时用内置默认下载地址（兜底本来就在）
+assert_grep 'URL=${URL:-https://github.com/Zephyruso/zashboard/archive/15575961' "$SRC/update_ui.sh" \
+    "cron 版 UI 更新器有内置默认下载地址兜底"
+assert_grep 'UI_PANEL_HTTP_CODE' "$SRC/update_ui.sh" "面板探测区分「在监听但没提供面板」"
+
 suite_end
