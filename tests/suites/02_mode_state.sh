@@ -137,7 +137,7 @@ assert_no_grep "TProxy 防火墙状态已清理" /tmp/cleanfail.out "不再谎�
 
 suite_begin "switch_mode: mode.conf 写成原子替换（A-16）"
 
-sm="$SRC/openwrt/switch_mode.sh"
+sm="$SBSHELL_SRC/openwrt/switch_mode.sh"
 assert_no_grep 'mktemp /tmp/sbshell-mode' "$sm" "mode.conf 的临时文件不再放在 /tmp（跨设备 → 只能就地截断）"
 assert_grep 'mktemp "$MODE_DIR/.mode.conf.XXXXXX"' "$sm" "临时文件与目标同目录（可 rename）"
 assert_grep 'mv -f "$TMP_MODE" "$MODE_FILE"' "$sm" "用 rename 原子替换 mode.conf"

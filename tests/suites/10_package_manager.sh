@@ -129,6 +129,8 @@ PATH="$APKONLY" run_with_timeout bash -c '
     . /tmp/ui10-va.sh
     validate_archive /tmp/ui10-real.zip' > /tmp/ui10-va.out 2>&1; rc=$?
 assert_grep '^apk add unzip$' "$APK_LOG" "缺 unzip 时才通过 apk 安装 unzip"
+assert_grep '缺少 unzip' /tmp/ui10-va.out "装不上时 fail-closed，并说明缺的是 unzip"
+assert_grep 'ensure_unzip_auto' "$SBSHELL_SRC/openwrt/update_ui.sh" "cron 生成体也会自己装 unzip（否则缺 unzip 的设备上自动更新永久失败）"
 assert_not_rc "$rc" 0 "受限 PATH 里装不上 unzip 时必须拒绝（fail-closed）"
 
 suite_begin "bootstrap: sbshall.sh install_package supports apk"
