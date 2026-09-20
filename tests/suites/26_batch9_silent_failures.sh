@@ -12,28 +12,36 @@ set -uo pipefail
 
 SRC="${SBSHELL_SRC:-/src}"
 
+# 统计匹配行数：把模式单独传进来，避免在命令替换里嵌套引号。
+count_in() {
+    local pattern="$1" file="$2"
+    grep -c -- "$pattern" "$file" 2>/dev/null || true
+}
+
 suite_begin "批次9 A-23：失败不再被吞掉"
 
 assert_grep '防火墙规则清理失败' "$SRC/openwrt/stop_singbox.sh" \
     "clean_nft.sh 失败时给出明确原因"
 assert_grep '可手工重试：bash \$SCRIPT_DIR/clean_nft.sh' "$SRC/openwrt/stop_singbox.sh" \
     "给出可直接执行的手工命令"
-assert_eq "$(grep -c 'clean_nft.sh"$' "$SRC/openwrt/stop_singbox.sh")" "0" \
+assert_eq "$(count_in 'clean_nft\.sh"$' "$SRC/openwrt/stop_singbox.sh")" "0" \
     "不再是「裸调用靠 errexit 退出」"
 
 assert_grep '注销开机防火墙脚本失败' "$SRC/openwrt/manage_autostart.sh" \
     "sbshell-firewall disable 失败会告警"
-assert_eq "$(grep -c 'sbshell-firewall disable >/dev/null 2>&1 || true' "$SRC/openwrt/manage_autostart.sh")" "0" \
-    "不再用 `|| true` 吞掉 disable 失败"
+assert_eq "$(count_in 'sbshell-firewall disable >/dev/null 2>&1 \|\| true' "$SRC/openwrt/manage_autostart.sh")" "0" \
+    "不再用 || true 吞掉 disable 失败"
 assert_grep 'cmd_status=1' "$SRC/openwrt/manage_autostart.sh" \
     "disable 失败并入 cmd_status，走统一的失败分支"
 
-assert_eq "$(grep -c '计划任务未生效：cron 重启失败' "$SRC/openwrt/update_ui.sh")" "1" \
+assert_eq "$(count_in '计划任务未生效：cron 重启失败' "$SRC/openwrt/update_ui.sh")" "1" \
     "update_ui.sh 的 cron restart 失败会告警"
-assert_eq "$(grep -c '计划任务未生效：cron 重启失败' "$SRC/openwrt/auto_update.sh")" "2" \
+assert_eq "$(count_in '计划任务未生效：cron 重启失败' "$SRC/openwrt/auto_update.sh")" "2" \
     "auto_update.sh 两处 cron restart 失败都会告警"
-assert_eq "$(grep -c 'cron restart >/dev/null 2>&1 || true' "$SRC/openwrt/update_ui.sh" "$SRC/openwrt/auto_update.sh")" "0" \
-    "不再有被 `|| true` 吞掉的 cron restart"
+assert_eq "$(count_in 'cron restart >/dev/null 2>&1 \|\| true' "$SRC/openwrt/update_ui.sh")" "0" \
+    "update_ui.sh 不再有被 || true 吞掉的 cron restart"
+assert_eq "$(count_in 'cron restart >/dev/null 2>&1 \|\| true' "$SRC/openwrt/auto_update.sh")" "0" \
+    "auto_update.sh 不再有被 || true 吞掉的 cron restart"
 
 assert_grep '下载失败或为空' "$SRC/openwrt/update_scripts.sh" \
     "脚本下载校验失败会说明是哪个文件"
