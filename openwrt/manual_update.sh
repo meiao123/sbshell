@@ -178,7 +178,8 @@ download_status=$(mktemp /tmp/sbshell-update-status.XXXXXX)
 rm -f "$download_status"
 (
     rc=0
-    curl --fail --silent --show-error --location --proto '=http,https' --tlsv1.2 --connect-timeout 10 --max-time 30 "$FULL_URL" -o "$TMP_DIR/config.json" || rc=$?
+    # 只允许 HTTPS：配置文件内含节点凭据，明文 HTTP 会在链路上泄露（与 debian 侧一致）。
+    curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 30 "$FULL_URL" -o "$TMP_DIR/config.json" || rc=$?
     printf '%s\n' "$rc" > "$download_status"
     exit 0
 ) &

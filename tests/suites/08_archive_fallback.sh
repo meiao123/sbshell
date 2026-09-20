@@ -34,11 +34,14 @@ assert_grep 'download_repo_file "openwrt/[^"]*" "main"' "$SBSHELL_SRC/openwrt/me
 assert_grep 'main/debian' "$SBSHELL_SRC/debian/menu.sh" "Debian 更新路径直接指向 main"
 assert_grep 'main/debian' "$SBSHELL_SRC/debian/update_scripts.sh" "Debian 自更新路径直接指向 main"
 
-suite_begin "HTTP and HTTPS config URLs are accepted"
-assert_grep 'https?://' "$SBSHELL_SRC/openwrt/manual_input.sh" "manual_input.sh 接受 HTTP/HTTPS URL"
+# 批次 1 收紧：配置文件含节点凭据，OpenWrt 侧的 URL 校验与下载一律只允许 HTTPS
+# （此前接受明文 HTTP，与 Debian 平台以及 OpenWrt 自己的错误文案都不一致）。
+suite_begin "config URLs must be HTTPS (batch 1 hardened the OpenWrt validators)"
+assert_grep '\[\[ "\$1" =~ \^https://' "$SBSHELL_SRC/openwrt/manual_input.sh" "manual_input.sh 只接受 HTTPS URL"
 assert_grep --proto "$SBSHELL_SRC/openwrt/manual_input.sh" "manual_input.sh 使用显式协议白名单"
-assert_grep "=http,https" "$SBSHELL_SRC/openwrt/manual_input.sh" "配置下载同时允许 HTTP 与 HTTPS"
-assert_grep 'https?://' "$SBSHELL_SRC/openwrt/set_defaults.sh" "set_defaults.sh 接受 HTTP/HTTPS URL"
+assert_no_grep 'https\?://' "$SBSHELL_SRC/openwrt/manual_input.sh" "manual_input.sh 不再接受明文 HTTP"
+assert_grep "proto '=https'" "$SBSHELL_SRC/openwrt/manual_input.sh" "配置下载只允许 HTTPS"
+assert_grep '\[\[ "\$1" =~ \^https://' "$SBSHELL_SRC/openwrt/set_defaults.sh" "set_defaults.sh 只接受 HTTPS URL"
 
 suite_begin "config URL uses the documented subscription/template concatenation"
 assert_grep 'FULL_URL="\${BACKEND_URL%/}/config/\${SUBSCRIPTION_URL}&file=\${TEMPLATE_URL}"' "$SBSHELL_SRC/openwrt/manual_input.sh" "后端配置 URL 保持 /config/订阅地址&file=模板地址 拼接规则"
