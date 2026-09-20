@@ -39,6 +39,7 @@ reset_stub_state() {
     : > "$SBSHELL_STUB_STATE/nft.log"
     : > "$SBSHELL_STUB_STATE/ip.log"
     : > "$SBSHELL_STUB_STATE/systemctl.log"
+    : > "$SBSHELL_STUB_STATE/initd.log"
     unset SBSHELL_NFT_FAIL SBSHELL_SINGBOX_FAIL SBSHELL_NO_IPV6 SBSHELL_IPV4_FORWARD SBSHELL_IPV6_FORWARD
 }
 

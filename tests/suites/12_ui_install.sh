@@ -173,4 +173,105 @@ assert_grep 'if \[ -t 1 \]' "$SRC/auto_update.sh" "cron 下静默：仅在终端
 assert_grep '--max-time 30' "$SRC/auto_update.sh" "自动更新超时为 30s"
 assert_grep '下载超时（30s）' "$SRC/auto_update.sh" "自动更新超时有明确提示"
 
+# ---------------------------------------------------------------------------
+# 真机复现（2026-09-11 ImmortalWrt）：菜单自动装完 UI 后报「UI 安装完成。」，但浏览器打开
+# 面板是连接被拒 —— 因为 external_ui 由 sing-box 在**启动时**解析，运行中的实例不会挂载
+# 后来才出现的目录；用户手动 /etc/init.d/sing-box restart 后面板才正常。
+# 回归要求：装完必须探测面板、不可达就重启一次、仍不可达要明确告警而不是继续报成功。
+# ---------------------------------------------------------------------------
+suite_begin "update_ui: 装完必须确认面板真的在响应，不达则重启 sing-box（真机踩坑点）"
+
+READY_SH=/tmp/ui12-ready.sh
+DRIVER=/tmp/ui12-driver.sh
+# 抽出探测/重启/通知三组函数（与 06 号套件抽 validate_archive 同一手法）。
+awk '/^config_value\(\)/{p=1} /^install_ui\(\)/{p=0} p' "$SRC/update_ui.sh" > "$READY_SH"
+cat > "$DRIVER" <<'EOS'
+set -uo pipefail
+UI_DIR=/etc/sing-box/ui
+CONFIG_FILE=/etc/sing-box/config.json
+SINGBOX_INITD=/etc/init.d/sing-box
+GREEN=''; RED=''; YELLOW=''; NC=''
+. /tmp/ui12-ready.sh
+case "${1:-}" in
+    url)   ui_panel_url; echo "url_rc=$?" ;;
+    ready) notify_ui_ready ;;
+esac
+EOS
+
+write_ui_config() {
+    printf '{"experimental":{"clash_api":{"external_controller":"127.0.0.1:9095","external_ui":"%s"}}}\n' "$1" > /etc/sing-box/config.json
+}
+
+# ① 面板有应答：不重启，报成功，并且探测的是配置里的端口与 /ui 路径
+reset_stub_state
+reset_singbox_dir
+reset_openwrt_dirs
+mkdir -p /etc/sing-box/ui
+printf '<html></html>\n' > /etc/sing-box/ui/index.html
+write_ui_config /etc/sing-box/ui
+reset_fixtures
+fixture_write index.html '<html>ok</html>'
+touch "$SBSHELL_STUB_STATE/singbox_active"
+UI_READY_OUT=$(run_with_timeout bash "$DRIVER" ready 2>&1); UI_READY_RC=$?
+
+assert_rc "$UI_READY_RC" 0 "面板可达时收尾检查成功"
+assert_contains "$UI_READY_OUT" "UI 安装完成。" "面板可达时报安装完成"
+assert_not_contains "$UI_READY_OUT" "正在重启 sing-box" "面板可达时不重启 sing-box"
+assert_grep '/ui/index.html' "$SBSHELL_STUB_STATE/curl.log" "探测地址取自配置的 external_controller 端口与 /ui 路径"
+assert_eq "$(stub_log initd)" "" "面板可达时没有调用 init 脚本"
+
+# ② 面板无应答 + sing-box 在运行：必须重启一次，并明确告警但仍不阻断（文件已装好）
+reset_stub_state
+reset_singbox_dir
+reset_openwrt_dirs
+mkdir -p /etc/sing-box/ui
+printf '<html></html>\n' > /etc/sing-box/ui/index.html
+write_ui_config /etc/sing-box/ui
+reset_fixtures
+touch "$SBSHELL_STUB_STATE/singbox_active"
+UI_READY_OUT=$(run_with_timeout bash "$DRIVER" ready 2>&1); UI_READY_RC=$?
+
+assert_rc "$UI_READY_RC" 0 "面板不可达不阻断安装（UI 文件已经装好）"
+assert_contains "$UI_READY_OUT" "正在重启 sing-box" "面板不可达时主动重启 sing-box 以挂载 /ui"
+# 真机（以及本夹具的 rc.common）里 `restart` 的语义是 stop 再 start，
+# 所以断言这两步都发生，而不是去找字面量 "restart"。
+assert_contains "$(stub_log initd)" "stop" "面板不可达时确实重启了服务（init 脚本收到 stop）"
+assert_contains "$(stub_log initd)" "start" "重启会重新拉起 sing-box（init 脚本收到 start）"
+assert_contains "$UI_READY_OUT" "但面板仍未响应" "重启后仍不可达要明确告警，而不是继续报成功"
+
+# ③ sing-box 未运行：只提示，不擅自拉起服务
+reset_stub_state
+reset_singbox_dir
+reset_openwrt_dirs
+mkdir -p /etc/sing-box/ui
+printf '<html></html>\n' > /etc/sing-box/ui/index.html
+write_ui_config /etc/sing-box/ui
+reset_fixtures
+UI_READY_OUT=$(run_with_timeout bash "$DRIVER" ready 2>&1); UI_READY_RC=$?
+
+assert_rc "$UI_READY_RC" 0 "sing-box 未运行时收尾检查不失败"
+assert_contains "$UI_READY_OUT" "sing-box 当前未运行" "未运行时给出提示而不是偷偷启动服务"
+assert_eq "$(stub_log initd)" "" "未运行时不去重启 sing-box"
+
+# ④ external_ui 指向别的目录：面板不由我们负责，不重启
+reset_stub_state
+reset_singbox_dir
+reset_openwrt_dirs
+mkdir -p /etc/sing-box/ui
+printf '<html></html>\n' > /etc/sing-box/ui/index.html
+write_ui_config /opt/other-ui
+reset_fixtures
+touch "$SBSHELL_STUB_STATE/singbox_active"
+UI_READY_OUT=$(run_with_timeout bash "$DRIVER" ready 2>&1); UI_READY_RC=$?
+
+assert_rc "$UI_READY_RC" 0 "external_ui 不是本目录时收尾检查仍成功"
+assert_contains "$UI_READY_OUT" "无法自动确认面板" "无法判定时如实说明，不谎称已确认"
+assert_eq "$(stub_log initd)" "" "external_ui 指向别处时不得替用户重启 sing-box"
+
+# ⑤ install_ui 的收尾必须走可达性通知；生成的 cron 版也要有同样的收尾检查
+awk '/^install_ui\(\)/{p=1} p{print} p&&/^\}$/{exit}' "$SRC/update_ui.sh" > /tmp/ui12-install.sh
+assert_grep 'notify_ui_ready' /tmp/ui12-install.sh "install_ui 收尾走「确认面板可达」的通知函数"
+assert_grep 'panel_url()' "$SRC/update_ui.sh" "生成的 cron 自动更新脚本也探测面板"
+assert_grep 'sing-box restart' "$SRC/update_ui.sh" "cron 版面板不可达时也会重启 sing-box"
+
 suite_end
