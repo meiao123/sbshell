@@ -51,9 +51,9 @@ setup_uninstall_case() {
     printf '#!/bin/sh\nexit 0\n' > /etc/init.d/sbshell-firewall
     chmod 0755 /etc/init.d/sbshell-firewall
     : > /etc/rc.d/S40sbshell-firewall
-    # sing-box 仍在（PATH 上有桩）时它的 init 脚本属于自己，不应被卸载流程删除。
-    printf '#!/bin/sh\nexit 0\n' > /etc/init.d/sing-box
-    chmod 0755 /etc/init.d/sing-box
+    # 注意：**不要**在这里覆盖 /etc/init.d/sing-box —— reset_openwrt_dirs 装的是
+    # tests/initd/sing-box，它的 stop 会清掉 singbox_active；换成自己的 `exit 0` 桩后
+    # pidof 仍认为服务在跑，clean_nft.sh 会（正确地）拒绝清理，卸载直接中止（踩过一次）。
 }
 
 # 注意：这里**不能**写成 `out=$(run_uninstall ...)`，也不能用管道喂 stdin。
