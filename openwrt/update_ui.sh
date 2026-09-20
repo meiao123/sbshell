@@ -251,7 +251,7 @@ install_ui() {
     local url="$1" tmp top backup failed_ui staging
     acquire_ui_lock
     valid_url "$url" || { echo -e "${RED}UI 地址必须使用 HTTPS。${NC}" >&2; return 1; }
-    tmp=$(mktemp -d /tmp/sbshell-ui.XXXXXX)
+    tmp=$(mktemp -d /tmp/sbshell-ui.XXXXXX) || { echo -e "${RED}无法创建 UI 临时目录（/tmp 是否可写？）。${NC}" >&2; return 1; }
     staging="${UI_DIR}.staging"
     cleanup_ui_tmp() {
         [ -n "${tmp:-}" ] && rm -rf "$tmp"
@@ -358,11 +358,13 @@ acquire_lock() {
           sleep 1
       done
       printf '%s\n' "$$" > "$LOCK_DIR/pid"
-      trap 'release_ui_lock; rm -rf "$TMP"' EXIT
-      trap 'release_ui_lock; rm -rf "$TMP"; exit 1' INT TERM
+      # A-18：$TMP 在 acquire_lock 之后才赋值，而 trap 里引用它 —— 取锁超时会 exit 1，
+      # 那时 trap 在 set -u 下自己就会因 unbound 报错。用 ${TMP:-} 保护并显式判空。
+      trap 'release_ui_lock; [ -z "${TMP:-}" ] || rm -rf "$TMP"' EXIT
+      trap 'release_ui_lock; [ -z "${TMP:-}" ] || rm -rf "$TMP"; exit 1' INT TERM
   }
 acquire_lock
-TMP=$(mktemp -d /tmp/sbshell-ui-auto.XXXXXX)
+TMP=$(mktemp -d /tmp/sbshell-ui-auto.XXXXXX) || { echo '无法创建临时目录（/tmp 是否可写？）。' >&2; exit 1; }
 mkdir -p "$BACKUP_DIR"
 # cron 路径没有交互机会：缺 unzip 时自己装一次（apk/opkg），装不上再 fail-closed，
 # 否则缺 unzip 的设备上自动更新会永久失败（交互路径能装，cron 路径不能）。

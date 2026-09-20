@@ -92,8 +92,8 @@ fi
 
 assert_grep 'acquire_scripts_lock || exit 1' "$SBSHELL_SRC/openwrt/update_scripts.sh" \
     "update_scripts.sh 取锁失败即退出，不与另一入口交错写脚本"
-assert_grep 'release_scripts_lock; rm -rf' "$SBSHELL_SRC/openwrt/update_scripts.sh" \
-    "update_scripts.sh 的 EXIT trap 会释放脚本锁"
+assert_grep "trap 'release_scripts_lock; cleanup_update_tmp' EXIT" "$SBSHELL_SRC/openwrt/update_scripts.sh" \
+    "update_scripts.sh 的 EXIT trap 会释放脚本锁并清理临时目录"
 assert_eq "$(grep -c 'update_scripts_locked' "$SBSHELL_SRC/openwrt/menu.sh")" "4" \
     "menu.sh：1 处定义 + 3 处调用都走持锁包装"
 assert_eq "$(grep -cE '^[[:space:]]*update_scripts( |$)' "$SBSHELL_SRC/openwrt/menu.sh")" "1" \
