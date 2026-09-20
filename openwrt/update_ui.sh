@@ -480,7 +480,9 @@ if url=$(panel_url) && pidof sing-box >/dev/null 2>&1; then
 fi
 EOF
 chmod 0755 /etc/sing-box/update-ui.sh; chown root:root /etc/sing-box/update-ui.sh
-touch "$CRON_FILE"; sed -i "/[[:space:]]$CRON_MARK\$/d" "$CRON_FILE"; printf '%s /etc/sing-box/update-ui.sh %s\n' "$schedule" "$CRON_MARK" >> "$CRON_FILE"; chmod 0600 "$CRON_FILE"; chown root:root "$CRON_FILE"; /etc/init.d/cron restart >/dev/null 2>&1 || true
+touch "$CRON_FILE"; sed -i "/[[:space:]]$CRON_MARK\$/d" "$CRON_FILE"; printf '%s /etc/sing-box/update-ui.sh %s\n' "$schedule" "$CRON_MARK" >> "$CRON_FILE"; chmod 0600 "$CRON_FILE"; chown root:root "$CRON_FILE"; if ! /etc/init.d/cron restart >/dev/null 2>&1; then
+                echo -e "${RED}计划任务未生效：cron 重启失败，请手动执行 /etc/init.d/cron restart。${NC}" >&2
+            fi
 echo -e "${GREEN}UI 自动更新已设置。${NC}"
 }
 while true; do
