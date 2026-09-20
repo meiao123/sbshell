@@ -32,8 +32,10 @@ bash <(curl -sL https://raw.githubusercontent.com/meiao123/sbshell/refs/heads/ma
 
 ### 系统信息自动显示美化脚本： 
 ```
-bash <(curl -sL https://gh-proxy.com/https://raw.githubusercontent.com/qljsyph/DPInfo-script/refs/heads/main/auto-sysinfo.sh)
+bash <(curl -sL https://raw.githubusercontent.com/qljsyph/DPInfo-script/ff9e6b6f4057f626e5bbe1fde577fdd8c454e6af/auto-sysinfo.sh)
 ```
+> 该脚本来自第三方账号仓库，这里去掉了第三方代理并固定到提交 `ff9e6b6f…`；它仍会以 root
+> 执行第三方代码，介意请先审阅再运行。
   执行后每次进入ssh会自动显示很多必要信息！
   仓库：  
   https://github.com/qljsyph/DPInfo-script
@@ -42,20 +44,20 @@ bash <(curl -sL https://gh-proxy.com/https://raw.githubusercontent.com/qljsyph/D
 
 ### 发行版1.12:
 fakeiptrpoxy:
-https://raw.githubusercontent.com/meiao123/sbshell/91865d43c91b5d22141d412c27d3c54624c4be95/config_template/config_fakeiptrpoxy12.json
+https://raw.githubusercontent.com/meiao123/sbshell/baf5d7ea412edff2318b6ae59154d5bd068c8bf6/config_template/config_fakeiptrpoxy12.json
 
 fakeiptun:
-https://raw.githubusercontent.com/meiao123/sbshell/91865d43c91b5d22141d412c27d3c54624c4be95/config_template/config_fakeiptun12.json
+https://raw.githubusercontent.com/meiao123/sbshell/baf5d7ea412edff2318b6ae59154d5bd068c8bf6/config_template/config_fakeiptun12.json
 
 tproxy:
-https://raw.githubusercontent.com/meiao123/sbshell/91865d43c91b5d22141d412c27d3c54624c4be95/config_template/config_trpoxy12.json
+https://raw.githubusercontent.com/meiao123/sbshell/baf5d7ea412edff2318b6ae59154d5bd068c8bf6/config_template/config_trpoxy12.json
 
 ### 发行版1.11：  
 tproxy：  
-https://raw.githubusercontent.com/meiao123/sbshell/91865d43c91b5d22141d412c27d3c54624c4be95/config_template/config_tproxy.json  
+https://raw.githubusercontent.com/meiao123/sbshell/baf5d7ea412edff2318b6ae59154d5bd068c8bf6/config_template/config_tproxy.json  
 
 tun：  
-https://raw.githubusercontent.com/meiao123/sbshell/91865d43c91b5d22141d412c27d3c54624c4be95/config_template/config_tun.json  
+https://raw.githubusercontent.com/meiao123/sbshell/baf5d7ea412edff2318b6ae59154d5bd068c8bf6/config_template/config_tun.json  
 
 ## 安全与运维说明：
 
@@ -69,8 +71,9 @@ https://raw.githubusercontent.com/meiao123/sbshell/91865d43c91b5d22141d412c27d3c
   并**同时设置一个随机 `secret`**，否则同网段任何人都能控制代理；更安全的做法是保持本机
   监听并用 SSH 端口转发。
 - **面板下载地址**：`update_ui.sh` 内置的是固定 commit 的三个面板地址；配置里的
-  `external_ui_download_url` 会被“默认 UI”选项优先使用，模板里那个地址走第三方代理且是
-  可变分支，介意供应链风险时请固定到自己可控的地址。
+  `external_ui_download_url` 会被“默认 UI”选项优先使用，5 份客户端模板里的这一项也已固定到
+  zashboard 的提交 `15575961dc84cc614c66c3e9bd20e70b862b6734`（不再经第三方代理、也不是可变
+  分支）。改成自己的地址时请同样固定到不可变引用。
 - **缓存文件**：配置里的 `cache_file` 指向 `/etc/sing-box/cache.db`。服务以 `sing-box`
   用户运行而该目录属主是 root，安装脚本会预创建该文件并交给 `sing-box` 用户；手工替换
   配置时请保留这个前提（或改到 `/var/lib/sing-box/`）。

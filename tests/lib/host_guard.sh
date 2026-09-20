@@ -18,6 +18,8 @@ SBSHELL_HOST_PATHS=(
     /etc/init.d/cron
     /etc/init.d/sbshell-firewall
     /etc/ssh/sshd_config
+    # --local 会在缺失时临时安装 tests/rc.common（OpenWrt init 脚本的 shebang 依赖它）
+    /etc/rc.common
 )
 
 host_guard_dest() {

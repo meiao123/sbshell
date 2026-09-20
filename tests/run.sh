@@ -35,6 +35,13 @@ EOF
         echo "已拒绝在宿主机上运行破坏性测试（未设置 SBSHELL_ALLOW_LOCAL_DESTRUCTIVE=1）。" >&2
         exit 1
     }
+    # 容器镜像里 /etc/rc.common 由 tests/Dockerfile 提供；普通 Linux 主机上没有它，
+    # 而所有 OpenWrt init 脚本都是 `#!/bin/sh /etc/rc.common`，缺了它 --local 会以一堆
+    # 难以理解的错误失败。这里临时补上，测试结束后由 host_guard 备份/删除还原。
+    if [ ! -e /etc/rc.common ]; then
+        install -m 0755 "$REPO/tests/rc.common" /etc/rc.common
+        echo "--local：已临时安装 /etc/rc.common（测试结束后由 host_guard 恢复）"
+    fi
     export SBSHELL_LOCAL=1
     export SBSHELL_SRC="$REPO"
     export SBSHELL_TEST_ROOT="$REPO/tests"

@@ -40,12 +40,12 @@ tests/run.sh --local  # Linux 主机以 root 直接运行
 | --- | --- | --- | --- |
 | P2-1 | 服务端模板内置公开的 SS 密码 / VLESS UUID / REALITY 私钥 / hysteria2 密码，且曾是默认下载配置 | 模板改为 `REPLACE_ME_*` 占位（附 `config_template/server/README.md`）；新增 `debian/gen_server_config.sh` 本地随机生成，回车即用 | `suites/04` |
 | P2-2 | 客户端模板 `clash_api` 监听 `0.0.0.0:9095` 且 `secret` 为空 | 改为 `127.0.0.1:9095`，README 说明局域网暴露需同时设置 secret | `suites/06`（静态断言）+ README |
-| P2-3 | README 指向他人仓库 `main` 分支的模板；发布引用是可移动分支名 | 模板地址改回本仓库固定引用；`.gitattributes` 强制 LF | `suites/06` |
-| P2-4 | 脚本自更新只做 HTTPS + `bash -n`，引用是可移动分支 | 发布引用固定到 commit SHA（见下），README 记录发布流程 | `suites/06` |
+| P2-3 | README 指向他人仓库 `main` 分支的模板；发布引用是可移动分支名 | 模板地址改回本仓库固定引用；`.gitattributes` 强制 LF。**模板变更后必须前移该引用**（当前 `baf5d7ea…`，见下） | `suites/06` |
+| P2-4 | 脚本自更新只做 HTTPS + `bash -n`，引用是可移动分支 | **已被 main 跟随模型取代**（见「发布与更新流程」）：不再固定 SHA，也没有 `RELEASE` 指针；供应链控制改由「模板/面板固定 commit + CI 校验」承担 | `suites/06` |
 | P2-5 | 模板 `cache_file` 指向 root 属主的 `/etc/sing-box/cache.db`，而服务以 `sing-box` 用户运行；`config_fakeiptun12.json` 甚至写到 `/etc/momo/run/` | 安装脚本预创建 `cache.db` 并 chown 给 `sing-box`；fakeiptun 模板路径修正 | 安装脚本 + 模板 |
 | P2-6 | 服务端默认只放行 22/80/443，而内置配置监听 52021/udp → 该入站被静默挡掉；固定 `ufw allow ssh` 会锁死自定义 SSH 端口的用户 | `ufw.sh` 自动探测 sshd 端口与配置里的 `listen_port` 并放行 | `suites/06` |
 | P2-7 | TUN 模式的 nft 表创建 input/forward/output 三个空 `policy accept` 基链，不做任何过滤，只增加同 hook 上的绕过面 | 收窄为仅 `forward` 链 | `suites/02` |
-| P2-8 | `systemd-analyze verify <drop-in 文件>` 在部分 systemd 版本上直接失败并中止安装 | 改为校验父 unit `sing-box.service`，失败仅告警；CI 的 `actions/checkout` 固定到存在的 `v5.1.0` | `suites/06` |
+| P2-8 | `systemd-analyze verify <drop-in 文件>` 在部分 systemd 版本上直接失败并中止安装 | 改为校验父 unit `sing-box.service`，失败仅告警；CI 的三个 action 都固定到提交 SHA（如 `actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09`，即 `v5.1.0`） | `suites/06` |
 
 ## 发布与更新流程（main 最新代码）
 
@@ -70,7 +70,7 @@ main/openwrt/*.sh 或 main/debian/*.sh
 
 | 问题 | 位置 | 修复 |
 | --- | --- | --- |
-| 自更新引用指向**已被删除的分支** → 一键安装与更新全部 404 | `sbshall.sh`、两个 `menu.sh`、两个 `update_scripts.sh` | 引用改为存在的**不可变提交 SHA**；CI 用 raw URL 校验引用是否存在（`git ls-remote` 只匹配引用名、对 SHA 恒判失败；`git fetch --depth=1` 判定正确但会把检出变成 shallow 仓库）；离线套件要求 40 位 SHA |
+| 自更新引用指向**已被删除的分支** → 一键安装与更新全部 404 | `sbshall.sh`、两个 `menu.sh`、两个 `update_scripts.sh` | 引用改为存在的**不可变提交 SHA**；CI 用 raw URL 校验引用是否存在（`git ls-remote` 只匹配引用名、对 SHA 恒判失败；`git fetch --depth=1` 判定正确但会把检出变成 shallow 仓库）；离线套件要求 40 位 SHA（**该固定方案后来被 main 跟随模型取代**，见「发布与更新流程」） |
 | `configure_tun.sh` 先拆除后校验，早期失败无恢复 | 两平台 `configure_tun.sh` | `nft -c` 提前到所有破坏性操作之前；恢复块抽成 `restore_prev()` + `trap … ERR` |
 | `clean_nft.sh` 吞掉 `nft delete` 失败并删掉 state、谎报已清理 | 两平台 `clean_nft.sh` | 用 `nft list tables` 判定存在性；删除失败/无法判定即中止并保留 state；清理后复核规则与路由 |
 | `INTERFACE=$5` 在 dev-only 默认路由上取到 `link` | 四个 `configure_*.sh` | 按 `dev` 关键字取网卡（PPPoE/WireGuard 机器上 TProxy 从此可用） |
@@ -161,3 +161,37 @@ chown 失败 → 显式容忍（所有权不构成安全边界，且 vfat/extroo
 
 回归测试：`tests/suites/13_batch1_hardening.sh`。其中 F1 是行为断言（未显式确认时 `--local` 必须拒绝、
 退出码 1、且提示里列出会被覆写的真实路径）；F2–F5 是静态断言，因为对应路径需要真实 root 系统与网络。
+
+
+## 第四轮补充：引用与超时取值现状（批次 4）
+
+### 引用（供应链）
+
+- **脚本与自更新**：直接读 `main`，既没有 `RELEASE` 指针，也没有提交 SHA 固定 —— 这是维护者
+  选择的模型（`main` 是唯一在线更新源，避免"开发代码与发布指针分离"导致的一跳回退）。CI 会断言
+  五个更新入口不出现 `BASE_REF`/`RELEASE_REF`/`resolve_release_ref`，且仓库里不存在 `RELEASE`。
+- **模板**：`README.md` 里的 5 条客户端模板直链固定到提交
+  `baf5d7ea412edff2318b6ae59154d5bd068c8bf6`（= 最后一次改动 `config_template/` 的提交）。
+  **模板内容一旦变更，必须同时前移这个引用**，否则用户拿到的是过期模板（历史上就发生过：
+  引用停在旧提交，而模板此后迁移了老式 DNS 写法）。
+- **面板**：5 份客户端模板的 `external_ui_download_url` 都固定到 zashboard 的提交
+  `15575961dc84cc614c66c3e9bd20e70b862b6734`（不再经第三方代理、也不是可变分支）。
+- **第三方脚本**：README 的"系统信息美化脚本"来自第三方账号仓库，已去掉 `gh-proxy.com`
+  代理并固定到 `ff9e6b6f4057f626e5bbe1fde577fdd8c454e6af`；它仍会以 root 执行第三方代码，
+  介意请自行审阅后再运行。
+- **CI 动作**：三个 `uses:` 全部固定到提交 SHA（`actions/checkout`、`ludeeus/action-shellcheck`、
+  `actions/upload-artifact`），并加 `timeout-minutes` 与 `concurrency`；触发分支不再包含已删除的
+  `security-release-*` 模式。
+
+### 超时取值约定（`curl`）
+
+| 用途 | `--connect-timeout` | `--max-time` | 说明 |
+| --- | --- | --- | --- |
+| 单个脚本 / 配置文件下载 | 10 | 30 | 文本小文件；`tests/README.md` 记录的"配置下载统一 30s"即此档 |
+| 订阅 / 模板下载 | 10 | 60 | 可能由后端动态生成，体积不确定 |
+| 归档下载（`tar.gz` / `zip`，含面板） | 10 | 120 | 需要下载后解压校验，故放宽 |
+| 面板本机探活（`127.0.0.1`） | 3 | 5 | **有意**取小值：本机不响应就不该让菜单卡住 |
+
+没有统一成单一常量是有意的（网络下载与本机探活的风险完全不同）；改动时请按上表归类，
+不要只调整某一个调用点。测试侧的 `SBSHELL_TIMEOUT` 默认 90s，只用于包住整套脚本。
+

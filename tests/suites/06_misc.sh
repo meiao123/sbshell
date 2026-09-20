@@ -209,6 +209,50 @@ PATH="$shim:$PATH" bash /tmp/va_test.sh > /tmp/va.out 2>&1
 assert_not_rc "$?" 0 "zipinfo 不可用时拒绝（旧代码空转返回 0）"
 rm -rf "$shim"
 
+# 上面那条其实命中的是 **unzip** 分支（假 zip 让 `unzip -Z1` 先失败）。下面用真实 zip
+# 覆盖 `zipinfo -l` 那段：链接条目上限与 200 MiB 展开体积上限此前零覆盖。
+real_zip=/tmp/ui-real.zip
+rm -rf /tmp/ui-va-src; mkdir -p /tmp/ui-va-src
+printf '<html></html>\n' > /tmp/ui-va-src/index.html
+rm -f "$real_zip"
+(cd /tmp/ui-va-src && zip -q "$real_zip" index.html)
+cat > /tmp/va_real.sh <<'EOS'
+set -uo pipefail
+. /tmp/va.sh
+validate_archive /tmp/ui-real.zip
+EOS
+
+# 1) unzip 成功、zipinfo 不可用 → 必须拒绝（不能当成"没有链接、体积也合法"而通过）
+shim1=$(mktemp -d)
+printf '#!/bin/bash\necho "zipinfo: unavailable" >&2\nexit 127\n' > "$shim1/zipinfo"
+chmod +x "$shim1/zipinfo"
+PATH="$shim1:$PATH" bash /tmp/va_real.sh > /tmp/va1.out 2>&1
+assert_not_rc "$?" 0 "unzip 成功但 zipinfo 不可用时拒绝"
+rm -rf "$shim1"
+
+# 2) zipinfo 报告符号链接条目 → 必须拒绝
+shim2=$(mktemp -d)
+cat > "$shim2/zipinfo" <<'EOS'
+#!/bin/bash
+printf '%s\n' '-rw-r--r--  3.0 unx       12 tx defN 25-Sep-20 11:00 index.html' \
+              'lrwxrwxrwx  3.0 unx        7 tx defN 25-Sep-20 11:00 link -> index.html'
+EOS
+chmod +x "$shim2/zipinfo"
+PATH="$shim2:$PATH" bash /tmp/va_real.sh > /tmp/va2.out 2>&1
+assert_not_rc "$?" 0 "含链接条目时拒绝"
+rm -rf "$shim2"
+
+# 3) 展开体积超过 200 MiB → 必须拒绝
+shim3=$(mktemp -d)
+cat > "$shim3/zipinfo" <<'EOS'
+#!/bin/bash
+printf '%s\n' '-rw-r--r--  3.0 unx 314572800 tx defN 25-Sep-20 11:00 index.html'
+EOS
+chmod +x "$shim3/zipinfo"
+PATH="$shim3:$PATH" bash /tmp/va_real.sh > /tmp/va3.out 2>&1
+assert_not_rc "$?" 0 "展开体积超限时拒绝"
+rm -rf "$shim3"
+
 suite_begin "release pin removed: updates download from main, not a pinned commit"
 
 assert_no_file "$SBSHELL_SRC/RELEASE" "仓库不再包含 RELEASE 发布声明"
