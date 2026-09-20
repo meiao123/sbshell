@@ -87,11 +87,13 @@ while IFS= read -r f; do
     fi
 done < <(owrt_files)
 
-suite_begin "busybox: 缺 unzip/zipinfo 时必须自动安装"
+suite_begin "busybox: unzip 按需安装，且不再要求 zipinfo（A-13）"
 
 ui="$SRC/openwrt/update_ui.sh"
-assert_grep 'command -v unzip' "$ui" "检测 unzip 是否可用"
-assert_grep 'pkg_install unzip' "$ui" "缺失时安装 unzip（含 zipinfo）"
-assert_grep 'command -v zipinfo' "$ui" "检测 zipinfo 是否可用"
+assert_grep 'ensure_unzip()' "$ui" "有按需安装 unzip 的辅助函数"
+assert_grep 'pkg_install unzip' "$ui" "缺失时仍会安装 unzip"
+assert_no_grep 'command -v zipinfo' "$ui" "不再探测 zipinfo（改用同一二进制的 unzip -Z -l）"
+assert_grep 'unzip -Z -l' "$ui" "列表主路径是 unzip -Z -l，zipinfo 仅作回退"
+assert_grep 'ensure_curl()' "$ui" "curl 缺失时的安装走可诊断的函数（不再让 set -e 带走脚本）"
 
 suite_end

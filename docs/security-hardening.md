@@ -168,6 +168,29 @@ chown 失败 → 显式容忍（所有权不构成安全边界，且 vfat/extroo
 退出码 1、且提示里列出会被覆写的真实路径）；F2–F5 是静态断言，因为对应路径需要真实 root 系统与网络。
 
 
+## 第五轮：OpenWrt 专用化后的 P2 清理
+
+1. **`zipinfo` 不再是必需项**（A-13）。OpenWrt 的 `unzip` 包不一定提供 `/usr/bin/zipinfo`，而
+   `unzip -Z -l` 与 `zipinfo -l` 的输出完全相同（本来就是同一个二进制）。旧代码在脚本顶层无条件
+   探测 `zipinfo`：设备上没有它时，**每次**进入菜单 10（哪怕只是「检查 UI」）都会先跑一次
+   `opkg update` 网络往返，而且 `pkg_update && pkg_install …` 是行尾命令，失败会被 `set -e` 直接
+   带走整个脚本；更矛盾的是 `validate_archive` 随后用 `zipinfo -l` 校验，于是「刚刚确认安装过
+   unzip」之后 UI 仍然永远装不上（cron 自动更新同样如此）。现在：列表主路径改用 `unzip -Z -l`
+   （`zipinfo` 仅作回退，两者都不可用才 fail-closed），依赖安装下沉到 `validate_archive` 内部的
+   `ensure_unzip`，`pkg_*` 失败只给出可读提示而不再让脚本静默中止。
+2. **`mode.conf` 改为原子写**（A-16）。它是「当前模式」的唯一真相源，而 `/tmp` 与 `/etc` 通常不在
+   同一个文件系统上（tmpfs vs overlay），旧代码用 `install`（OpenWrt 上是就地截断的 `cp -f`）；
+   窗口内被读到空内容时，`configure_tproxy.sh`/`configure_tun.sh` 的 `[ "$MODE" = … ] || exit 0`
+   会静默什么都不做 —— 表现为「启动成功但没有规则」。现在临时文件与备份都放在目标同目录，
+   用 `mv -f` 原子替换，回滚路径同样处理。
+
+回归测试：`tests/suites/06_misc.sh`（zipinfo 不可用但 `unzip -Z -l` 可用时必须**通过**；链接条目与
+超 200 MiB 仍然拒绝）、`tests/suites/10_package_manager.sh`（依赖齐全时进入脚本不触发任何包管理器；
+真正解析压缩包且缺 `unzip` 时才通过 apk 安装，装不上则拒绝）、`tests/suites/21_busybox_compat.sh`
+（不再探测 `zipinfo`、列表主路径是 `unzip -Z -l`）、`tests/suites/02_mode_state.sh`（mode.conf 用同目录
+临时文件 + `mv -f` 原子替换）。
+
+
 ## 第四轮补充：引用与超时取值现状（批次 4）
 
 ### busybox 兼容性盘点（批次 3）
