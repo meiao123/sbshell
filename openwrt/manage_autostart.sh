@@ -113,7 +113,14 @@ case $autostart_choice in
         /etc/init.d/sing-box disable
         cmd_status=$?
         if [ -f "$INIT_SCRIPT" ]; then
-            /etc/init.d/sbshell-firewall disable >/dev/null 2>&1 || true
+            # A-23：旧写法 `|| true` 吞掉失败，却仍然打印「自启动已成功禁用」——
+            # 注销失败意味着开机会继续拉起防火墙脚本。把失败并入 cmd_status，
+            # 并给出可直接执行的手工命令。
+            if ! /etc/init.d/sbshell-firewall disable >/dev/null 2>&1; then
+                echo -e "${RED}注销开机防火墙脚本失败，自启动可能未被完全禁用。${NC}" >&2
+                echo '可手工执行：/etc/init.d/sbshell-firewall disable' >&2
+                cmd_status=1
+            fi
         fi
 
         if [ "$cmd_status" -eq 0 ]; then

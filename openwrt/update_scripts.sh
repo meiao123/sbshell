@@ -160,7 +160,8 @@ acquire_scripts_lock || exit 1
 SCRIPTS=(check_environment.sh install_singbox.sh manual_input.sh manual_update.sh auto_update.sh configure_tproxy.sh configure_tun.sh start_singbox.sh stop_singbox.sh clean_nft.sh set_defaults.sh commands.sh switch_mode.sh manage_autostart.sh check_config.sh update_scripts.sh update_ui.sh menu.sh)
 for script in "${SCRIPTS[@]}"; do
     download_repo_file "openwrt/$script" "main" "$TMP_DIR/$script"
-    [ -s "$TMP_DIR/$script" ] || exit 1
+    # A-23：下载/校验没通过时不能只是静默 exit 1 —— 用户看不到是哪个文件、为什么失败。
+    [ -s "$TMP_DIR/$script" ] || { echo -e "${RED}脚本 $script 下载失败或为空，已中止更新（现有安装保持不变）。${NC}" >&2; exit 1; }
     bash -n "$TMP_DIR/$script"
     if head -n1 "$TMP_DIR/$script" | grep -q '^#!/bin/sh'; then sh -n "$TMP_DIR/$script"; fi
 done

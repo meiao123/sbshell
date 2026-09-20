@@ -148,7 +148,9 @@ case "$U" in https://*) ;; *) echo '生成的订阅 URL 无效。' >&2; exit 1;;
 # curl 放进后台子 shell 写状态文件，前台显示倒计时；`|| rc=$?` 兜住退出码（本脚本 set -eu，
 # 裸 curl 失败会直接终止子 shell，状态文件写不出来）。
 download_status=$(mktemp /tmp/sbshell-auto-status.XXXXXX)
-rm -f "$download_status"
+# A-26：不要 rm 这个文件。删掉名字后任何本地用户都能用同名符号链接抢注，
+# 让下面子 shell 的 `>` 跟随写入任意文件；而父进程等的是“文件为空”，
+# mktemp 刚建出来的空文件同样满足条件，因此保留它语义不变。
 (
     rc=0
     curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 30 "$U" -o "$TMP/config.json" || rc=$?
@@ -220,11 +222,15 @@ while true; do
             sed -i "/[[:space:]]$CRON_MARK\$/d" "$CRON_FILE"
             printf '0 */%s * * * %s %s\n' "$h" "$UPDATE_SCRIPT" "$CRON_MARK" >> "$CRON_FILE"
             chmod 0600 "$CRON_FILE"; chown root:root "$CRON_FILE"
-            /etc/init.d/cron restart >/dev/null 2>&1 || true
+            if ! /etc/init.d/cron restart >/dev/null 2>&1; then
+                echo -e "${RED}计划任务未生效：cron 重启失败，请手动执行 /etc/init.d/cron restart。${NC}" >&2
+            fi
             echo -e "${GREEN}已设置，每 $h 小时执行一次。${NC}"; break;;
         2)
             [ -f "$CRON_FILE" ] && sed -i "/[[:space:]]$CRON_MARK\$/d" "$CRON_FILE"
-            /etc/init.d/cron restart >/dev/null 2>&1 || true
+            if ! /etc/init.d/cron restart >/dev/null 2>&1; then
+                echo -e "${RED}计划任务未生效：cron 重启失败，请手动执行 /etc/init.d/cron restart。${NC}" >&2
+            fi
             echo -e "${GREEN}已取消。${NC}"; break;;
         *) echo -e "${RED}无效选择。${NC}";;
     esac

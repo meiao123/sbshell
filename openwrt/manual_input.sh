@@ -193,7 +193,9 @@ while true; do
     download_status=$(mktemp /tmp/sbshell-config-status.XXXXXX)
     download_http=$(mktemp /tmp/sbshell-config-http.XXXXXX)
     TMP_FILES+=("$tmp_manual" "$tmp_config" "$backup_manual" "$backup_config" "$download_status" "$download_http")
-    rm -f "$download_status" "$download_http"
+    # A-26：不要 rm 这两个文件。旧写法先删掉名字再由子 shell 用 `>` 重建，
+    # 本地用户可抢先创建同名符号链接，让 root 的写跟随到任意文件；
+    # 父进程等的是“状态文件为空”，mktemp 的空文件同样满足，保留它们语义不变。
     manual_existed=0
     config_existed=0
 

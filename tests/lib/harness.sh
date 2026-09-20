@@ -107,7 +107,7 @@ fixture_from_repo() { cp "$SBSHELL_SRC/$1" "$SBSHELL_FIXTURES/$(basename "$1")";
 fixture_write() { printf '%s\n' "$2" > "$SBSHELL_FIXTURES/$1"; _fixture_manifest_set "$1"; }
 fixture_copy() { cp "$1" "$SBSHELL_FIXTURES/$2"; _fixture_manifest_set "$2"; }
 
-VALID_CLIENT_CONFIG='{"log":{"level":"info"},"inbounds":[{"type":"mixed","tag":"mixed-in","listen":"127.0.0.1","listen_port":7893}],"outbounds":[{"type":"direct","tag":"direct"}]}'
+export VALID_CLIENT_CONFIG='{"log":{"level":"info"},"inbounds":[{"type":"mixed","tag":"mixed-in","listen":"127.0.0.1","listen_port":7893}],"outbounds":[{"type":"direct","tag":"direct"}]}'
 
 # ---------- nft / ip 状态查询 ----------
 nft_table_exists() { [ -f "$SBSHELL_STUB_STATE/nft/inet__$1" ]; }

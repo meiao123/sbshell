@@ -177,7 +177,8 @@ if [ -f "$CONFIG_FILE" ]; then cp -a "$CONFIG_FILE" "$BACKUP_FILE" || { echo -e 
 # 前台显示倒计时；子 shell 内用 `|| rc=$?` 兜住退出码（本脚本是 set -Eeuo pipefail，裸 curl 失败
 # 会直接终止子 shell，状态文件永远写不出来，父进程只能空转到超时并误报原因）。
 download_status=$(mktemp /tmp/sbshell-update-status.XXXXXX)
-rm -f "$download_status"
+# A-26：不要 rm 这个文件（同名符号链接抢注 + 子 shell `>` 跟随会写到任意文件）；
+# 父进程等的是“文件为空”，mktemp 的空文件同样满足，保留它语义不变。
 (
     rc=0
     # 只允许 HTTPS：配置文件内含节点凭据，明文 HTTP 会在链路上泄露（与 debian 侧一致）。
