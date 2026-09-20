@@ -1,7 +1,11 @@
 #!/bin/bash
+# `-u` 拦住未定义变量、`-o pipefail` 让管道失败可见；**故意不加 `-e`**：下面的版本探测是
+# `sing-box version | sed | head -n1`，在 `-e` + `pipefail` 下上游因 SIGPIPE 返回 141 会把
+# 整个脚本带走（本项目在别的脚本上踩过这个坑）。
+set -uo pipefail
 
 if [ "$(id -u)" != "0" ]; then
-    echo "错误: 此脚本需要 root 权限"
+    echo "错误: 此脚本需要 root 权限" >&2
     exit 1
 fi
 

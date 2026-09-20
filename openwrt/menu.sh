@@ -37,12 +37,12 @@ CYAN='\033[0;36m'; GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[1;33m'; NC
 SCRIPT_DIR=/etc/sing-box/scripts
 INITIALIZED_FILE="$SCRIPT_DIR/.initialized"
 
-# 允许外部传入镜像源，默认提供 ghfast 加速
+# 允许通过环境变量 REPO_RAW 覆盖镜像源；默认直连 raw.githubusercontent.com（无第三方代理）。
 export REPO_RAW="${REPO_RAW:-https://raw.githubusercontent.com/meiao123/sbshell}"
 
 github_api_download() {
     local path="$1" ref="$2" output="$3"
-    # 注意：api.github.com 不走 ghfast 代理
+    # 注意：只有 raw 下载走 REPO_RAW；api.github.com 与 github.com 归档下载是直连地址。
     curl --fail --silent --location --proto '=https' --tlsv1.2 \
         --connect-timeout 10 --max-time 30 \
         -H 'Accept: application/vnd.github.raw+json' \
