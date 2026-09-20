@@ -202,17 +202,26 @@ notify_ui_ready() {
     return 0
 }
 install_ui() {
-    local url="$1" tmp top backup failed_ui
+    local url="$1" tmp top backup failed_ui staging
     acquire_ui_lock
     valid_url "$url" || { echo -e "${RED}UI 地址必须使用 HTTPS。${NC}" >&2; return 1; }
     tmp=$(mktemp -d /tmp/sbshell-ui.XXXXXX)
-    cleanup_ui_tmp() { [ -n "${tmp:-}" ] && rm -rf "$tmp"; return 0; }
-    mkdir -p "$tmp/extract" "$BACKUP_DIR" || { echo -e "${RED}无法创建 UI 临时目录。${NC}" >&2; cleanup_ui_tmp; return 1; }
+    staging="${UI_DIR}.staging"
+    cleanup_ui_tmp() {
+        [ -n "${tmp:-}" ] && rm -rf "$tmp"
+        rm -rf "$staging"
+        return 0
+    }
+    mkdir -p "$BACKUP_DIR" || { echo -e "${RED}无法创建 UI 临时目录。${NC}" >&2; cleanup_ui_tmp; return 1; }
     if ! curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 120 --max-filesize 52428800 "$url" -o "$tmp/ui.zip"; then
         echo -e "${RED}UI 压缩包下载失败。${NC}" >&2; cleanup_ui_tmp; return 1
     fi
     [ "$(wc -c < "$tmp/ui.zip")" -le 52428800 ] || { echo -e "${RED}UI 压缩包超过 50 MiB。${NC}" >&2; cleanup_ui_tmp; return 1; }
-    top=$(archive_top "$tmp/ui.zip" "$tmp/extract") || { cleanup_ui_tmp; return 1; }
+    # 解包必须落在目标文件系统上（$tmp 在 /tmp），否则部署是一次跨设备 mv：
+    # 既不是原子 rename，失败回滚时还会把旧 UI 移进半成品目录。
+    rm -rf "$staging"
+    mkdir -p "$staging/extract" || { cleanup_ui_tmp; return 1; }
+    top=$(archive_top "$tmp/ui.zip" "$staging/extract") || { cleanup_ui_tmp; return 1; }
     backup=$(mktemp -d "$BACKUP_DIR/.ui-backup.XXXXXX") || { echo -e "${RED}无法创建 UI 备份目录。${NC}" >&2; cleanup_ui_tmp; return 1; }
     rm -rf "$backup"
     if [ -d "$UI_DIR" ]; then
@@ -221,6 +230,9 @@ install_ui() {
         backup=''
     fi
     if ! mv "$top" "$UI_DIR"; then
+        # 先清掉半成品目标：mv 目标已存在时会把备份移"进"目录里，旧 UI 会变成
+        # $UI_DIR/.ui-backup.XXXXXX 而路径上留下半成品。
+        rm -rf "$UI_DIR"
         [ -z "$backup" ] || mv "$backup" "$UI_DIR"
         echo -e "${RED}部署新 UI 失败，已恢复旧 UI。${NC}" >&2
         cleanup_ui_tmp
@@ -345,10 +357,19 @@ URL=$(sed -n 's/.*"external_ui_download_url"[[:space:]]*:[[:space:]]*"\([^"]*\)"
 URL=${URL:-https://github.com/Zephyruso/zashboard/archive/15575961dc84cc614c66c3e9bd20e70b862b6734/gh-pages.zip}
 [[ "$URL" =~ ^https://[^[:space:]]+$ ]] || exit 1
 curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 120 --max-filesize 52428800 "$URL" -o "$TMP/ui.zip"
-top=$(archive_top "$TMP/ui.zip" "$TMP/extract")
+staging="${UI_DIR}.staging"
+rm -rf "$staging"
+mkdir -p "$staging/extract"
+top=$(archive_top "$TMP/ui.zip" "$staging/extract")
 backup=$(mktemp -d "$BACKUP_DIR/.ui-backup.XXXXXX"); rm -rf "$backup"
 [ ! -d "$UI_DIR" ] || mv "$UI_DIR" "$backup"
-if ! mv "$top" "$UI_DIR"; then [ ! -d "$backup" ] || mv "$backup" "$UI_DIR"; exit 1; fi
+if ! mv "$top" "$UI_DIR"; then
+  rm -rf "$UI_DIR"
+  [ ! -d "$backup" ] || mv "$backup" "$UI_DIR"
+  rm -rf "$staging"
+  exit 1
+fi
+rm -rf "$staging"
 if ! chown -R root:root "$UI_DIR"; then
   failed_ui="$TMP/failed-ui"
   mv "$UI_DIR" "$failed_ui" || true
