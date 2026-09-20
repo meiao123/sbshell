@@ -127,3 +127,37 @@ heredoc 生成的那份），(b) `set_defaults.sh` 在该环境下成功且 `def
 现在的语义是：chmod 失败 → 返回非 0（fail-closed，凭据文件绝不能悄悄留在 0644）；
 chown 失败 → 显式容忍（所有权不构成安全边界，且 vfat/extroot 等文件系统上必然失败）。
 测试用"不存在的属主"和"非法模式"分别触发这两条路径。
+
+
+## 第四轮：工业级代码审查 —— 批次 1（安全 P0/P1）
+
+按《代码工业级优化要求》做的工业级审查中，批次 1 修以下 5 项：
+
+1. **`tests/run.sh --local` 会破坏宿主机**（P0）。这套行为测试按"一次性容器"设计：它删除并重建
+   `/etc/sing-box`、`/etc/rc.d`、`/etc/crontabs`，把 `tests/initd/*` 安装成 `/etc/init.d/sing-box`、
+   `/etc/init.d/cron`，删除 `/etc/init.d/sbshell-firewall`，suite 06 还会覆写 `/etc/ssh/sshd_config`；
+   而 `run.sh` 在缺 docker/podman 时正把 `--local` 当推荐回退，注释只警告"会写入 /etc/sing-box"。
+   现在 `--local` 默认**拒绝运行**并列出全部会被破坏的真实路径，需显式
+   `SBSHELL_ALLOW_LOCAL_DESTRUCTIVE=1`；确认后由 `tests/lib/host_guard.sh` 先整体备份、退出时恢复
+   （备份目录取 `SBSHELL_LOCAL_BACKUP`，默认 `/var/tmp/sbshell-host-backup.<时间戳>`）。
+   注意：被 `kill -9` 或断电时仍可能残留，`--local` 只适合一次性容器/虚拟机。
+2. **`debian/setup.sh` 的 acme.sh 校验是恒假条件**（P0）。`git verify-tag` 只接受**附注标签对象**，
+   而 acme.sh 的 `3.1.5` 是轻量标签（GitHub API：`refs/tags/3.1.5` 的 `object.type` 为 `commit`），
+   所以"签名验证失败"每次都会发生、证书申请 100% 不可用。改为固定提交
+   `ACME_COMMIT=d5fc938d80e266dba3239f54cf4665432f17c00b`，克隆后比对 `git rev-parse HEAD`
+   （浅克隆下 HEAD 即该标签指向的提交），并移除 `ACME_SIGNER` 与 `gpg.ssh.allowedSignersFile`
+   （后者还需要 git ≥ 2.34，低版本 git 上同样会失败）。
+3. **`debian/manual_update.sh` 把配置落成 0644**（P1）。同平台其它写 `config.json` 的路径都是
+   `0640 root:sing-box`（组缺失回落 root），只有交互式手动更新用 `root:root 0644`，而
+   `/etc/sing-box` 目录是 0755 —— 本地任意用户可读到 SS 密码、VLESS UUID、REALITY 私钥、hysteria2 密码。
+   现在补 `CONFIG_GROUP` 并统一 0640，失败回滚路径同样按 0640 恢复。
+4. **`debian/manual_update.sh` 使用固定可预测的临时目录**（P1）。`/tmp` 世界可写、目录名固定且不查
+   符号链接，本地用户可预置软链让 root 的写入被劫持（`chmod` 也跟随软链），并发实例还会互相
+   `rm -rf` 目录。改为 `mktemp -d /tmp/sbshell-config.XXXXXX`，并移到 `flock -x 9` **之后**创建。
+5. **OpenWrt 允许用明文 HTTP 下载含凭据的配置**（P2）。`valid_url` 接受 `^https?://`、下载用
+   `--proto '=http,https'`（debian 侧一律 https），而 OpenWrt 侧自己的错误文案本就写着"必须是 HTTPS URL"。
+   `openwrt/manual_input.sh`、`openwrt/manual_update.sh`、`openwrt/set_defaults.sh` 收敛为仅 HTTPS；
+   `openwrt/update_ui.sh` 的面板**本地探活**保留 `http`，属有意（探测目标是 `127.0.0.1`）。
+
+回归测试：`tests/suites/13_batch1_hardening.sh`。其中 F1 是行为断言（未显式确认时 `--local` 必须拒绝、
+退出码 1、且提示里列出会被覆写的真实路径）；F2–F5 是静态断言，因为对应路径需要真实 root 系统与网络。

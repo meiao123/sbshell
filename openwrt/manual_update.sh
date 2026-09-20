@@ -60,7 +60,7 @@ TMP_DIR=$(mktemp -d /tmp/sbshell-config.XXXXXX) || exit 1
 trap 'rm -rf "$TMP_DIR"' EXIT
 
 read_value() { awk -F= -v k="$1" '$1 == k {sub(/^[^=]*=/, ""); print; exit}' "$2" 2>/dev/null || true; }
-valid_url() { [[ "$1" =~ ^https?://[^[:space:]]+$ ]]; }
+valid_url() { [[ "$1" =~ ^https://[^[:space:]]+$ ]]; }
 valid_subscription() {
     local value="$1"
     [ -z "$value" ] && return 0
@@ -78,7 +78,7 @@ build_full_url() {
 }
 validate_endpoints() {
     if [ -n "$BACKEND_URL" ]; then
-        valid_url "$BACKEND_URL" || { echo -e "${RED}后端地址必须是 HTTP 或 HTTPS URL。${NC}" >&2; return 1; }
+        valid_url "$BACKEND_URL" || { echo -e "${RED}后端地址必须是 HTTPS URL。${NC}" >&2; return 1; }
         [ -n "$SUBSCRIPTION_URL" ] || { echo -e "${RED}使用后端地址时订阅地址不能为空。${NC}" >&2; return 1; }
     fi
     valid_subscription "$SUBSCRIPTION_URL" || { echo -e "${RED}订阅地址包含非法字符。${NC}" >&2; return 1; }
@@ -178,7 +178,8 @@ download_status=$(mktemp /tmp/sbshell-update-status.XXXXXX)
 rm -f "$download_status"
 (
     rc=0
-    curl --fail --silent --show-error --location --proto '=http,https' --tlsv1.2 --connect-timeout 10 --max-time 30 "$FULL_URL" -o "$TMP_DIR/config.json" || rc=$?
+    # 只允许 HTTPS：配置文件内含节点凭据，明文 HTTP 会在链路上泄露（与 debian 侧一致）。
+    curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 30 "$FULL_URL" -o "$TMP_DIR/config.json" || rc=$?
     printf '%s\n' "$rc" > "$download_status"
     exit 0
 ) &

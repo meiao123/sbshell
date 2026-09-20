@@ -9,6 +9,15 @@ export SBSHELL_FAKEBIN="${SBSHELL_FAKEBIN:-$SBSHELL_TEST_ROOT/fakebin}"
 export SBSHELL_FAKEBIN_BUSYBOX="${SBSHELL_FAKEBIN_BUSYBOX:-$SBSHELL_TEST_ROOT/fakebin-busybox}"
 export SBSHELL_STUB_STATE="${SBSHELL_STUB_STATE:-/tmp/sbshell-stub-state}"
 
+# --local（宿主机直跑）时启用宿主机护栏：测试会删除/覆盖真实系统路径，
+# 这里先整体备份，退出时恢复（容器里不启用，行为不变）。
+if [ "${SBSHELL_LOCAL:-0}" = 1 ]; then
+    # shellcheck source=tests/lib/host_guard.sh
+    . "$SBSHELL_TEST_ROOT/lib/host_guard.sh"
+    host_guard_init
+    trap host_guard_restore EXIT
+fi
+
 [ "$(id -u)" -eq 0 ] || { echo "行为测试需要以 root 运行（容器内默认即 root）。" >&2; exit 1; }
 [ -d "$SBSHELL_SRC" ] || { echo "找不到被测仓库: $SBSHELL_SRC" >&2; exit 1; }
 
