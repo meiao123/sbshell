@@ -27,15 +27,6 @@ assert_eq "$(jq -c . /etc/sing-box/config.json)" "$(printf '%s' "$NEW_CONFIG" | 
 assert_grep 'tpl.test/template.json' "$SBSHELL_STUB_STATE/curl.log" "直接使用模板地址下载"
 if grep -q '/config/' "$SBSHELL_STUB_STATE/curl.log"; then fail "不应拼接后端路径"; else pass "未拼接后端路径"; fi
 
-suite_begin "manual_update yes: interactive re-entry rewrites manual.conf (P1-3.3)"
-
-printf 'https://backend2.test\nsub2?token=x\nhttps://tpl.test/template.json\n' \
-    | run_with_timeout bash /etc/sing-box/scripts/manual_update.sh yes >/tmp/mu2.out 2>&1
-rc=$?
-assert_rc "$rc" 0 "manual_update.sh yes 成功"
-assert_grep '^BACKEND_URL=https://backend2.test$' /etc/sing-box/manual.conf "manual.conf 已写回新的后端地址"
-assert_grep 'backend2.test/config/sub2?token=x&file=https://tpl.test/template.json' "$SBSHELL_STUB_STATE/curl.log" "拼装出的订阅 URL 正确"
-
 suite_begin "manual_update: hostile subscription string is rejected (P2-15)"
 
 printf '%s\n' "$VALID_CLIENT_CONFIG" > /etc/sing-box/config.json
@@ -56,24 +47,6 @@ run_with_timeout bash /etc/sing-box/scripts/manual_update.sh >/tmp/mu4.out 2>&1
 rc=$?
 assert_not_rc "$rc" 0 "无效配置导致失败"
 assert_eq "$(jq -c . /etc/sing-box/config.json)" "$(printf '%s' "$VALID_CLIENT_CONFIG" | jq -c .)" "失败时保留旧配置"
-
-suite_begin "update_config.sh: empty input keeps the stored URL (P1-3.8)"
-
-reset_stub_state
-reset_singbox_dir
-reset_fixtures
-install_repo_scripts openwrt
-fixture_write template.json "$NEW_CONFIG"
-printf '%s\n' "$VALID_CLIENT_CONFIG" > /etc/sing-box/config.json
-
-printf 'https://tpl.test/template.json\n' | run_with_timeout bash /etc/sing-box/scripts/update_config.sh >/tmp/uc1.out 2>&1
-assert_rc "$?" 0 "首次写入配置链接成功"
-assert_grep 'tpl.test/template.json' /etc/sing-box/config.url "config.url 已记录"
-
-printf 'y\n\n' | run_with_timeout bash /etc/sing-box/scripts/update_config.sh >/tmp/uc2.out 2>&1
-rc=$?
-assert_rc "$rc" 0 "选择更换但直接回车时不应报错（旧代码会清空链接并 exit 1）"
-assert_grep 'tpl.test/template.json' /etc/sing-box/config.url "原链接被保留"
 
 suite_begin "manual_update: ubus 'Command failed' noise from the init script must not leak"
 

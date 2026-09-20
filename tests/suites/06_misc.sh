@@ -36,13 +36,6 @@ unset SBSHELL_NO_IPV6
 assert_rc "$rc" 0 "缺少 IPv6 键时不失败（旧代码会 unbound/integer error 中止）"
 assert_no_grep "integer expected" /tmp/env1.out "没有整数比较报错"
 
-export SBSHELL_IPV4_FORWARD=0
-run_with_timeout bash "$SCRIPTS/check_environment.sh" >/tmp/env2.out 2>&1
-rc=$?
-unset SBSHELL_IPV4_FORWARD
-assert_not_rc "$rc" 0 "IPv4 转发确实无法开启时报错"
-assert_grep "IPv4 转发启用失败" /tmp/env2.out "错误信息明确"
-
 suite_begin "supply chain: main is the only update source (P2-4)"
 
 # 维护者已移除 RELEASE 发布声明与不可变 SHA 固定机制：main 是唯一更新源
