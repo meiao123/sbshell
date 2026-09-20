@@ -331,6 +331,9 @@ setup_auto_update_ui() {
     cat > /etc/sing-box/update-ui.sh <<'EOF'
 #!/bin/bash
 set -Eeuo pipefail
+# 生成给 cron 的这份脚本没有交互机会：所有拒绝点都必须把原因写进 cron 日志，
+# 否则用户只看到「计划任务跑过」而不知道 UI 为什么没更新。
+die() { echo "UI 自动更新失败：$1" >&2; exit 1; }
 UI_DIR=/etc/sing-box/ui
 BACKUP_DIR=/etc/sing-box/ui-backups
 CONFIG_FILE=/etc/sing-box/config.json
@@ -358,7 +361,7 @@ acquire_lock() {
           if [ -n "$owner" ] && kill -0 "$owner" 2>/dev/null; then
               waited=$((waited + 1))
               if [ "$waited" -ge "$LOCK_TIMEOUT" ]; then
-                  exit 1
+                  die '等待面板更新锁超时（另一个进程正在更新 UI）'
               fi
           fi
           sleep 1
@@ -388,22 +391,22 @@ ensure_unzip_auto() {
 validate_archive() {
   local zip="$1" entry mode size total=0 count=0 list
   ensure_unzip_auto || { echo '缺少 unzip，无法校验 UI 压缩包。' >&2; exit 1; }
-  list=$(mktemp) || exit 1
-  unzip -Z1 "$zip" > "$list" 2>/dev/null || { rm -f "$list"; exit 1; }
+  list=$(mktemp) || die '无法创建临时文件（/tmp 不可写？）'
+  unzip -Z1 "$zip" > "$list" 2>/dev/null || { rm -f "$list"; die '压缩包校验未通过（缺少 unzip、含不安全条目/链接，或展开后超过 200 MiB）'; }
   while IFS= read -r entry; do
     [ -n "$entry" ] || continue
-    case "$entry" in /*|../*|*/../*|*\\*) rm -f "$list"; exit 1;; esac
-    count=$((count + 1)); [ "$count" -le 10000 ] || { rm -f "$list"; exit 1; }
+    case "$entry" in /*|../*|*/../*|*\\*) rm -f "$list"; die '压缩包校验未通过（缺少 unzip、含不安全条目/链接，或展开后超过 200 MiB）';; esac
+    count=$((count + 1)); [ "$count" -le 10000 ] || { rm -f "$list"; die '压缩包校验未通过（缺少 unzip、含不安全条目/链接，或展开后超过 200 MiB）'; }
   done < "$list"
-  [ "$count" -gt 0 ] || { rm -f "$list"; exit 1; }
+  [ "$count" -gt 0 ] || { rm -f "$list"; die '压缩包校验未通过（缺少 unzip、含不安全条目/链接，或展开后超过 200 MiB）'; }
   # 与交互路径一致（A-13）：unzip -Z -l 与 zipinfo -l 输出相同，而且本来就是同一个二进制；
   # OpenWrt 的 unzip 包不一定提供 zipinfo，旧写法会让 cron 自动更新在那些设备上永远失败。
-  unzip -Z -l "$zip" > "$list" 2>/dev/null || zipinfo -l "$zip" > "$list" 2>/dev/null || { rm -f "$list"; exit 1; }
+  unzip -Z -l "$zip" > "$list" 2>/dev/null || zipinfo -l "$zip" > "$list" 2>/dev/null || { rm -f "$list"; die '压缩包校验未通过（缺少 unzip、含不安全条目/链接，或展开后超过 200 MiB）'; }
   while read -r mode size; do
     [ -n "$mode" ] || continue
-    case "$mode" in l*|b*|c*|p*) rm -f "$list"; exit 1;; esac
-    case "$size" in ''|*[!0-9]*) rm -f "$list"; exit 1;; esac
-    total=$((total + size)); [ "$total" -le 209715200 ] || { rm -f "$list"; exit 1; }
+    case "$mode" in l*|b*|c*|p*) rm -f "$list"; die '压缩包校验未通过（缺少 unzip、含不安全条目/链接，或展开后超过 200 MiB）';; esac
+    case "$size" in ''|*[!0-9]*) rm -f "$list"; die '压缩包校验未通过（缺少 unzip、含不安全条目/链接，或展开后超过 200 MiB）';; esac
+    total=$((total + size)); [ "$total" -le 209715200 ] || { rm -f "$list"; die '压缩包校验未通过（缺少 unzip、含不安全条目/链接，或展开后超过 200 MiB）'; }
   done < <(awk '$1 ~ /^[-dlcbp]/ {print $1, $4}' "$list")
   rm -f "$list"
 }
@@ -412,20 +415,20 @@ archive_top() {
   validate_archive "$zip"
   unzip -q -o "$zip" -d "$extract"
   find "$extract" -type l -exec rm -f {} +
-  [ "$(du -sk "$extract" | awk '{print $1}')" -le 204800 ] || exit 1
-  [ "$(find "$extract" -type f | wc -l)" -le 10000 ] || exit 1
+  [ "$(du -sk "$extract" | awk '{print $1}')" -le 204800 ] || die '解压结果超过 200 MiB（du 上限）'
+  [ "$(find "$extract" -type f | wc -l)" -le 10000 ] || die '解压结果文件数超过 10000'
   for candidate in "$extract"/*; do
     [ -e "$candidate" ] || continue
-    [ -d "$candidate" ] || exit 1
-    [ -z "$top" ] || exit 1
+    [ -d "$candidate" ] || die '压缩包顶层目录结构异常（不是目录）'
+    [ -z "$top" ] || die '压缩包包含多个顶层目录，无法确定面板根目录'
     top="$candidate"
   done
-  [ -n "$top" ] && [ -f "$top/index.html" ] || exit 1
+  [ -n "$top" ] && [ -f "$top/index.html" ] || die '压缩包顶层目录缺少 index.html（不是可用的面板包）'
   printf '%s\n' "$top"
 }
 URL=$(sed -n 's/.*"external_ui_download_url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$CONFIG_FILE" 2>/dev/null | head -n1)
 URL=${URL:-https://github.com/Zephyruso/zashboard/archive/15575961dc84cc614c66c3e9bd20e70b862b6734/gh-pages.zip}
-[[ "$URL" =~ ^https://[^[:space:]]+$ ]] || exit 1
+[[ "$URL" =~ ^https://[^[:space:]]+$ ]] || die 'UI 下载地址必须是 HTTPS'
 curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 120 --max-filesize 52428800 "$URL" -o "$TMP/ui.zip"
 staging="${UI_DIR}.staging"
 rm -rf "$staging"
@@ -437,14 +440,14 @@ if ! mv "$top" "$UI_DIR"; then
   rm -rf "$UI_DIR"
   [ ! -d "$backup" ] || mv "$backup" "$UI_DIR"
   rm -rf "$staging"
-  exit 1
+  die 'UI 目录替换失败，已尝试恢复旧面板'
 fi
 rm -rf "$staging"
 if ! chown -R root:root "$UI_DIR"; then
   failed_ui="$TMP/failed-ui"
   mv "$UI_DIR" "$failed_ui" || true
   [ ! -d "$backup" ] || mv "$backup" "$UI_DIR" || true
-  exit 1
+  die 'chown root:root 失败，已尝试恢复旧面板'
 fi
 i=0; backups=$(ls -1dt "$BACKUP_DIR"/.ui-backup.* 2>/dev/null || true); for backup in $backups; do i=$((i + 1)); [ "$i" -le 3 ] || rm -rf -- "$backup"; done
 # 与交互式安装同一原因：external_ui 是 sing-box 启动时解析的，目录在实例启动之后才出现

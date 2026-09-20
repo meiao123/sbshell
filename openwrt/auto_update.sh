@@ -147,13 +147,43 @@ case "$U" in https://*) ;; *) echo '生成的订阅 URL 无效。' >&2; exit 1;;
 # 30s 超时 + 实时倒计时：手动执行本脚本（stdout 是终端）时显示倒计时，cron 里静默不刷日志。
 # curl 放进后台子 shell 写状态文件，前台显示倒计时；`|| rc=$?` 兜住退出码（本脚本 set -eu，
 # 裸 curl 失败会直接终止子 shell，状态文件写不出来）。
+# 与 manual_input.sh 逐字相同的失败原因解释器（脚本互不 source，只能内联）。
+download_failure_reason() {
+    reason_rc="${1:-}"
+    reason_http="${2:-}"
+    # -w 输出可能在异常情况下混入非数字内容，先过滤掉，别让数值比较报错。
+    case "$reason_http" in ''|*[!0-9]*) reason_http='' ;; esac
+    case "$reason_rc" in
+        5)  echo '无法解析代理地址（--proxy 配置有误）' ;;
+        6)  echo '域名解析失败（DNS 无法解析该主机）' ;;
+        7)  echo '连接被拒绝（目标端口没有服务在监听）' ;;
+        22) if [ -z "$reason_http" ]; then
+                echo '服务器返回 HTTP 错误'
+            elif [ "$reason_http" -ge 500 ]; then
+                echo "服务器返回 HTTP $reason_http（服务端出错：多为后端拉取上游订阅或模板失败）"
+            elif [ "$reason_http" = 401 ] || [ "$reason_http" = 403 ]; then
+                echo "服务器返回 HTTP $reason_http（鉴权失败或无权访问）"
+            elif [ "$reason_http" = 404 ]; then
+                echo "服务器返回 HTTP $reason_http（地址不存在）"
+            else
+                echo "服务器返回 HTTP $reason_http"
+            fi ;;
+        28) echo '请求超时（服务器未在限时内响应）' ;;
+        35|51|60) echo 'TLS/证书校验失败' ;;
+        56) echo '接收数据失败（连接被重置）' ;;
+        *)  echo "curl 退出码 ${reason_rc:-未知}" ;;
+    esac
+}
+
 download_status=$(mktemp /tmp/sbshell-auto-status.XXXXXX)
+download_http=$(mktemp /tmp/sbshell-auto-http.XXXXXX)
 # A-26：不要 rm 这个文件。删掉名字后任何本地用户都能用同名符号链接抢注，
 # 让下面子 shell 的 `>` 跟随写入任意文件；而父进程等的是“文件为空”，
 # mktemp 刚建出来的空文件同样满足条件，因此保留它语义不变。
 (
     rc=0
-    curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 30 "$U" -o "$TMP/config.json" || rc=$?
+    # -w 把 HTTP 状态码写进单独文件：cron 日志里才能区分 5xx / 401 / 403 / 404。
+    curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 30 -w '%{http_code}' "$U" -o "$TMP/config.json" > "$download_http" || rc=$?
     printf '%s\n' "$rc" > "$download_status"
     exit 0
 ) &
@@ -175,15 +205,16 @@ if [ ! -s "$download_status" ]; then
     kill "$curl_pid" 2>/dev/null || true
     wait "$curl_pid" 2>/dev/null || true
     if [ -t 1 ]; then printf '\n'; fi
-    echo '配置下载超时（30s）。' >&2
-    rm -f "$download_status"
+    echo "配置下载超时（30s，$(download_failure_reason 28)）。" >&2
+    rm -f "$download_status" "$download_http"
     exit 1
 fi
 wait "$curl_pid" 2>/dev/null || true
 download_rc=$(cat "$download_status" 2>/dev/null || echo 1)
-rm -f "$download_status"
+download_http_code=$(cat "$download_http" 2>/dev/null || true)
+rm -f "$download_status" "$download_http"
 if [ -t 1 ]; then printf '\r配置文件下载中，超时倒计时: 00s\n'; fi
-[ "$download_rc" -eq 0 ] || { echo '配置下载失败。' >&2; exit 1; }
+[ "$download_rc" -eq 0 ] || { echo "配置下载失败（$(download_failure_reason "$download_rc" "$download_http_code")）。" >&2; exit 1; }
 [ -s "$TMP/config.json" ] || { echo '下载的配置为空。' >&2; exit 1; }
 sing-box check -c "$TMP/config.json"
 [ ! -f "$CONFIG_FILE" ] || cp -a "$CONFIG_FILE" "$BACKUP_FILE"

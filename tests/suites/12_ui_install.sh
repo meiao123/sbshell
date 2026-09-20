@@ -167,11 +167,11 @@ assert_grep '配置文件下载中，超时倒计时: %02ds' "$SRC/manual_input.
 assert_grep '配置文件下载中，超时倒计时: %02ds' "$SRC/manual_update.sh" "手动更新配置显示倒计时"
 assert_grep '--max-time 30' "$SRC/manual_update.sh" "手动更新超时为 30s"
 assert_no_grep '--max-time 60' "$SRC/manual_update.sh" "手动更新不再用 60s"
-assert_grep '新配置下载超时（30s）' "$SRC/manual_update.sh" "手动更新超时有明确提示"
+assert_grep '新配置下载超时（30s' "$SRC/manual_update.sh" "手动更新超时有明确提示（文案后追加了具体原因）"
 assert_grep '配置文件下载中，超时倒计时: %02ds' "$SRC/auto_update.sh" "cron 自动更新脚本也显示倒计时"
 assert_grep 'if \[ -t 1 \]' "$SRC/auto_update.sh" "cron 下静默：仅在终端打印倒计时"
 assert_grep '--max-time 30' "$SRC/auto_update.sh" "自动更新超时为 30s"
-assert_grep '下载超时（30s）' "$SRC/auto_update.sh" "自动更新超时有明确提示"
+assert_grep '下载超时（30s' "$SRC/auto_update.sh" "自动更新超时有明确提示（文案后追加了具体原因）"
 
 # ---------------------------------------------------------------------------
 # 真机复现（2026-09-11 ImmortalWrt）：菜单自动装完 UI 后报「UI 安装完成。」，但浏览器打开
