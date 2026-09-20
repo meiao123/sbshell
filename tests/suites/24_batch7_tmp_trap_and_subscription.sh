@@ -22,17 +22,20 @@ SRC="${SBSHELL_SRC:-/src}"
 suite_begin "A-18: 清理 trap 必须先于临时文件创建"
 
 check_order() {
-    local file="$1" trap_pat="$2" label="$3" trap_line mktemp_line
+    local file="$1" trap_pat="$2" mktemp_pat="$3" label="$4" trap_line mktemp_line
     trap_line=$(grep -nE "$trap_pat" "$file" | head -n1 | cut -d: -f1)
-    mktemp_line=$(grep -n 'mktemp' "$file" | head -n1 | cut -d: -f1)
+    mktemp_line=$(grep -nE "$mktemp_pat" "$file" | head -n1 | cut -d: -f1)
     if [ -n "$trap_line" ] && [ -n "$mktemp_line" ] && [ "$trap_line" -lt "$mktemp_line" ]; then
         pass "$label：trap(L$trap_line) 先于首个 mktemp(L$mktemp_line)"
     else
         fail "$label：trap(L${trap_line:-无}) 未先于首个 mktemp(L${mktemp_line:-无})"
     fi
 }
-check_order "$SRC/openwrt/configure_tproxy.sh" '^trap cleanup EXIT$' "configure_tproxy.sh"
-check_order "$SRC/openwrt/update_scripts.sh" "^trap 'release_scripts_lock; cleanup_update_tmp' EXIT$" "update_scripts.sh"
+# 注意 mktemp 要匹配**本处**的模板：这两个文件里还有下载/解包用的其它 mktemp。
+check_order "$SRC/openwrt/configure_tproxy.sh" '^trap cleanup EXIT$' \
+    'mktemp /tmp/sbshell-tproxy\.XXXXXX' "configure_tproxy.sh"
+check_order "$SRC/openwrt/update_scripts.sh" "^trap 'release_scripts_lock; cleanup_update_tmp' EXIT$" \
+    'mktemp -d /tmp/sbshell-update\.XXXXXX' "update_scripts.sh"
 
 assert_no_grep 'mktemp /tmp/sbshell-tproxy\.XXXXXX$' "$SRC/openwrt/configure_tproxy.sh" \
     "configure_tproxy.sh 的 mktemp 都带失败处理"
@@ -81,7 +84,8 @@ mkdir -p /etc/sing-box
 printf 'BACKEND_URL=\nSUBSCRIPTION_URL=https://old.example/sub\nTPROXY_TEMPLATE_URL=\nTUN_TEMPLATE_URL=\n' > "$defaults_file"
 before=$(sha256sum "$defaults_file" | awk '{print $1}')
 
-assert_grep 'valid_subscription\(\) \{' "$set_defaults" "set_defaults.sh 带上与 manual_input.sh 相同的校验函数"
+# 注意这是 BRE：括号不转义才是字面量（`\(` 在 BRE 里是分组，会假失败）。
+assert_grep 'valid_subscription() {' "$set_defaults" "set_defaults.sh 带上与 manual_input.sh 相同的校验函数"
 
 # 含空格的订阅地址（4 个 read：后端 / 订阅 / TProxy / TUN）
 out=$(printf 'https://b.example/x\nhttps://s.example/a b\nhttps://t.example/t.json\nhttps://u.example/u.json\n' \
