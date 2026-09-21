@@ -50,7 +50,15 @@ fi
 DEFAULTS_FILE=/etc/sing-box/defaults.conf
 install -d -m 0755 /etc/sing-box
 get_default() { awk -F= -v k="$1" '$1 == k {sub(/^[^=]*=/, ""); print; exit}' "$DEFAULTS_FILE" 2>/dev/null || true; }
-valid_url() { [[ "$1" =~ ^https://[^[:space:]]+$ ]]; }
+valid_url() { [[ "$1" =~ ^https?://[^[:space:]]+$ ]]; }
+# A-28：与本仓库其它入口一致 —— http:// 也接受（内网/回环后端），只在非回环主机上提示风险。
+warn_plaintext_http() {
+    case "$1" in
+        http://127.0.0.1[:/]*|http://localhost[:/]*|http://\[::1\][:/]*) return 0 ;;
+        http://*) echo "提示：$1 使用明文 HTTP，凭据会明文经过网络，请仅在可信内网使用。" >&2 ;;
+    esac
+    return 0
+}
 # 与 manual_input.sh 的入口校验保持一致：订阅地址里的空白、`#`、`&file=` 会破坏下游解析，
 # 而 printf 不做转义 —— 含换行的粘贴会在 defaults.conf 里插出额外的 KEY=value 行，
 # 下游又按行取值（awk '$1==k' / sed -n "s/^$k=//p"），等于允许注入任意默认键。
@@ -70,7 +78,8 @@ read -rp "请输入TProxy配置文件地址: " TPROXY_TEMPLATE_URL; TPROXY_TEMPL
 read -rp "请输入TUN配置文件地址: " TUN_TEMPLATE_URL; TUN_TEMPLATE_URL=${TUN_TEMPLATE_URL:-$(get_default TUN_TEMPLATE_URL)}
 
 for value in "$BACKEND_URL" "$TPROXY_TEMPLATE_URL" "$TUN_TEMPLATE_URL"; do
-    [ -z "$value" ] || valid_url "$value" || { echo '所有配置 URL 必须使用 HTTPS（凭据会在明文 HTTP 下泄露）。' >&2; exit 1; }
+    [ -z "$value" ] || valid_url "$value" || { echo '所有配置 URL 必须是 http:// 或 https:// 的地址。' >&2; exit 1; }
+    [ -z "$value" ] || warn_plaintext_http "$value"
 done
 [ -n "$SUBSCRIPTION_URL" ] || { echo '订阅地址不能为空。' >&2; exit 1; }
 valid_subscription "$SUBSCRIPTION_URL" || { echo '订阅地址包含非法字符（空白、# 或 &file=）。' >&2; exit 1; }

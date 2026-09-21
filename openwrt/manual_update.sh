@@ -62,7 +62,17 @@ TMP_DIR=$(mktemp -d /tmp/sbshell-config.XXXXXX) || exit 1
 trap 'rm -rf "$TMP_DIR"' EXIT
 
 read_value() { awk -F= -v k="$1" '$1 == k {sub(/^[^=]*=/, ""); print; exit}' "$2" 2>/dev/null || true; }
-valid_url() { [[ "$1" =~ ^https://[^[:space:]]+$ ]]; }
+valid_url() { [[ "$1" =~ ^https?://[^[:space:]]+$ ]]; }
+# A-28：http:// 与 https:// 都接受 —— 后端/订阅/模板地址是「参数」，真实下载地址由它们拼出来，
+# 内网或本机回环后端（例如 http://127.0.0.1:5000/）是常见且合法的用法。
+# 明文 HTTP 只提示、不阻断：回环地址静默通过，其它主机提示凭据会明文经过网络。
+warn_plaintext_http() {
+    case "$1" in
+        http://127.0.0.1[:/]*|http://localhost[:/]*|http://\[::1\][:/]*) return 0 ;;
+        http://*) echo "提示：$1 使用明文 HTTP，凭据会明文经过网络，请仅在可信内网使用。" >&2 ;;
+    esac
+    return 0
+}
 valid_subscription() {
     local value="$1"
     [ -z "$value" ] && return 0
@@ -80,13 +90,14 @@ build_full_url() {
 }
 validate_endpoints() {
     if [ -n "$BACKEND_URL" ]; then
-        valid_url "$BACKEND_URL" || { echo -e "${RED}后端地址必须是 HTTPS URL。${NC}" >&2; return 1; }
+        valid_url "$BACKEND_URL" || { echo -e "${RED}后端地址必须是 http:// 或 https:// 的 URL。${NC}" >&2; return 1; }
         [ -n "$SUBSCRIPTION_URL" ] || { echo -e "${RED}使用后端地址时订阅地址不能为空。${NC}" >&2; return 1; }
     fi
     valid_subscription "$SUBSCRIPTION_URL" || { echo -e "${RED}订阅地址包含非法字符。${NC}" >&2; return 1; }
-    valid_url "$TEMPLATE_URL" || { echo -e "${RED}配置文件地址必须是 HTTPS URL。${NC}" >&2; return 1; }
+    valid_url "$TEMPLATE_URL" || { echo -e "${RED}配置文件地址必须是 http:// 或 https:// 的 URL。${NC}" >&2; return 1; }
     build_full_url
     valid_url "$FULL_URL" || { echo -e "${RED}生成的订阅 URL 无效。${NC}" >&2; return 1; }
+    warn_plaintext_http "$FULL_URL"
     return 0
 }
 release_lock() {
@@ -210,9 +221,10 @@ download_http=$(mktemp /tmp/sbshell-update-http.XXXXXX)
 # 父进程等的是“文件为空”，mktemp 的空文件同样满足，保留它语义不变。
 (
     rc=0
-    # 只允许 HTTPS：配置文件内含节点凭据，明文 HTTP 会在链路上泄露（与 debian 侧一致）。
+    # A-28：允许 http —— 这里请求的是用户自己的后端，回环/内网后端经常就是 http；
+    # 非回环的明文 HTTP 已由 warn_plaintext_http 提示风险，不再阻断。
     # -w 把 HTTP 状态码写进单独文件：失败时才能区分 5xx / 401 / 403 / 404。
-    curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 30 -w '%{http_code}' "$FULL_URL" -o "$TMP_DIR/config.json" > "$download_http" || rc=$?
+    curl --fail --silent --show-error --location --proto '=http,https' --tlsv1.2 --connect-timeout 10 --max-time 30 -w '%{http_code}' "$FULL_URL" -o "$TMP_DIR/config.json" > "$download_http" || rc=$?
     printf '%s\n' "$rc" > "$download_status"
     exit 0
 ) &

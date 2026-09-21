@@ -63,7 +63,17 @@ get_default() {
     local key="$1"
     grep -m1 "^${key}=" "$DEFAULTS_FILE" 2>/dev/null | cut -d'=' -f2- || true
 }
-valid_url() { [[ "$1" =~ ^https://[^[:space:]]+$ ]]; }
+valid_url() { [[ "$1" =~ ^https?://[^[:space:]]+$ ]]; }
+# A-28：http:// 与 https:// 都接受 —— 后端/订阅/模板地址是「参数」，真实下载地址由它们拼出来，
+# 内网或本机回环后端（例如 http://127.0.0.1:5000/）是常见且合法的用法。
+# 明文 HTTP 只提示、不阻断：回环地址静默通过，其它主机提示凭据会明文经过网络。
+warn_plaintext_http() {
+    case "$1" in
+        http://127.0.0.1[:/]*|http://localhost[:/]*|http://\[::1\][:/]*) return 0 ;;
+        http://*) echo "提示：$1 使用明文 HTTP，凭据会明文经过网络，请仅在可信内网使用。" >&2 ;;
+    esac
+    return 0
+}
 # 订阅地址（FULL_URL）里含用户 token：任何输出都不该带原文，终端回滚、截图、粘贴给别人
 # 排查都会把它带出去。只保留 scheme+host，其余以 *** 代替。
 redact_url() {
@@ -172,17 +182,27 @@ while true; do
         esac
     fi
 
+    # A-28：校验放在「打印摘要 + 确认 y」之前 —— 旧顺序是先让你确认，再告诉你地址不合法，
+    # 于是三个地址得全部重输一遍（真机上就踩到了这个）。
+    if [ -n "$BACKEND_URL" ] && ! valid_url "$BACKEND_URL"; then echo -e "${RED}后端地址必须是 http:// 或 https:// 的 URL。${NC}"; continue; fi
+    if [ -n "$TEMPLATE_URL" ] && ! valid_url "$TEMPLATE_URL"; then echo -e "${RED}配置文件地址必须是 http:// 或 https:// 的 URL。${NC}"; continue; fi
+    if ! valid_subscription "$SUBSCRIPTION_URL"; then echo -e "${RED}订阅地址包含非法字符（空白、# 或 &file=）。${NC}"; continue; fi
+    if [ -n "$BACKEND_URL" ] && [ -z "$SUBSCRIPTION_URL" ]; then echo -e "${RED}使用后端地址时订阅地址不能为空。${NC}"; continue; fi
+
+    if [ -n "$BACKEND_URL" ] && [ -n "$SUBSCRIPTION_URL" ]; then
+        FULL_URL="${BACKEND_URL%/}/config/${SUBSCRIPTION_URL}&file=${TEMPLATE_URL}"
+    else
+        FULL_URL="$TEMPLATE_URL"
+    fi
+    valid_url "$FULL_URL" || { echo -e "${RED}生成的订阅 URL 无效。${NC}"; continue; }
+    warn_plaintext_http "$FULL_URL"
+
     echo -e "${CYAN}你输入的配置信息如下:${NC}"
     echo "后端地址: $BACKEND_URL"
     echo "订阅地址: $SUBSCRIPTION_URL"
     echo "配置文件地址: $TEMPLATE_URL"
     read -rp '确认输入的配置信息？(y/n): ' confirm_choice
     [[ "$confirm_choice" =~ ^[Yy]$ ]] || { echo -e "${RED}请重新输入配置信息。${NC}"; continue; }
-
-    if [ -n "$BACKEND_URL" ] && ! valid_url "$BACKEND_URL"; then echo -e "${RED}后端地址必须是 HTTPS URL。${NC}"; continue; fi
-    if [ -n "$TEMPLATE_URL" ] && ! valid_url "$TEMPLATE_URL"; then echo -e "${RED}配置文件地址必须是 HTTPS URL。${NC}"; continue; fi
-    if ! valid_subscription "$SUBSCRIPTION_URL"; then echo -e "${RED}订阅地址包含非法字符（空白、# 或 &file=）。${NC}"; continue; fi
-    if [ -n "$BACKEND_URL" ] && [ -z "$SUBSCRIPTION_URL" ]; then echo -e "${RED}使用后端地址时订阅地址不能为空。${NC}"; continue; fi
 
     acquire_lock
     install -d -o root -g root -m 0755 /etc/sing-box
@@ -202,21 +222,15 @@ while true; do
     printf 'BACKEND_URL=%s\nSUBSCRIPTION_URL=%s\nTEMPLATE_URL=%s\n' "$BACKEND_URL" "$SUBSCRIPTION_URL" "$TEMPLATE_URL" > "$tmp_manual"
     if [ -f "$MANUAL_FILE" ]; then install -o root -g root -m 0600 "$MANUAL_FILE" "$backup_manual"; manual_existed=1; fi
 
-    if [ -n "$BACKEND_URL" ] && [ -n "$SUBSCRIPTION_URL" ]; then
-        FULL_URL="${BACKEND_URL%/}/config/${SUBSCRIPTION_URL}&file=${TEMPLATE_URL}"
-    else
-        FULL_URL="$TEMPLATE_URL"
-    fi
-    valid_url "$FULL_URL" || { echo -e "${RED}生成的订阅 URL 无效。${NC}" >&2; exit 1; }
-
     (
         # 真机踩坑（ImmortalWrt 25.12.2）：本脚本是 set -Eeuo pipefail，裸 curl 失败时
         # errexit 会直接干掉整个子 shell，下面写状态文件的那句永远执行不到 —— 父进程
         # 只能空转到 30 秒，把后端返回的 HTTP 500 误报成"配置文件下载超时"。必须用
         # `|| rc=$?` 兜住退出码，并在子 shell 结尾显式 exit 0。
         rc=0
-        # 只允许 HTTPS：配置文件内含节点凭据，明文 HTTP 会在链路上泄露（与 debian 侧一致）。
-        curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 30 -w '%{http_code}' "$FULL_URL" -o "$tmp_config" > "$download_http" || rc=$?
+        # A-28：允许 http —— 这里请求的是用户自己的后端，回环/内网后端经常就是 http。
+        # 非回环的明文 HTTP 已在上面用 warn_plaintext_http 提示过风险，不再阻断。
+        curl --fail --silent --show-error --location --proto '=http,https' --tlsv1.2 --connect-timeout 10 --max-time 30 -w '%{http_code}' "$FULL_URL" -o "$tmp_config" > "$download_http" || rc=$?
         printf '%s\n' "$rc" > "$download_status"
         exit 0
     ) &

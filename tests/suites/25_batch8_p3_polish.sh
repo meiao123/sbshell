@@ -20,9 +20,9 @@ assert_grep '兼容旧安装' "$SRC/openwrt/menu.sh" "menu.sh 注明 cron.d 路�
 assert_grep 'rm -f.*/etc/cron\.d/sbshell' "$SRC/openwrt/menu.sh" "继续清理早期版本留下的 cron.d 文件"
 assert_eq "$(grep -cE '^[[:space:]]*show_submenu$' "$SRC/openwrt/commands.sh")" "1" \
     "二级菜单只由外层 while 打印（选 0 退出时不再多印一遍）"
-# A-20(2)/(3) 经核对已自洽：批次 1 把 valid_url 收窄为仅 https 后文案一致，
+# A-20(2)/(3) 经核对已自洽：A-28 把 valid_url 放宽为 http/https 后文案同步更新，
 # 批次 4 删掉了恒真的 `!= ''`。这里做固化，防止回退。
-assert_grep 'valid_url() { \[\[ "\$1" =~ \^https://' "$SRC/openwrt/manual_update.sh" \
+assert_grep 'valid_url() { \[\[ "\$1" =~ \^https?://' "$SRC/openwrt/manual_update.sh" \
     "manual_update.sh 的 URL 校验只接受 https"
 assert_eq "$(grep -c "!= ''" "$SRC/openwrt/manual_update.sh")" "0" \
     "manual_update.sh 不再有恒真死条件"

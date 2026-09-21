@@ -138,12 +138,12 @@ read_value() { sed -n "s/^$1=//p" "$MANUAL_FILE" | head -n1; }
 B=$(read_value BACKEND_URL); S=$(read_value SUBSCRIPTION_URL); T=$(read_value TEMPLATE_URL)
 case "$B" in
     '') U="$T";;
-    https://*) [ -n "$S" ] || { echo '使用后端地址时订阅地址不能为空。' >&2; exit 1; }; U="${B%/}/config/${S}&file=${T}";;
-    *) echo '无效的后端 HTTPS 地址。' >&2; exit 1;;
+    http://*|https://*) [ -n "$S" ] || { echo '使用后端地址时订阅地址不能为空。' >&2; exit 1; }; U="${B%/}/config/${S}&file=${T}";;
+    *) echo '无效的后端地址（需 http:// 或 https://）。' >&2; exit 1;;
 esac
 case "$S" in *[[:space:]]*|*'&file='*|*'#'*) echo '订阅地址包含非法字符。' >&2; exit 1;; esac
-case "$T" in https://*) ;; *) echo '无效的模板 HTTPS 地址。' >&2; exit 1;; esac
-case "$U" in https://*) ;; *) echo '生成的订阅 URL 无效。' >&2; exit 1;; esac
+case "$T" in http://*|https://*) ;; *) echo '无效的模板地址（需 http:// 或 https://）。' >&2; exit 1;; esac
+case "$U" in http://*|https://*) ;; *) echo '生成的订阅 URL 无效。' >&2; exit 1;; esac
 # 30s 超时 + 实时倒计时：手动执行本脚本（stdout 是终端）时显示倒计时，cron 里静默不刷日志。
 # curl 放进后台子 shell 写状态文件，前台显示倒计时；`|| rc=$?` 兜住退出码（本脚本 set -eu，
 # 裸 curl 失败会直接终止子 shell，状态文件写不出来）。
@@ -183,7 +183,8 @@ download_http=$(mktemp /tmp/sbshell-auto-http.XXXXXX)
 (
     rc=0
     # -w 把 HTTP 状态码写进单独文件：cron 日志里才能区分 5xx / 401 / 403 / 404。
-    curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 30 -w '%{http_code}' "$U" -o "$TMP/config.json" > "$download_http" || rc=$?
+    # A-28：允许 http（回环/内网后端常见）——这里请求的是用户自己的后端。
+    curl --fail --silent --show-error --location --proto '=http,https' --tlsv1.2 --connect-timeout 10 --max-time 30 -w '%{http_code}' "$U" -o "$TMP/config.json" > "$download_http" || rc=$?
     printf '%s\n' "$rc" > "$download_status"
     exit 0
 ) &
