@@ -13,6 +13,10 @@ CYAN='\033[0;36m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 ZASHBOARD_URL=https://github.com/Zephyruso/zashboard/releases/download/v3.28.0/dist-cdn-fonts.zip
+# A-29：默认 UI 不再固定版本 —— 安装时查询 zashboard 最新 release 的构建资产。
+# /releases/latest 会自动排除 prerelease；查询失败或没有合适资产时回退到上面这个固定地址，
+# 保证「拿不到最新版」不会变成「装不上」。
+ZASHBOARD_RELEASE_API=https://api.github.com/repos/Zephyruso/zashboard/releases/latest
 METACUBEXD_URL=https://github.com/MetaCubeX/metacubexd/archive/28a9589f6239bbafc24e87bbf5e5b4997fe42e59/gh-pages.zip
 YACD_URL=https://github.com/MetaCubeX/Yacd-meta/archive/6945744f5ab10d3d639d6eb76f3a67167da77b34/gh-pages.zip
 # OpenWrt 25.12 起用 apk 取代了 opkg（ImmortalWrt 25.x 同源）。旧代码只认 opkg：
@@ -45,6 +49,27 @@ ensure_unzip() {
 if ! command -v curl >/dev/null 2>&1; then ensure_curl || exit 1; fi
 valid_url() { [[ "$1" =~ ^https://[^[:space:]]+$ ]]; }
 get_config_url() { sed -n 's/.*"external_ui_download_url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' /etc/sing-box/config.json 2>/dev/null | head -n1; }
+# 解析 zashboard 最新 release 的构建资产地址：dist-cdn-fonts.zip 优先，其次任意 dist-*.zip。
+# 只走 HTTPS + 官方 API；任何失败都返回非 0，由调用方回退到固定地址。
+resolve_latest_zashboard_url() {
+    local json url
+    json=$(mktemp /tmp/sbshell-ui-release.XXXXXX 2>/dev/null) || return 1
+    if ! curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+            --connect-timeout 10 --max-time 60 "$ZASHBOARD_RELEASE_API" -o "$json"; then
+        rm -f "$json"
+        return 1
+    fi
+    url=$(awk '
+        /"name":/ { n=$0; sub(/.*"name": *"/,"",n); sub(/".*/,"",n)
+                    if (index(n, "dist-cdn-fonts.zip") > 0) { want=1 } else if (n ~ /^dist-.*\.zip$/) { alt=1 } }
+        /"browser_download_url":/ { if (want && !u) { u=$0; sub(/.*"browser_download_url": *"/,"",u); sub(/".*/,"",u) }
+                                    if (alt && !v) { v=$0; sub(/.*"browser_download_url": *"/,"",v); sub(/".*/,"",v) } }
+        END { print (u ? u : v) }
+    ' "$json")
+    rm -f "$json"
+    [ -n "$url" ] || return 1
+    printf '%s\n' "$url"
+}
 release_ui_lock() {
     [ -d "$UI_LOCK_DIR" ] || return 0
     owner=$(cat "$UI_LOCK_DIR/pid" 2>/dev/null || true)
@@ -436,7 +461,26 @@ archive_top() {
   [ -n "$top" ] && [ -f "$top/index.html" ] || die '压缩包顶层目录缺少 index.html（不是可用的面板包）'
   printf '%s\n' "$top"
 }
+fetch_latest_zashboard_url() {
+  local json url
+  json=$(mktemp /tmp/sbshell-ui-auto-rel.XXXXXX 2>/dev/null) || return 1
+  curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+    --connect-timeout 10 --max-time 60 \
+    https://api.github.com/repos/Zephyruso/zashboard/releases/latest -o "$json" || { rm -f "$json"; return 1; }
+  url=$(awk '
+    /"name":/ { n=$0; sub(/.*"name": *"/,"",n); sub(/".*/,"",n)
+                if (index(n, "dist-cdn-fonts.zip") > 0) { want=1 } else if (n ~ /^dist-.*\.zip$/) { alt=1 } }
+    /"browser_download_url":/ { if (want && !u) { u=$0; sub(/.*"browser_download_url": *"/,"",u); sub(/".*/,"",u) }
+                                if (alt && !v) { v=$0; sub(/.*"browser_download_url": *"/,"",v); sub(/".*/,"",v) } }
+    END { print (u ? u : v) }
+  ' "$json")
+  rm -f "$json"
+  [ -n "$url" ] || return 1
+  printf '%s\n' "$url"
+}
 URL=$(sed -n 's/.*"external_ui_download_url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$CONFIG_FILE" 2>/dev/null | head -n1)
+# A-29：默认地址不再固定版本；查询失败或没有合适资产时回退到固定地址，cron 更新不会因此失败。
+[ -n "$URL" ] || URL=$(fetch_latest_zashboard_url 2>/dev/null || true)
 URL=${URL:-https://github.com/Zephyruso/zashboard/releases/download/v3.28.0/dist-cdn-fonts.zip}
 [[ "$URL" =~ ^https://[^[:space:]]+$ ]] || die 'UI 下载地址必须是 HTTPS'
 curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 120 --max-filesize 52428800 "$URL" -o "$TMP/ui.zip"
@@ -510,7 +554,7 @@ while true; do
     echo -e "${CYAN}====================================${NC}"
     read -rp '请选择: ' choice
     case "$choice" in
-        1) url=$(get_config_url || true); install_ui "${url:-$ZASHBOARD_URL}"; exit $?;;
+        1) url=$(get_config_url || true); [ -n "$url" ] || url=$(resolve_latest_zashboard_url || true); install_ui "${url:-$ZASHBOARD_URL}"; exit $?;;
         2) install_ui "$ZASHBOARD_URL"; exit $?;;
         3) install_ui "$METACUBEXD_URL"; exit $?;;
         4) install_ui "$YACD_URL"; exit $?;;
