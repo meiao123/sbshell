@@ -55,7 +55,7 @@ nft 表、ip rule/route、state 文件、锁目录、cron 文件等可观测结�
 | `10_package_manager.sh` | 真机回归（ImmortalWrt 25.12.2 / apk-tools 3.0.5）：OpenWrt 25.12 起 apk 取代 opkg，安装/UI 更新/引导/卸载四处都须按可用包管理器分派，且老固件的 opkg 调用序列不变 |
 | `11_download_failure_reason.sh` | 真机回归（ImmortalWrt 25.12.2）：`set -Eeuo pipefail` + 后台子 shell 跑 curl 时，errexit 会在 curl 失败时跳过状态写入，导致后端 HTTP 500 被误报成“配置文件下载超时”；现在失败必须立刻给出真实原因（HTTP 状态 / DNS / 连接被拒绝 / curl 超时）并打印请求地址，且现有配置不被改动 |
 | `12_ui_install.sh` | 真机回归（ImmortalWrt 25.12.2）：① 安装流程必须主动安装默认 UI（配置下载/启动失败也要装，否则 UI 永远装不上）；② UI 的完成通知或失败警告必须先于主菜单出现，且 UI 失败不能挡住菜单；③ 配置下载/更新统一 30s 超时并显示倒计时（`manual_update.sh` 与 `auto_update.sh` 的 cron 脚本，cron 下用 `[ -t 1 ]` 静默） |
-| `13_batch1_hardening.sh` | 批次 1 安全回归：`--local` 未确认必须拒绝、OpenWrt 仅 HTTPS |
+| `13_batch1_hardening.sh` | 批次 1 安全回归 + A-28：`--local` 未确认必须拒绝；OpenWrt 配置 URL **接受 http**（A-28 撤销了批次 1 的「仅 HTTPS」：回环 http 后端不再被拒，只对非回环明文 HTTP 提示风险），同时下载链仍限 HTTPS |
 | `14_batch2_integrity.sh` | 批次 2 数据完整性：`install()` 兜底必须先 unlink（否则覆盖运行中的脚本）、cron 更新备份移出 `$TMP`、配置原子替换 |
 | `15_ui_atomic_deploy.sh` | 批次 2 F8：UI 部署必须同文件系统 staging + rename，回滚前显式删除目标 |
 | `16_guardrails.sh` | 批次 3 测试护栏：空套件集/忘记 `suite_end` 必须判失败、断言失败带实际输出、nft 桩保真度 |

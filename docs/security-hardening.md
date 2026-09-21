@@ -159,13 +159,24 @@ chown 失败 → 显式容忍（所有权不构成安全边界，且 vfat/extroo
 4. **`debian/manual_update.sh` 使用固定可预测的临时目录**（P1）。`/tmp` 世界可写、目录名固定且不查
    符号链接，本地用户可预置软链让 root 的写入被劫持（`chmod` 也跟随软链），并发实例还会互相
    `rm -rf` 目录。改为 `mktemp -d /tmp/sbshell-config.XXXXXX`，并移到 `flock -x 9` **之后**创建。
-5. **OpenWrt 允许用明文 HTTP 下载含凭据的配置**（P2）。`valid_url` 接受 `^https?://`、下载用
-   `--proto '=http,https'`（debian 侧一律 https），而 OpenWrt 侧自己的错误文案本就写着"必须是 HTTPS URL"。
-   `openwrt/manual_input.sh`、`openwrt/manual_update.sh`、`openwrt/set_defaults.sh` 收敛为仅 HTTPS；
-   `openwrt/update_ui.sh` 的面板**本地探活**保留 `http`，属有意（探测目标是 `127.0.0.1`）。
+5. **OpenWrt 允许用明文 HTTP 下载含凭据的配置**（P2）——**该项已于第六轮按真机反馈撤销**。
+   批次 1 曾把 `openwrt/manual_input.sh`、`openwrt/manual_update.sh`、`openwrt/set_defaults.sh`
+   的 `valid_url` 收敛为仅 `^https://`、配置下载改为 `--proto '=https'`。
+   **撤销理由（A-28）**：后端/订阅/模板地址是「参数」而不是本机的固定下载源，真实下载地址由它们拼出来，
+   而回环/内网后端（`http://127.0.0.1:5000/` 这类）本来就应当是 http，硬性 HTTPS 会堵死合法用法 ——
+   真机上表现为按要求输完三个地址、确认 `y` 之后被一句「后端地址必须是 HTTPS URL。」拒绝。
+   现在的契约：`^https?://` 都接受；新增 `warn_plaintext_http()` 仅在**非回环**主机上提示
+   「凭据会明文经过网络」（回环 `127.0.0.1`/`localhost`/`::1` 静默通过），提示而不阻断；
+   `openwrt/auto_update.sh` 里**生成给 cron 的更新脚本**也同步放宽（否则定时更新仍会失败）。
+   拉取仓库自身文件（`update_scripts.sh`、`menu.sh`）与面板 zip（`update_ui.sh`）的下载链
+   仍然只走 `--proto '=https'`；`update_ui.sh` 的面板**本地探活**保留 `http`，属有意（目标是 `127.0.0.1`）。
+   另：`manual_input.sh` 的 URL 校验已提到「打印摘要 + 确认」**之前**，避免先确认再被否、三个地址重输。
 
 回归测试：`tests/suites/13_batch1_hardening.sh`。其中 F1 是行为断言（未显式确认时 `--local` 必须拒绝、
-退出码 1、且提示里列出会被覆写的真实路径）；F2–F5 是静态断言，因为对应路径需要真实 root 系统与网络。
+退出码 1、且提示里列出会被覆写的真实路径）；F2–F4 是静态断言，因为对应路径需要真实 root 系统与网络；
+F5（A-28 改写后）既有静态断言，也有行为回归 —— 用与真机日志一致的输入驱动真实的 `manual_input.sh`
+（回环 http 后端 + 回环 http 订阅 + https 模板，在确认处回答 n，不写任何文件），
+断言不再出现「必须是 HTTPS」且能到达摘要+确认；另有一组内网 http 断言只提示不阻断。
 
 
 ## 第五轮：OpenWrt 专用化后的 P2 清理
