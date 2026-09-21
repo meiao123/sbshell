@@ -40,27 +40,47 @@ assert_grep "proto '=https'" "$SRC/openwrt/update_ui.sh" "面板 zip 下载仍�
 assert_grep "proto '=http,https'" "$SRC/openwrt/update_ui.sh" \
     "面板本地探活仍允许 http（有意）"
 
-suite_begin "batch1 F5/A-28: 真机回归（http 回环后端不再被拒）"
+suite_begin "batch1 F5/A-28: 校验函数行为（回环 http 被接受、内网 http 只提示）"
 
-# 用与真机日志一致的输入驱动真实的 manual_input.sh：回环 http 后端 + 回环 http 订阅
-# + https 模板，在确认处回答 n（不写任何文件、不碰锁），断言校验通过并到达摘要。
-probe_input() { printf '%s\n' "$1" "$2" "$3" 'n'; }
-LOOP_BACKEND='http://127.0.0.1:5000/'
-LOOP_SUB='http://127.0.0.1:3001/tok/download?target=sing-box'
-TEMPLATE_URL_PROBE='https://example.test/config.json'
+# 注意：这里不驱动完整交互流程 —— manual_input.sh 在 CI（无 tty、无 /etc/sing-box 状态）里
+# 不会走到提示循环，真机行为由真机日志与本段的静态断言共同保证。改为把两个函数原样抽出后
+# 直接驱动，确定性且失败信息可诊断。
+url_helpers=$(mktemp)
+awk '/^valid_url\(\)/{p=1} p{print} p&&/^\}$/{exit}' "$SRC/openwrt/manual_input.sh" > "$url_helpers"
+assert_grep 'warn_plaintext_http() {' "$url_helpers" "成功抽出 valid_url 与 warn_plaintext_http"
+assert_no_grep 'valid_subscription' "$url_helpers" "只抽到这两个函数（不多带下游逻辑）"
 
-out_loop=$(probe_input "$LOOP_BACKEND" "$LOOP_SUB" "$TEMPLATE_URL_PROBE" \
-    | run_with_timeout bash "$SRC/openwrt/manual_input.sh" 2>&1)
-assert_not_rc "$?" 124 "回环 http 场景没有挂住"
-assert_contains "$out_loop" "你输入的配置信息如下" "校验通过并到达摘要+确认（http 回环后端被接受）"
-assert_not_contains "$out_loop" "必须是 HTTPS" "不再出现「必须是 HTTPS URL」"
-assert_not_contains "$out_loop" "使用明文 HTTP" "回环 http 不打印明文风险提示"
+probe() { ( . "$url_helpers"; eval "$1" ); }
 
-out_lan=$(probe_input 'http://192.168.8.9:5000/' 'http://192.168.8.9:3001/tok/download?target=sing-box' "$TEMPLATE_URL_PROBE" \
-    | run_with_timeout bash "$SRC/openwrt/manual_input.sh" 2>&1)
-assert_not_rc "$?" 124 "内网 http 场景没有挂住"
-assert_contains "$out_lan" "使用明文 HTTP" "非回环 http 打印风险提示"
-assert_contains "$out_lan" "你输入的配置信息如下" "非回环 http 仍被接受（只提示不阻断）"
+# 1) 校验：http 与 https 都接受（真机后端就是 http://127.0.0.1:5000/）
+for u in 'http://127.0.0.1:5000/' 'http://192.168.8.9:5000/' 'https://example.test/config.json'; do
+    probe "valid_url '$u'" >/dev/null 2>&1
+    assert_rc "$?" 0 "valid_url 接受 $u"
+done
+for u in 'ftp://example.test/x' 'http://exa mple.test/x' '' 'just-a-path'; do
+    probe "valid_url '$u'" >/dev/null 2>&1
+    assert_not_rc "$?" 0 "valid_url 拒绝 [$u]"
+done
+
+# 2) 明文提示：回环静默；非回环 http 提示；https 静默（只提示、不阻断）
+assert_eq "$(probe "warn_plaintext_http 'http://127.0.0.1:5000/x'" 2>&1)" "" "回环 http 不提示"
+assert_eq "$(probe "warn_plaintext_http 'http://localhost:5000/x'" 2>&1)" "" "localhost 不提示"
+assert_contains "$(probe "warn_plaintext_http 'http://192.168.8.9:5000/x'" 2>&1)" "使用明文 HTTP" \
+    "非回环 http 提示风险"
+assert_eq "$(probe "warn_plaintext_http 'https://example.test/x'" 2>&1)" "" "https 不提示"
+# 提示不改变退出码（调用方不会因为它而失败）
+probe "warn_plaintext_http 'http://192.168.8.9:5000/x'" >/dev/null 2>&1
+assert_rc "$?" 0 "明文提示不影响调用方退出码"
+rm -f "$url_helpers"
+
+# 3) 顺序：URL 校验必须先于「确认输入的配置信息」（真机日志里是先确认、再报地址不合法）
+line_check=$(grep -n '后端地址必须是 http' "$SRC/openwrt/manual_input.sh" | head -n1 | cut -d: -f1)
+line_confirm=$(grep -n '确认输入的配置信息' "$SRC/openwrt/manual_input.sh" | head -n1 | cut -d: -f1)
+if [ -n "$line_check" ] && [ -n "$line_confirm" ] && [ "$line_check" -lt "$line_confirm" ]; then
+    pass "URL 校验（L$line_check）先于确认（L$line_confirm）"
+else
+    fail "URL 校验必须先于确认：check=L${line_check:-空} confirm=L${line_confirm:-空}"
+fi
 
 # --------------------------------------------------- F1 宿主机护栏
 suite_begin "batch1 F1: --local 不再无条件破坏宿主机"
