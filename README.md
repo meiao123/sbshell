@@ -51,6 +51,10 @@ bash <(curl -sL https://raw.githubusercontent.com/meiao123/sbshell/refs/heads/ma
 - **脚本完整性校验**：仓库根的 `SHA256SUMS` 覆盖 `sbshall.sh` 与 `openwrt/*.sh`，自更新会在
   安装前逐文件核对；CI 也会比对清单与实际文件，防止清单漂移。它只能防传输损坏与中间层替换，
   **不等于仓库签名**；想更强保证请自行核对 commit（`git log -1`）。
+- **面板打开是空白页（PWA 缓存）**：面板是 Vite PWA，浏览器会用 Service Worker 缓存旧页面。
+  UI 更新后若打开是空白（但标题栏有内容），请在浏览器里对 `http://<路由器IP>:9095/ui/` 注销
+  Service Worker 并清掉该站点的 Cache Storage（或先用无痕窗口验证）—— 这属于浏览器端缓存，
+  不是路由器配置问题；每次更新 UI 后都可能需要做一次。
 - **缓存文件**：配置里的 `cache_file` 指向 `/etc/sing-box/cache.db`。服务以 `sing-box`
   用户运行而该目录属主是 root，安装脚本会预创建该文件并交给 `sing-box` 用户；手工替换
   配置时请保留这个前提（或改到 `/var/lib/sing-box/`）。

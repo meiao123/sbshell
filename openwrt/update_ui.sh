@@ -136,6 +136,13 @@ prune_backups() {
     local i; backups=$(ls -1dt "$BACKUP_DIR"/.ui-backup.* 2>/dev/null || true); i=0
     for backup in $backups; do i=$((i + 1)); [ "$i" -le 3 ] || rm -rf -- "$backup"; done
 }
+# 真机踩坑（2026-09-21）：面板是 Vite PWA，Service Worker 会拦截 /ui/ 下的请求并优先用缓存。
+# UI 目录被整体替换后，旧壳引用的哈希文件名已经不存在，浏览器却仍渲染旧壳 —— 现象是
+# 「标题栏有内容、页面全白」，而无痕窗口正常（服务器返回的 <title> 与浏览器显示的不一致）。
+# 安装器只报「安装完成」时用户毫无线索，因此每次成功安装都提示一次排查方向。
+warn_pwa_cache_hint() {
+    echo -e "${YELLOW}提示：本面板是 PWA，浏览器会缓存旧页面；若打开是空白页，请注销该站点的 Service Worker 并清掉 Cache Storage（或先用无痕窗口验证）。${NC}" >&2
+}
 # 面板可达性检查（真机踩坑，2026-09-11）：
 #   experimental.clash_api.external_ui 是 sing-box **启动时**解析的，所以「UI 文件装好了」
 #   不等于「面板能打开」——运行中的实例不会挂载后来才出现的目录，真机表现就是菜单报
@@ -229,6 +236,7 @@ notify_ui_ready() {
             ui_panel_reachable || st=$?
             if [ "$st" -eq 0 ]; then
                 echo -e "${GREEN}UI 安装完成（已重启 sing-box，面板已就绪）。${NC}"
+                warn_pwa_cache_hint
                 return 0
             fi
             i=$((i + 1))
@@ -244,6 +252,7 @@ notify_ui_ready() {
         return 0
     fi
     echo -e "${GREEN}UI 安装完成。${NC}"
+    warn_pwa_cache_hint
     echo -e "${YELLOW}提示：配置里没有可用的 external_controller/external_ui，无法自动确认面板是否可访问。${NC}"
     return 0
 }
@@ -314,6 +323,7 @@ check_ui() {
     if url=$(ui_panel_url); then
         if ui_panel_reachable; then
             echo -e "${GREEN}面板正在响应：$url${NC}"
+            warn_pwa_cache_hint
         else
             echo -e "${RED}但面板当前无响应：$url（可执行 /etc/init.d/sing-box restart 后重试）${NC}" >&2
         fi
