@@ -95,8 +95,9 @@ assert_grep 'update_scripts.sh' "$SBSHELL_SRC/openwrt/update_scripts.sh" "update
 assert_grep 'update_scripts.sh' "$SBSHELL_SRC/openwrt/menu.sh" "menu 保留自更新脚本"
 
 suite_begin "openwrt: manual update requires HTTPS backend URLs (batch 1)"
-assert_grep '\[\[ "\$1" =~ \^https://' "$SBSHELL_SRC/openwrt/manual_update.sh" "manual_update 只接受 HTTPS 后端地址"
-assert_grep "proto '=https'" "$SBSHELL_SRC/openwrt/manual_update.sh" "manual_update curl 只允许 HTTPS"
+# A-28：后端/模板地址 http、https 都接受（回环/内网后端常见）；下载链未放松。
+assert_grep '\[\[ "\$1" =~ \^https?://' "$SBSHELL_SRC/openwrt/manual_update.sh" "manual_update 同时接受 http 与 https 地址"
+assert_grep "proto '=http,https'" "$SBSHELL_SRC/openwrt/manual_update.sh" "manual_update 配置下载允许明文 HTTP"
 
 suite_begin "openwrt: UI initialization and menu separator"
 assert_grep "run update_ui.sh <<< '1'" "$SBSHELL_SRC/openwrt/menu.sh" "首次初始化自动安装默认 UI"
