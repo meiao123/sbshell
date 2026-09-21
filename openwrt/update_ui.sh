@@ -12,7 +12,7 @@ RED='\033[0;31m'
 CYAN='\033[0;36m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
-ZASHBOARD_URL=https://github.com/Zephyruso/zashboard/archive/15575961dc84cc614c66c3e9bd20e70b862b6734/gh-pages.zip
+ZASHBOARD_URL=https://github.com/Zephyruso/zashboard/releases/download/v3.28.0/dist-cdn-fonts.zip
 METACUBEXD_URL=https://github.com/MetaCubeX/metacubexd/archive/28a9589f6239bbafc24e87bbf5e5b4997fe42e59/gh-pages.zip
 YACD_URL=https://github.com/MetaCubeX/Yacd-meta/archive/6945744f5ab10d3d639d6eb76f3a67167da77b34/gh-pages.zip
 # OpenWrt 25.12 起用 apk 取代了 opkg（ImmortalWrt 25.x 同源）。旧代码只认 opkg：
@@ -437,7 +437,7 @@ archive_top() {
   printf '%s\n' "$top"
 }
 URL=$(sed -n 's/.*"external_ui_download_url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$CONFIG_FILE" 2>/dev/null | head -n1)
-URL=${URL:-https://github.com/Zephyruso/zashboard/archive/15575961dc84cc614c66c3e9bd20e70b862b6734/gh-pages.zip}
+URL=${URL:-https://github.com/Zephyruso/zashboard/releases/download/v3.28.0/dist-cdn-fonts.zip}
 [[ "$URL" =~ ^https://[^[:space:]]+$ ]] || die 'UI 下载地址必须是 HTTPS'
 curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 120 --max-filesize 52428800 "$URL" -o "$TMP/ui.zip"
 staging="${UI_DIR}.staging"

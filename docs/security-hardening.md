@@ -240,8 +240,11 @@ GNU 专有选项黑名单、`timeout` 命令调用、`stat -c` 格式串白名�
   `baf5d7ea412edff2318b6ae59154d5bd068c8bf6`（= 最后一次改动 `config_template/` 的提交）。
   **模板内容一旦变更，必须同时前移这个引用**，否则用户拿到的是过期模板（历史上就发生过：
   引用停在旧提交，而模板此后迁移了老式 DNS 写法）。
-- **面板**：5 份客户端模板的 `external_ui_download_url` 都固定到 zashboard 的提交
-  `15575961dc84cc614c66c3e9bd20e70b862b6734`（不再经第三方代理、也不是可变分支）。
+- **面板**：内置默认与本仓库 5 份客户端模板的 `external_ui_download_url` 都指向 zashboard 的
+  **release 资产** `https://github.com/Zephyruso/zashboard/releases/download/v3.28.0/dist-cdn-fonts.zip`
+  （带版本号、不可变，是上游官方发布的部署产物；实测解压后为单一 `dist/` 目录含 `index.html`，
+  符合安装器的 `archive_top` 校验）。此前是固定 `gh-pages` 分支上的某个提交，会随上游发版而变旧
+  —— 真机上因此装到了比上游 release 落后两个小版本的构建；升级面板只需改 URL 里的版本号。
 - **第三方脚本**：README 的"系统信息美化脚本"来自第三方账号仓库，已去掉 `gh-proxy.com`
   代理并固定到 `ff9e6b6f4057f626e5bbe1fde577fdd8c454e6af`；它仍会以 root 执行第三方代码，
   介意请自行审阅后再运行。

@@ -313,7 +313,7 @@ assert_contains "$UI_READY_OUT" "正在重启 sing-box" "桩忠实模拟真 curl
 assert_contains "$UI_READY_OUT" "404" "这种场景下同样要报出状态码"
 
 # ⑦ A-05 固化：cron 版自动更新器读不到 config.json 时用内置默认下载地址（兜底本来就在）
-assert_grep 'URL=${URL:-https://github.com/Zephyruso/zashboard/archive/15575961' "$SRC/update_ui.sh" \
+assert_grep 'URL=${URL:-https://github.com/Zephyruso/zashboard/releases/download/v3.28.0/dist-cdn-fonts.zip}' "$SRC/update_ui.sh" \
     "cron 版 UI 更新器有内置默认下载地址兜底"
 assert_grep 'UI_PANEL_HTTP_CODE' "$SRC/update_ui.sh" "面板探测区分「在监听但没提供面板」"
 

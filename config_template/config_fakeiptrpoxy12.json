@@ -125,7 +125,7 @@
     "clash_api": {
       "external_controller": "127.0.0.1:9095",
       "external_ui": "/etc/sing-box/ui",
-      "external_ui_download_url": "https://github.com/Zephyruso/zashboard/archive/15575961dc84cc614c66c3e9bd20e70b862b6734/gh-pages.zip",
+      "external_ui_download_url": "https://github.com/Zephyruso/zashboard/releases/download/v3.28.0/dist-cdn-fonts.zip",
       "external_ui_download_detour": "➡️ 直连",
       "secret": "",
       "default_mode": "rule"
