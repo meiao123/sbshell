@@ -181,6 +181,13 @@ assert_grep '下载超时（30s' "$SRC/auto_update.sh" "自动更新超时有明
 # ---------------------------------------------------------------------------
 suite_begin "update_ui: 装完必须确认面板真的在响应，不达则重启 sing-box（真机踩坑点）"
 
+# 真机案例（2026-09-21）：安装成功、服务端内容正确，但浏览器里是空白页 —— 面板是 PWA，
+# Service Worker 供给的是旧壳（服务器返回的 <title> 是 zashboard，浏览器标签显示的却是旧壳标题）。
+# 安装器必须在成功路径给出排查提示；提示写 stderr，不参与 stdout 解析。
+assert_grep 'warn_pwa_cache_hint() {' "$SRC/update_ui.sh" "定义了 PWA 缓存提示函数"
+assert_grep 'Service Worker' "$SRC/update_ui.sh" "提示里点名 Service Worker 与 Cache Storage"
+assert_min_count "$SRC/update_ui.sh" 'warn_pwa_cache_hint' 4 "成功路径、无配置收尾与检查面板都会提示"
+
 READY_SH=/tmp/ui12-ready.sh
 DRIVER=/tmp/ui12-driver.sh
 # 抽出探测/重启/通知三组函数（与 06 号套件抽 validate_archive 同一手法）。
