@@ -242,11 +242,16 @@ GNU 专有选项黑名单、`timeout` 命令调用、`stat -c` 格式串白名�
   否则用户拿到的是过期模板（曾发生过：引用停在旧提交，而模板此后迁移了老式 DNS 写法）。
   当前最后一次改动 `config_template/` 的提交是 `f5cbb006259cc409b79f83f7b151202de343a4e1`
   （把 5 份模板的面板地址换成 zashboard v3.28.0 的 release 资产）。
-- **面板**：内置默认与本仓库 5 份客户端模板的 `external_ui_download_url` 都指向 zashboard 的
-  **release 资产** `https://github.com/Zephyruso/zashboard/releases/download/v3.28.0/dist-cdn-fonts.zip`
-  （带版本号、不可变，是上游官方发布的部署产物；实测解压后为单一 `dist/` 目录含 `index.html`，
-  符合安装器的 `archive_top` 校验）。此前是固定 `gh-pages` 分支上的某个提交，会随上游发版而变旧
-  —— 真机上因此装到了比上游 release 落后两个小版本的构建；升级面板只需改 URL 里的版本号。
+- **面板**：默认 UI 按用户要求**不固定版本** —— 安装时查询 zashboard 最新 release
+  （`/releases/latest`，prerelease 自动排除），优先取 `dist-cdn-fonts.zip`，没有则取任意
+  `dist-*.zip`；失败回退到内置固定地址（`update_ui.sh` 的 `ZASHBOARD_URL`）。交互路径与 cron
+  生成体各有一份解析函数（两个脚本互不 source，沿用本仓库的内联副本约定）。
+  配置里的 `external_ui_download_url` 仍优先于自动解析；本仓库自带模板已删除该项，
+  避免把用户钉死在旧版本上。
+  同轮的 A-29 还给内核加了同样的能力：apk 固件优先装上游官方 OpenWrt 包
+  `sing-box_<版本>_openwrt_<apk --print-arch>.apk`（架构名与资产名一一对应，无需映射表；
+  实测上游为每个 OpenWrt 架构都发布了 apk 且都带 sha256 digest），安装前校验 sha256、
+  安装后核对版本，任何一步失败都回滚/回退到发行版软件包；opkg 老固件保持原样（上游无 .ipk）。
 - **第三方脚本**：README 的"系统信息美化脚本"来自第三方账号仓库，已去掉 `gh-proxy.com`
   代理并固定到 `ff9e6b6f4057f626e5bbe1fde577fdd8c454e6af`；它仍会以 root 执行第三方代码，
   介意请自行审阅后再运行。

@@ -36,8 +36,121 @@ pkg_install() {
     if [ "$PKG_MGR" = apk ]; then run_opkg add "$@"; else run_opkg install "$@"; fi
 }
 
+# ---------- 上游最新稳定版（按当前 CPU 架构取官方 OpenWrt .apk） ----------
+# 发行版 feed 的 sing-box 会落后上游（真机：feed 1.12.25 vs 上游 1.14.1）。上游为每个
+# OpenWrt 架构都发布了官方 apk，资产名与 `apk --print-arch` 输出一一对应（无需映射表）。
+# 本段只负责「尝试装上游最新」；失败一律回退到下面的发行版包安装，不影响可用性。
+SINGBOX_SOURCE=${SBSHELL_SINGBOX_SOURCE:-latest}   # latest | feed
+SINGBOX_RELEASE_API=https://api.github.com/repos/SagerNet/sing-box/releases/latest
+
+# 已安装版本的基础版本号（去掉 OpenWrt 的 -rN 修订后缀；未安装则输出空）
+installed_base_version() {
+    local raw
+    raw=$(sing-box version 2>/dev/null | sed -n 's/^sing-box version \([^ ]*\).*/\1/p' | head -n1 || true)
+    printf '%s\n' "${raw%%-r*}"
+}
+
+# 从 release JSON 里挑出目标架构的资产，输出三行：下载地址 / digest / 字节大小。
+# 注意 JSON 里字段顺序是 name -> digest -> browser_download_url，因此要按序累积判断。
+pick_asset() {
+    local json="$1" arch="$2"
+    awk -v arch="$arch" '
+        /"name":/ { n=$0; sub(/.*"name": *"/,"",n); sub(/".*/,"",n)
+                    matched = (index(n, "openwrt_" arch ".apk") > 0) }
+        /"digest":/ { if (matched) { d=$0; sub(/.*"digest": *"/,"",d); sub(/".*/,"",d) } }
+        /"size":/   { if (matched) { s=$0; sub(/.*"size": */,"",s); sub(/[^0-9].*/,"",s) } }
+        /"browser_download_url":/ { if (matched) {
+                    u=$0; sub(/.*"browser_download_url": *"/,"",u); sub(/".*/,"",u)
+                    print u; print d; print s; exit } }
+    ' "$json"
+}
+
+# 回滚：把发行版 feed 里那份 sing-box 装回去（事前用 apk fetch 存到工作目录）。
+rollback_to_feed() {
+    local feed
+    feed=$(ls "$workdir"/sing-box-*.apk 2>/dev/null | head -n1 || true)
+    [ -n "$feed" ] || return 1
+    run_opkg del sing-box >/dev/null 2>&1 || true
+    run_opkg add --allow-untrusted "$feed" >/dev/null 2>&1 || return 1
+    return 0
+}
+
+# 返回 0 表示「上游最新版已就位，不用再装 feed 包」；返回 1 表示让调用方回退 feed。
+install_latest_singbox() {
+    local arch json tag url digest size_kb free_kb actual apkfile
+    [ "$SINGBOX_SOURCE" = latest ] || return 1
+    [ "$PKG_MGR" = apk ] || return 1   # opkg 固件：上游没有 .ipk，保持原样
+    arch=$(apk --print-arch 2>/dev/null || cat /etc/apk/arch 2>/dev/null || true)
+    [ -n "$arch" ] || { echo '无法确定当前 CPU 架构，改用发行版软件包。' >&2; return 1; }
+    # 30 MB 级下载不能放 /tmp（tmpfs 即内存），放 sing-box 目录（overlay）并检查空间。
+    workdir=$(mktemp -d /etc/sing-box/.pkg.XXXXXX 2>/dev/null || true)
+    [ -n "$workdir" ] || { echo '无法创建包临时目录，改用发行版软件包。' >&2; return 1; }
+    trap 'rm -rf "$workdir"' EXIT INT TERM
+    json="$workdir/release.json"
+    if ! curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+            --connect-timeout 10 --max-time 120 "$SINGBOX_RELEASE_API" -o "$json"; then
+        echo '查询上游最新版本失败（网络或 API 配额），改用发行版软件包。' >&2; return 1
+    fi
+    tag=$(sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' "$json" | head -n1 || true)
+    [ -n "$tag" ] || { echo '上游版本信息不可解析，改用发行版软件包。' >&2; return 1; }
+    url=$(pick_asset "$json" "$arch" | sed -n '1p')
+    digest=$(pick_asset "$json" "$arch" | sed -n '2p')
+    size=$(pick_asset "$json" "$arch" | sed -n '3p')
+    [ -n "$url" ] || { echo "上游没有适配 $arch 的 OpenWrt 包，改用发行版软件包。" >&2; return 1; }
+    if [ "$(installed_base_version)" = "${tag#v}" ]; then
+        echo "sing-box 已是上游最新稳定版 ${tag#v}（$arch）。"
+        return 0
+    fi
+    if [ -n "$size" ]; then
+        free_kb=$(df -k "$workdir" 2>/dev/null | awk 'NR==2 {print $4}')
+        size_kb=$((size / 1024))
+        if [ -n "$free_kb" ] && [ "$free_kb" -lt $((size_kb + size_kb / 3)) ]; then
+            echo "可用空间不足（需要约 $((size_kb / 1024)) MiB），改用发行版软件包。" >&2; return 1
+        fi
+    fi
+    apkfile="$workdir/${url##*/}"
+    if ! curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+            --connect-timeout 10 --max-time 300 "$url" -o "$apkfile"; then
+        echo '下载上游 sing-box 包失败，改用发行版软件包。' >&2; return 1
+    fi
+    if [ -n "$digest" ]; then
+        if command -v sha256sum >/dev/null 2>&1; then
+            actual=$(sha256sum "$apkfile" | awk '{print $1}')
+            if [ "$actual" != "${digest#sha256:}" ]; then
+                echo '上游包 sha256 校验失败，已中止（改用发行版软件包）。' >&2; return 1
+            fi
+            echo "已校验上游包 sha256（${tag#v} / $arch）。"
+        else
+            echo '提示：本机没有 sha256sum，跳过完整性校验（下载走 HTTPS）。' >&2
+        fi
+    else
+        echo '提示：上游未在 API 中提供 sha256，跳过完整性校验（下载走 HTTPS）。' >&2
+    fi
+    # 先取一份发行版包，出问题能装回去。
+    apk fetch -o "$workdir" sing-box >/dev/null 2>&1 || true
+    if ! run_opkg add --allow-untrusted "$apkfile"; then
+        echo '安装上游 sing-box 包失败。' >&2
+        rollback_to_feed && echo '已回滚到发行版软件包。' >&2
+        return 1
+    fi
+    if [ "$(installed_base_version)" != "${tag#v}" ]; then
+        echo "安装后版本核对失败（期望 ${tag#v}，实际 $(installed_base_version)），正在回滚。" >&2
+        rollback_to_feed && echo '已回滚到发行版软件包。' >&2
+        return 1
+    fi
+    echo "sing-box 已更新到上游最新稳定版 ${tag#v}（$arch，来自官方 OpenWrt 包）。"
+    return 0
+}
+
 run_opkg update
-pkg_install kmod-nft-tproxy sing-box
+pkg_install kmod-nft-tproxy
+# sing-box 优先装上游最新稳定版（apk 固件 + 架构匹配）；任何失败都回退发行版软件包，
+# 保证「拿不到最新版」不会变成「装不上」。
+if install_latest_singbox; then
+    :
+else
+    pkg_install sing-box
+fi
 # TUN 模式需要 /dev/net/tun（OpenWrt 上通常由 kmod-tun 提供）。部分目标把 tun 编进内核、
 # 没有该包，因此这里尽力而为，失败不阻断安装。
 pkg_install kmod-tun >/dev/null 2>&1 || true

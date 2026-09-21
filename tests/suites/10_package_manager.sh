@@ -72,7 +72,9 @@ out=$(PATH="$APKONLY" run_with_timeout bash "$SCRIPTS/install_singbox.sh" 2>&1);
 assert_rc "$rc" 0 "apk 固件上安装脚本成功（不再中止初始化）"
 assert_not_contains "$out" "仅支持 OpenWrt" "不再误报「仅支持 OpenWrt。」"
 assert_grep '^apk update$' "$APK_LOG" "用 apk update 刷新索引"
-assert_grep '^apk add kmod-nft-tproxy sing-box$' "$APK_LOG" "用 apk add 安装依赖"
+# A-29：kmod 始终来自 feed；sing-box 先试上游最新版，取不到就回退 apk add sing-box。
+assert_grep '^apk add kmod-nft-tproxy$' "$APK_LOG" "用 apk add 安装 kmod-nft-tproxy（始终来自 feed）"
+assert_grep '^apk add sing-box$' "$APK_LOG" "取不到上游最新版时回退 apk add sing-box"
 assert_grep '^apk add kmod-tun$' "$APK_LOG" "用 apk add 安装 kmod-tun（TUN 模式）"
 assert_no_grep '^opkg ' "$OPKG_LOG" "apk 固件上不调用 opkg"
 assert_file /etc/init.d/sing-box "apk 固件上 init 脚本仍在位"
@@ -88,7 +90,9 @@ rm -f "$APK_LOG" "$OPKG_LOG"
 out=$(run_with_timeout bash "$SCRIPTS/install_singbox.sh" 2>&1); rc=$?
 assert_rc "$rc" 0 "opkg 固件上安装脚本成功"
 assert_grep '^opkg update$' "$OPKG_LOG" "老固件仍用 opkg update"
-assert_grep '^opkg install kmod-nft-tproxy sing-box$' "$OPKG_LOG" "老固件仍用 opkg install"
+# A-29：opkg 老固件不走上游 apk 路径（上游没有 .ipk），两个包都装 feed 版本。
+assert_grep '^opkg install kmod-nft-tproxy$' "$OPKG_LOG" "老固件用 opkg install 装 kmod-nft-tproxy"
+assert_grep '^opkg install sing-box$' "$OPKG_LOG" "老固件用 opkg install 装 sing-box"
 assert_grep '^opkg install kmod-tun$' "$OPKG_LOG" "老固件仍用 opkg install kmod-tun"
 assert_no_file "$APK_LOG" "老固件不会调用 apk"
 
