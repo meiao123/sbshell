@@ -236,10 +236,12 @@ GNU 专有选项黑名单、`timeout` 命令调用、`stat -c` 格式串白名�
 - **脚本与自更新**：直接读 `main`，既没有 `RELEASE` 指针，也没有提交 SHA 固定 —— 这是维护者
   选择的模型（`main` 是唯一在线更新源，避免"开发代码与发布指针分离"导致的一跳回退）。CI 会断言
   五个更新入口不出现 `BASE_REF`/`RELEASE_REF`/`resolve_release_ref`，且仓库里不存在 `RELEASE`。
-- **模板**：`README.md` 里的 5 条客户端模板直链固定到提交
-  `baf5d7ea412edff2318b6ae59154d5bd068c8bf6`（= 最后一次改动 `config_template/` 的提交）。
-  **模板内容一旦变更，必须同时前移这个引用**，否则用户拿到的是过期模板（历史上就发生过：
-  引用停在旧提交，而模板此后迁移了老式 DNS 写法）。
+- **模板**：5 份客户端模板就在 `config_template/`，由菜单选项直接选取。README 里那 5 条带提交号
+  的直链已**按用户要求删除**（2026-09-21），因此不再需要跟随「最后一次改动 `config_template/`
+  的提交」前移引用。历史教训仍然有效：模板内容变更后，任何指向模板的固定引用都要同步前移，
+  否则用户拿到的是过期模板（曾发生过：引用停在旧提交，而模板此后迁移了老式 DNS 写法）。
+  当前最后一次改动 `config_template/` 的提交是 `f5cbb006259cc409b79f83f7b151202de343a4e1`
+  （把 5 份模板的面板地址换成 zashboard v3.28.0 的 release 资产）。
 - **面板**：内置默认与本仓库 5 份客户端模板的 `external_ui_download_url` 都指向 zashboard 的
   **release 资产** `https://github.com/Zephyruso/zashboard/releases/download/v3.28.0/dist-cdn-fonts.zip`
   （带版本号、不可变，是上游官方发布的部署产物；实测解压后为单一 `dist/` 目录含 `index.html`，
