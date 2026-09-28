@@ -30,6 +30,10 @@ stop() {
 
 restart() {
     printf 'restart\n' >> "$S/initd.log" 2>/dev/null || true
+    if [ "${SBSHELL_INITD_FAIL:-0}" = 1 ]; then
+        echo "sing-box: injected restart failure" >&2
+        return 1
+    fi
     stop
     start
 }
