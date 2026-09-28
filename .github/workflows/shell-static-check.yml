@@ -49,18 +49,20 @@ jobs:
             echo "jq empty $f"
             jq empty "$f"
           done
-      - name: Verify update source is main
+      - name: Verify update source is pinned to main commit
         shell: bash
         run: |
           set -euo pipefail
           files=(sbshall.sh openwrt/menu.sh openwrt/update_scripts.sh)
           ! grep -nE 'BASE_REF|RELEASE_REF|RELEASE_DECL_URL|resolve_release_ref' "${files[@]}"
           ! grep -nE "download_repo_file ['\"]?RELEASE|['\"]RELEASE['\"]" "${files[@]}"
-          grep -q '"main"' sbshall.sh
-          # openwrt/menu.sh 的下载体已改成 download_repo_file "openwrt/$s" "main"，
-          # 字面量 "main/openwrt/" 不复存在：改为断言“下载 ref 是 main”。
-          grep -qE 'download_repo_file "openwrt/[^"]*" "main"' openwrt/menu.sh
-          grep -q '"main"' openwrt/update_scripts.sh
+          for file in "${files[@]}"; do
+            grep -q 'MAIN_REF="main"' "$file"
+            grep -q 'git/ref/heads/\$MAIN_REF' "$file"
+            ! grep -qE 'download_repo_file "openwrt/[^\"]*" "main"' "$file"
+            grep -qE 'archive/\$ref\.tar\.gz' "$file"
+          done
+          grep -q 'SBSHELL_PINNED_COMMIT="\$commit"' sbshall.sh
           test ! -e RELEASE
       - name: Verify SHA256SUMS matches the shipped OpenWrt scripts
         shell: bash
