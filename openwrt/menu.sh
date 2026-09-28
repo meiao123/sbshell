@@ -118,8 +118,16 @@ confirm_yes() {
 }
 
 uninstall_sbshell() {
-    echo -e "${YELLOW}此操作将卸载 Sbshell、sing-box、配置文件及其管理的防火墙状态。${NC}"
+    echo -e "${YELLOW}此操作将卸载 Sbshell。你可以选择同时卸载 sing-box，或只保留 sing-box 程序/软件包。${NC}"
     confirm_yes '确定要卸载 Sbshell 吗？' || { echo -e "${GREEN}已取消卸载。${NC}"; return 0; }
+
+    local keep_singbox=0
+    if confirm_yes '是否保留 sing-box 软件包及程序？'; then
+        keep_singbox=1
+        echo -e "${CYAN}已选择保留 sing-box：仅删除 Sbshell、配置/UI/状态等相关文件，不卸载 sing-box 软件包。${NC}"
+    else
+        echo -e "${CYAN}已选择完整卸载：Sbshell 与 sing-box 一并删除。${NC}"
+    fi
 
     echo -e "${CYAN}正在停止 sing-box 并清理防火墙...${NC}"
     if pidof sing-box >/dev/null 2>&1; then
@@ -135,21 +143,30 @@ uninstall_sbshell() {
         return 1
     fi
 
-    echo -e "${CYAN}正在卸载 sing-box 软件包及 Sbshell...${NC}"
-    if command -v opkg >/dev/null 2>&1; then
-        if opkg remove sing-box >/dev/null 2>&1; then
-            :
+    if [ "$keep_singbox" -eq 0 ]; then
+        echo -e "${CYAN}正在卸载 sing-box 软件包及 Sbshell...${NC}"
+        if command -v opkg >/dev/null 2>&1; then
+            if opkg remove sing-box >/dev/null 2>&1; then
+                :
+            else
+                echo -e "${YELLOW}sing-box 软件包当前无法卸载（可能被其他软件包依赖），已保留 sing-box，继续清理 Sbshell 文件。${NC}" >&2
+            fi
+        elif command -v apk >/dev/null 2>&1; then
+            if apk del sing-box >/dev/null 2>&1; then
+                :
+            else
+                echo -e "${YELLOW}sing-box 软件包当前无法卸载（可能被其他软件包依赖），已保留 sing-box，继续清理 Sbshell 文件。${NC}" >&2
+            fi
         else
-            echo -e "${YELLOW}sing-box 软件包当前无法卸载（可能被其他软件包依赖），已保留 sing-box，继续清理 Sbshell 文件。${NC}" >&2
-        fi
-    elif command -v apk >/dev/null 2>&1; then
-        if apk del sing-box >/dev/null 2>&1; then
-            :
-        else
-            echo -e "${YELLOW}sing-box 软件包当前无法卸载（可能被其他软件包依赖），已保留 sing-box，继续清理 Sbshell 文件。${NC}" >&2
+            echo -e "${YELLOW}未找到 opkg 或 apk，无法卸载 sing-box 软件包，继续清理 Sbshell 文件。${NC}" >&2
         fi
     else
-        echo -e "${YELLOW}未找到 opkg 或 apk，无法卸载 sing-box 软件包，继续清理 Sbshell 文件。${NC}" >&2
+        echo -e "${CYAN}保留 sing-box 软件包，跳过 sing-box 包卸载。${NC}"
+        # 配置目录马上会被删除；禁用 sing-box 自启动，避免下次开机时因缺少配置而失败。
+        if [ -x /etc/init.d/sing-box ]; then
+            /etc/init.d/sing-box disable >/dev/null 2>&1 || true
+        fi
+        rm -f /etc/rc.d/S99sing-box
     fi
 
     # A-20：/etc/cron.d/sbshell-ui 与 /etc/cron.d/sbshell-singbox 现在的版本已经不再创建
@@ -158,24 +175,23 @@ uninstall_sbshell() {
     rm -f /usr/local/bin/sb /usr/bin/sb /etc/cron.d/sbshell-ui /etc/cron.d/sbshell-singbox /etc/sing-box/update-ui.sh /etc/sing-box/update-singbox.sh
     rm -f /etc/crontabs/sbshell-ui 2>/dev/null || true
     if [ -f /etc/crontabs/root ]; then sed -i '/[[:space:]]# sbshell-singbox-auto-update$/d; /[[:space:]]# sbshell-ui-auto-update$/d' /etc/crontabs/root; fi
-    # 卸载后不能留下指向已删除脚本的开机启动项：/etc/sing-box 紧接着就会被删掉，
-    # 而 Sbshell 自己写的 /etc/init.d/sbshell-firewall（START=40）每次开机都会去执行
-    # 已经不存在的 manage_autostart.sh，在 init 日志里留下失败记录。
     if [ -f /etc/init.d/sbshell-firewall ]; then
         /etc/init.d/sbshell-firewall disable >/dev/null 2>&1 || true
     fi
     rm -f /etc/init.d/sbshell-firewall /etc/rc.d/S40sbshell-firewall
-    # sing-box 软件包确实已不在时，Sbshell 写过的 /etc/init.d/sing-box 与它的 rc.d 链接同样
-    # 指向不存在的二进制；包仍然存在时那属于包自己的文件，不能碰。
     if ! command -v sing-box >/dev/null 2>&1; then
         /etc/init.d/sing-box disable >/dev/null 2>&1 || true
         rm -f /etc/init.d/sing-box /etc/rc.d/S99sing-box
     fi
+
     rm -rf /etc/sing-box
-    echo -e "${GREEN}Sbshell 与 sing-box 配置目录已清理；若软件包存在依赖冲突，sing-box 软件包本身会继续保留。${NC}"
+    if [ "$keep_singbox" -eq 1 ]; then
+        echo -e "${GREEN}Sbshell 已卸载，sing-box 软件包/程序已保留；Sbshell 配置、UI、脚本、状态及自启动项已删除。${NC}"
+    else
+        echo -e "${GREEN}Sbshell 与 sing-box 配置目录已清理；若软件包存在依赖冲突，sing-box 软件包本身会继续保留。${NC}"
+    fi
     exit 0
 }
-
 # --- 下载内容完整性校验（A-12）：与 update_scripts.sh 里的同名函数逐字一致 ---
 verify_script_hashes() {
     # $1=清单路径 $2=脚本目录 $3=清单里的路径前缀（如 openwrt）

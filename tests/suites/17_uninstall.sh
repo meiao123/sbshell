@@ -85,7 +85,7 @@ suite_begin "uninstall: 停止 sing-box 失败时必须中止卸载"
 setup_uninstall_case
 printf '#!/bin/sh\nexit 1\n' > /etc/init.d/sing-box
 chmod 0755 /etc/init.d/sing-box
-run_uninstall 'y\n'; rc=$?
+run_uninstall 'y\ny\n'; rc=$?
 out=$(cat /tmp/u17.out)
 assert_contains "$out" "停止 sing-box 失败，已取消卸载" "停止失败时明确中止"
 assert_not_rc "$rc" 124 "停止失败路径没有挂住（未被超时杀掉）"
@@ -93,10 +93,28 @@ assert_not_rc "$rc" 0 "停止失败时返回非 0"
 assert_dir /etc/sing-box "停止失败后配置目录必须保留（否则留下半拆状态）"
 assert_file /etc/cron.d/sbshell-ui "停止失败后面板 cron 文件保留"
 
+# ------------------------------------------------------- 3) 保留 sing-box
+suite_begin "uninstall: 选择保留 sing-box 时删除 Sbshell 相关文件但不卸载 sing-box"
+
+setup_uninstall_case
+run_uninstall 'y\ny\n'; rc=$?
+out=$(cat /tmp/u17.out)
+assert_contains "$out" "保留 sing-box" "保留模式明确提示"
+assert_contains "$out" "Sbshell 已卸载，sing-box 软件包/程序已保留" "保留模式完成提示"
+assert_rc "$rc" 0 "保留模式返回 0"
+assert_not_rc "$rc" 124 "保留模式没有挂住"
+assert_no_file /etc/sing-box "保留模式仍删除 Sbshell 配置目录和脚本"
+assert_no_file /etc/init.d/sbshell-firewall "保留模式删除 Sbshell 防火墙 init"
+assert_no_file /etc/rc.d/S40sbshell-firewall "保留模式删除 Sbshell 防火墙启动链接"
+assert_file /etc/init.d/sing-box "保留模式保留 sing-box 自己的 init 脚本"
+assert_no_file /etc/rc.d/S99sing-box "保留模式禁用 sing-box 自启动，避免无配置启动"
+assert_no_file /etc/cron.d/sbshell-ui "保留模式删除旧版面板 cron"
+assert_no_grep 'sbshell-ui-auto-update' /etc/crontabs/root "保留模式删除 crontab 中的 Sbshell 条目"
+
 # ------------------------------------------------------- 3) 正常卸载
 suite_begin "uninstall: 正常卸载要清干净且不误删无关文件"
 setup_uninstall_case
-run_uninstall 'y\n'; rc=$?
+run_uninstall 'y\nn\n'; rc=$?
 out=$(cat /tmp/u17.out)
 assert_contains "$out" "TProxy 防火墙状态已清理" "TProxy 表删除路径真的执行了"
 assert_rc "$rc" 0 "正常卸载返回 0"
