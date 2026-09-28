@@ -32,15 +32,15 @@ if ! command -v install >/dev/null 2>&1; then
 fi
 
 # 固定更新版本：先解析 main 当前 commit，再让本次更新全部绑定到该 commit。
-export REPO_RAW="\${REPO_RAW:-https://raw.githubusercontent.com/meiao123/sbshell}"
+export REPO_RAW="${REPO_RAW:-https://raw.githubusercontent.com/meiao123/sbshell}"
 MAIN_REF="main"
 GITHUB_API_BASE="https://api.github.com/repos/meiao123/sbshell"
 resolve_main_commit() {
     local ref_file main_match main_sha
-    case "\${SBSHELL_PINNED_COMMIT:-}" in
+    case "${SBSHELL_PINNED_COMMIT:-}" in
         ''|*[!0-9a-fA-F]*) ;;
         *)
-            if [ "\${#SBSHELL_PINNED_COMMIT}" -eq 40 ]; then
+            if [ "${#SBSHELL_PINNED_COMMIT}" -eq 40 ]; then
                 printf '%s\n' "$SBSHELL_PINNED_COMMIT"; unset SBSHELL_PINNED_COMMIT; return 0
             fi ;;
     esac
@@ -53,7 +53,7 @@ resolve_main_commit() {
     main_match=$(grep -m1 -oE '"sha"[[:space:]]*:[[:space:]]*"[0-9a-fA-F]{40}"' "$ref_file" 2>/dev/null || true)
     rm -f "$ref_file"
     main_sha=$(printf '%s\n' "$main_match" | sed -n 's/.*"\([0-9a-fA-F]\{40\}\)".*/\1/p')
-    if [ -z "$main_sha" ] || [ "\${#main_sha}" -ne 40 ]; then return 1; fi
+    if [ -z "$main_sha" ] || [ "${#main_sha}" -ne 40 ]; then return 1; fi
     case "$main_sha" in *[!0-9a-fA-F]*) return 1;; esac
     printf '%s\n' "$main_sha"
 }
@@ -75,7 +75,7 @@ github_archive_download() {
     [ -s "$archive" ] || { rm -f "$archive"; return 1; }
     list=$(mktemp /tmp/sbshell-archive-list.XXXXXX) || { rm -f "$archive"; return 1; }
     if ! tar -tzf "$archive" > "$list" 2>/dev/null; then rm -f "$archive" "$list"; return 1; fi
-    first=$(head -n1 "$list") || true; prefix=\${first%%/*}; rm -f "$list"
+    first=$(head -n1 "$list") || true; prefix=${first%%/*}; rm -f "$list"
     [ -n "$prefix" ] || { rm -f "$archive"; return 1; }
     entry="$prefix/$path"
     case "$entry" in *..*|/*) rm -f "$archive"; return 1;; esac
@@ -120,9 +120,9 @@ download_bootstrap_menu() {
             download_repo_file "SHA256SUMS" "$commit" "$manifest_output" "$transport" &&
             verify_manifest_entry "$manifest_output" "openwrt/menu.sh" "$menu_output"; then return 0; fi
         case "$transport" in
-            raw) echo -e "\${YELLOW}Raw 下载内容校验失败或不可用，切换 GitHub Contents API。\${NC}" >&2 ;;
-            api) echo -e "\${YELLOW}GitHub Contents API 下载内容校验失败或不可用，切换 commit archive。\${NC}" >&2 ;;
-            archive) echo -e "\${RED}GitHub commit archive 下载内容校验仍然失败。\${NC}" >&2 ;;
+            raw) echo -e "${YELLOW}Raw 下载内容校验失败或不可用，切换 GitHub Contents API。${NC}" >&2 ;;
+            api) echo -e "${YELLOW}GitHub Contents API 下载内容校验失败或不可用，切换 commit archive。${NC}" >&2 ;;
+            archive) echo -e "${RED}GitHub commit archive 下载内容校验仍然失败。${NC}" >&2 ;;
         esac
     done
     return 1
