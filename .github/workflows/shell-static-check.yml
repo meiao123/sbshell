@@ -63,6 +63,13 @@ jobs:
             grep -qE 'archive/\$ref\.tar\.gz' "$file"
           done
           grep -q 'SBSHELL_PINNED_COMMIT="\$commit"' sbshall.sh
+          # set -u（-Eeuo pipefail）下引用未定义变量会立刻终止脚本；bash -n 只查语法、
+          # ShellCheck 的 SC2154 又是非阻断的 warning，所以这里显式盯住这几个常量：
+          # 9dd26ab 漏掉 CYAN 与 SCRIPT_DIR，真机引导脚本与菜单「更新脚本」直接 unbound variable 退出。
+          grep -qF "CYAN='\033" sbshall.sh
+          ! grep -q 'rm -f "\$tmp"' sbshall.sh
+          grep -q '^SCRIPT_DIR=' openwrt/update_scripts.sh
+          grep -qE '^(CYAN|GREEN|RED|YELLOW|NC)=' openwrt/update_scripts.sh
           test ! -e RELEASE
       - name: Verify SHA256SUMS matches the shipped OpenWrt scripts
         shell: bash
