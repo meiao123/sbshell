@@ -6,6 +6,10 @@ S=${SBSHELL_STUB_STATE:-/tmp/sbshell-stub-state}
 start() {
     mkdir -p "$S" 2>/dev/null || true
     printf 'start\n' >> "$S/initd.log" 2>/dev/null || true
+    if [ "${SBSHELL_INITD_FAIL:-0}" = 1 ]; then
+        echo "sing-box: injected restart failure" >&2
+        return 1
+    fi
     if [ ! -s /etc/sing-box/config.json ]; then
         echo "sing-box: no config" >&2
         return 1
