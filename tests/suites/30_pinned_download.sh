@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 30_pinned_download.sh —— 回归：更新前先解析 main commit，整个下载/校验批次固定到该 commit。
 set -uo pipefail
-. "$(dirname "\${BASH_SOURCE[0]}")/../lib/harness.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/../lib/harness.sh"
 suite_begin "pinned update flow: main -> commit SHA -> download -> hash verify -> API/archive fallback"
 for f in sbshall.sh openwrt/menu.sh openwrt/update_scripts.sh; do
     assert_grep '^resolve_main_commit() {' "$SBSHELL_SRC/$f" "$f 实现 main commit SHA 解析"
