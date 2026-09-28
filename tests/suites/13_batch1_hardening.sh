@@ -68,6 +68,14 @@ assert_eq "$(probe "warn_plaintext_http 'http://localhost:5000/x'" 2>&1)" "" "lo
 assert_contains "$(probe "warn_plaintext_http 'http://192.168.8.9:5000/x'" 2>&1)" "使用明文 HTTP" \
     "非回环 http 提示风险"
 assert_eq "$(probe "warn_plaintext_http 'https://example.test/x'" 2>&1)" "" "https 不提示"
+for f in manual_input.sh manual_update.sh set_defaults.sh; do
+    helper=$(mktemp)
+    awk '/^valid_url\(\)/{p=1} p{print} p&&/^\}$/{if (++n==2) exit}' "$SRC/openwrt/$f" > "$helper"
+    warning_out=$( ( . "$helper"; warn_plaintext_http 'http://192.168.8.9:5000/config/SECRET-TOKEN&file=https://tpl.test/template.json' ) 2>&1 )
+    assert_contains "$warning_out" "使用明文 HTTP" "$f 的明文 HTTP 提示仍然存在"
+    assert_not_contains "$warning_out" "SECRET-TOKEN" "$f 的明文 HTTP 提示不得泄露订阅 token"
+    rm -f "$helper"
+done
 # 提示不改变退出码（调用方不会因为它而失败）
 probe "warn_plaintext_http 'http://192.168.8.9:5000/x'" >/dev/null 2>&1
 assert_rc "$?" 0 "明文提示不影响调用方退出码"
