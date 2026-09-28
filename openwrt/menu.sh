@@ -38,15 +38,15 @@ SCRIPT_DIR=/etc/sing-box/scripts
 INITIALIZED_FILE="$SCRIPT_DIR/.initialized"
 
 # 固定更新版本：先解析 main 当前 commit，再让本次更新全部绑定到该 commit。
-export REPO_RAW="\${REPO_RAW:-https://raw.githubusercontent.com/meiao123/sbshell}"
+export REPO_RAW="${REPO_RAW:-https://raw.githubusercontent.com/meiao123/sbshell}"
 MAIN_REF="main"
 GITHUB_API_BASE="https://api.github.com/repos/meiao123/sbshell"
 resolve_main_commit() {
     local ref_file main_match main_sha
-    case "\${SBSHELL_PINNED_COMMIT:-}" in
+    case "${SBSHELL_PINNED_COMMIT:-}" in
         ''|*[!0-9a-fA-F]*) ;;
         *)
-            if [ "\${#SBSHELL_PINNED_COMMIT}" -eq 40 ]; then
+            if [ "${#SBSHELL_PINNED_COMMIT}" -eq 40 ]; then
                 printf '%s\n' "$SBSHELL_PINNED_COMMIT"; unset SBSHELL_PINNED_COMMIT; return 0
             fi ;;
     esac
@@ -59,7 +59,7 @@ resolve_main_commit() {
     main_match=$(grep -m1 -oE '"sha"[[:space:]]*:[[:space:]]*"[0-9a-fA-F]{40}"' "$ref_file" 2>/dev/null || true)
     rm -f "$ref_file"
     main_sha=$(printf '%s\n' "$main_match" | sed -n 's/.*"\([0-9a-fA-F]\{40\}\)".*/\1/p')
-    if [ -z "$main_sha" ] || [ "\${#main_sha}" -ne 40 ]; then return 1; fi
+    if [ -z "$main_sha" ] || [ "${#main_sha}" -ne 40 ]; then return 1; fi
     case "$main_sha" in *[!0-9a-fA-F]*) return 1;; esac
     printf '%s\n' "$main_sha"
 }
@@ -81,7 +81,7 @@ github_archive_download() {
     [ -s "$archive" ] || { rm -f "$archive"; return 1; }
     list=$(mktemp /tmp/sbshell-archive-list.XXXXXX) || { rm -f "$archive"; return 1; }
     if ! tar -tzf "$archive" > "$list" 2>/dev/null; then rm -f "$archive" "$list"; return 1; fi
-    first=$(head -n1 "$list") || true; prefix=\${first%%/*}; rm -f "$list"
+    first=$(head -n1 "$list") || true; prefix=${first%%/*}; rm -f "$list"
     [ -n "$prefix" ] || { rm -f "$archive"; return 1; }
     entry="$prefix/$path"
     case "$entry" in *..*|/*) rm -f "$archive"; return 1;; esac
@@ -231,7 +231,7 @@ verify_manifest_entry() {
 
 download_script_batch() {
     local commit="$1" transport="$2" tmp_dir="$3" s
-    for s in "\${SCRIPTS[@]}"; do
+    for s in "${SCRIPTS[@]}"; do
         rm -f "$tmp_dir/$s"
         download_repo_file "openwrt/$s" "$commit" "$tmp_dir/$s" "$transport" || return 1
         [ -s "$tmp_dir/$s" ] || return 1
@@ -249,27 +249,27 @@ update_scripts() {
     backup=$(mktemp -d /tmp/sbshell-openwrt-backup.XXXXXX) || { rm -rf "$tmp"; return 1; }
     restore_scripts() {
         local item
-        for item in "\${backed_up[@]}"; do install -o root -g root -m 0755 "$backup/$item" "$SCRIPT_DIR/$item" || true; done
+        for item in "${backed_up[@]}"; do install -o root -g root -m 0755 "$backup/$item" "$SCRIPT_DIR/$item" || true; done
     }
-    commit=$(resolve_main_commit) || { echo -e "\${RED}无法获取 main 当前 commit SHA，已中止更新（无法安全固定版本）。\${NC}" >&2; rm -rf "$tmp" "$backup"; return 1; }
-    echo -e "\${CYAN}本次脚本更新已固定到 main commit: $commit\${NC}"
+    commit=$(resolve_main_commit) || { echo -e "${RED}无法获取 main 当前 commit SHA，已中止更新（无法安全固定版本）。${NC}" >&2; rm -rf "$tmp" "$backup"; return 1; }
+    echo -e "${CYAN}本次脚本更新已固定到 main commit: $commit${NC}"
     for transport in raw api archive; do
         rm -rf "$tmp"; mkdir -p "$tmp" || return 1
         if download_script_batch "$commit" "$transport" "$tmp"; then verified=1; break; fi
         case "$transport" in
-            raw) echo -e "\${YELLOW}Raw 下载失败或完整性校验失败，切换 GitHub Contents API。\${NC}" >&2 ;;
-            api) echo -e "\${YELLOW}GitHub Contents API 下载失败或完整性校验失败，切换 commit archive。\${NC}" >&2 ;;
-            archive) echo -e "\${RED}GitHub commit archive 下载或完整性校验仍然失败。\${NC}" >&2 ;;
+            raw) echo -e "${YELLOW}Raw 下载失败或完整性校验失败，切换 GitHub Contents API。${NC}" >&2 ;;
+            api) echo -e "${YELLOW}GitHub Contents API 下载失败或完整性校验失败，切换 commit archive。${NC}" >&2 ;;
+            archive) echo -e "${RED}GitHub commit archive 下载或完整性校验仍然失败。${NC}" >&2 ;;
         esac
     done
     if [ "$verified" -ne 1 ]; then rm -rf "$tmp" "$backup"; return 1; fi
-    for s in "\${SCRIPTS[@]}"; do
+    for s in "${SCRIPTS[@]}"; do
         if [ -f "$SCRIPT_DIR/$s" ]; then
-            if ! cp -a "$SCRIPT_DIR/$s" "$backup/$s"; then echo -e "\${RED}备份 $s 失败，已中止更新（现有安装保持不变）。\${NC}" >&2; rm -rf "$tmp" "$backup"; return 1; fi
+            if ! cp -a "$SCRIPT_DIR/$s" "$backup/$s"; then echo -e "${RED}备份 $s 失败，已中止更新（现有安装保持不变）。${NC}" >&2; rm -rf "$tmp" "$backup"; return 1; fi
             backed_up+=("$s")
         fi
     done
-    for s in "\${SCRIPTS[@]}"; do
+    for s in "${SCRIPTS[@]}"; do
         if ! install -o root -g root -m 0755 "$tmp/$s" "$SCRIPT_DIR/$s"; then restore_scripts; rm -rf "$tmp" "$backup"; return 1; fi
     done
     rm -rf "$tmp" "$backup"
