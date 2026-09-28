@@ -252,7 +252,9 @@ cleanup_legacy_ui_automation() {
         changed=1
     fi
     if [ "$changed" -eq 1 ] && [ -x /etc/init.d/cron ]; then
-        /etc/init.d/cron restart >/dev/null 2>&1 || true
+        if ! /etc/init.d/cron restart >/dev/null 2>&1; then
+            echo -e "${YELLOW}警告：清理旧版 Sbshell UI 定时任务后，cron 重启失败；请手动执行 /etc/init.d/cron restart。${NC}" >&2
+        fi
     fi
     if [ -f /etc/sing-box/update-ui.sh ] &&
        grep -Eq 'external_ui|ZASHBOARD_RELEASE_API|METACUBEXD_URL|YACD_URL' /etc/sing-box/update-ui.sh 2>/dev/null; then
