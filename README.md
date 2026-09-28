@@ -14,7 +14,7 @@ Sbshell 是一款针对 官方sing-box 的辅助运行脚本，旨在让官方si
 - **在线更新**：支持脚本在线更新，始终保持最新版本。
 - **代码来源**：一键安装与脚本自更新直接使用 `main` 分支当前代码，不再使用 `RELEASE` 发布指针；`main` 是唯一的在线更新源。
 - **完整性校验**：每次自更新都会先取仓库根的 `SHA256SUMS`，逐文件核对 SHA-256 后才安装；校验失败即中止并保留现有安装。设备上没有 `sha256sum`（精简 busybox）时会打印警告并跳过校验。
-- **面板更新**：支持clash系面板在线更新/切换。
+- **面板适配**：优先适配 sing-box 1.14+ 原生 API + Dashboard；旧版 `experimental.clash_api` 的 Zashboard/MetaCubeXD/YACD 管理仍保留，仅在旧配置下启用。
 
 
 ## 设备支持：
@@ -40,11 +40,12 @@ bash <(curl -sL https://raw.githubusercontent.com/meiao123/sbshell/refs/heads/ma
 - **不含服务端搭建**：服务端配置生成脚本（`gen_server_config.sh`）与 `config_template/server/`
   已随 Debian/Ubuntu 支持一并移除。本仓库只管理客户端；如需服务端，请按 sing-box
   官方文档自行编写配置，并在写入前用 `sing-box check` 校验。
-- **控制面板默认只监听本机**：客户端模板的 `clash_api.external_controller` 为
-  `127.0.0.1:9095`、`secret` 为空。需要从局域网访问面板时，请自行改成 `0.0.0.0:9095`
-  并**同时设置一个随机 `secret`**，否则同网段任何人都能控制代理；更安全的做法是保持本机
-  监听并用 SSH 端口转发。
-- **面板下载地址**：默认 UI **不固定版本** —— 安装时会查询 zashboard 的最新 release
+- **当前控制面板（sing-box 1.14+）**：当前 TUN 配置使用 `services[].type=api`，监听 `9090`，
+  Dashboard 由 sing-box 原生提供在 `/dashboard/`，并由 `dashboard.update_interval` 管理更新；默认未填写
+  时 sing-box 使用 `1d`。当前示例配置监听 `0.0.0.0:9090` 且 `secret` 为空，**这会关闭 API 身份认证**，
+  不建议直接暴露给不可信网络。需要局域网访问时，请设置随机 `secret`；更严格时将 `listen` 改为
+  `127.0.0.1` 并通过 SSH 端口转发访问。旧版 `experimental.clash_api` 仍可由 Sbshell 兼容处理。
+- **旧版 Clash UI 下载地址**：仅当配置仍使用 `experimental.clash_api.external_ui` 时，默认 UI **不固定版本** —— 安装时会查询 zashboard 的最新 release
   （`/releases/latest` 自动排除 prerelease），优先取其中的 `dist-cdn-fonts.zip`（没有则取任意
   `dist-*.zip`）；查询失败或没有合适资产时回退到内置的固定地址，保证「拿不到最新版」不会变成
   「装不上」。**注意**：配置里的 `external_ui_download_url` 会**优先于**这套自动解析被“默认 UI”
@@ -57,9 +58,8 @@ bash <(curl -sL https://raw.githubusercontent.com/meiao123/sbshell/refs/heads/ma
   UI 更新后若打开是空白（但标题栏有内容），请在浏览器里对 `http://<路由器IP>:9095/ui/` 注销
   Service Worker 并清掉该站点的 Cache Storage（或先用无痕窗口验证）—— 这属于浏览器端缓存，
   不是路由器配置问题；每次更新 UI 后都可能需要做一次。
-- **缓存文件**：配置里的 `cache_file` 指向 `/etc/sing-box/cache.db`。服务以 `sing-box`
-  用户运行而该目录属主是 root，安装脚本会预创建该文件并交给 `sing-box` 用户；手工替换
-  配置时请保留这个前提（或改到 `/var/lib/sing-box/`）。
+- **缓存文件**：缓存文件默认仍使用 `/etc/sing-box/cache.db`。当前 1.14+ TUN 模板启用 `cache_file.store_dns`；
+  旧版模板还可能使用 `store_fakeip`。服务以 `sing-box` 用户运行时，请保留缓存文件的可写权限前提。
 - **开机自启动**：nftables 规则不跨重启保留，由 `/etc/init.d/sbshell-firewall` 恢复
   （启用自启动时自动安装），不需要手工重新下发规则；卸载会一并注销该启动项。
 - **锁与状态文件**：配置/面板/脚本更新分别用 `/tmp/sbshell-*.lock` 互斥，进程被强杀时下一次

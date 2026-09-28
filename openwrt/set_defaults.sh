@@ -48,6 +48,7 @@ fi
 
 [ "$(id -u)" -eq 0 ] || { echo '请以 root 运行。' >&2; exit 1; }
 DEFAULTS_FILE=/etc/sing-box/defaults.conf
+DEFAULT_TUN_TEMPLATE_URL="https://raw.githubusercontent.com/meiao123/public/refs/heads/main/singbox/configuration/1.2.x/config_sb_Tun_fakeip.json"
 install -d -m 0755 /etc/sing-box
 get_default() { awk -F= -v k="$1" '$1 == k {sub(/^[^=]*=/, ""); print; exit}' "$DEFAULTS_FILE" 2>/dev/null || true; }
 valid_url() { [[ "$1" =~ ^https?://[^[:space:]]+$ ]]; }
@@ -76,6 +77,7 @@ read -rp "请输入后端地址: " BACKEND_URL; BACKEND_URL=${BACKEND_URL:-$(get
 read -rp "请输入订阅地址: " SUBSCRIPTION_URL; SUBSCRIPTION_URL=${SUBSCRIPTION_URL:-$(get_default SUBSCRIPTION_URL)}
 read -rp "请输入TProxy配置文件地址: " TPROXY_TEMPLATE_URL; TPROXY_TEMPLATE_URL=${TPROXY_TEMPLATE_URL:-$(get_default TPROXY_TEMPLATE_URL)}
 read -rp "请输入TUN配置文件地址: " TUN_TEMPLATE_URL; TUN_TEMPLATE_URL=${TUN_TEMPLATE_URL:-$(get_default TUN_TEMPLATE_URL)}
+TUN_TEMPLATE_URL=${TUN_TEMPLATE_URL:-$DEFAULT_TUN_TEMPLATE_URL}
 
 for value in "$BACKEND_URL" "$TPROXY_TEMPLATE_URL" "$TUN_TEMPLATE_URL"; do
     [ -z "$value" ] || valid_url "$value" || { echo '所有配置 URL 必须是 http:// 或 https:// 的地址。' >&2; exit 1; }

@@ -55,6 +55,7 @@ CONFIG_FILE=/etc/sing-box/config.json
 BACKUP_FILE=/etc/sing-box/config.json.bak
 MODE_FILE=/etc/sing-box/mode.conf
 LOCK_DIR=/tmp/sbshell-config.lock
+DEFAULT_TUN_TEMPLATE_URL="https://raw.githubusercontent.com/meiao123/public/refs/heads/main/singbox/configuration/1.2.x/config_sb_Tun_fakeip.json"
 LOCK_TIMEOUT=900
 # 先提权再建临时目录（exec 不触发 EXIT trap）。
 [ "$(id -u)" -eq 0 ] || exec sudo bash "$0" "$@"
@@ -156,7 +157,7 @@ prompt_user_input() {
         if [ -z "$TEMPLATE_URL" ]; then
             case "$MODE" in
                 TProxy) TEMPLATE_URL=$(read_value TPROXY_TEMPLATE_URL "$DEFAULTS_FILE");;
-                TUN) TEMPLATE_URL=$(read_value TUN_TEMPLATE_URL "$DEFAULTS_FILE");;
+                TUN) TEMPLATE_URL=$(read_value TUN_TEMPLATE_URL "$DEFAULTS_FILE"); TEMPLATE_URL=${TEMPLATE_URL:-$DEFAULT_TUN_TEMPLATE_URL};;
                 *) echo -e "${RED}未知模式，无法从默认值读取配置文件地址。${NC}" >&2; return 1;;
             esac
         fi

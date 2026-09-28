@@ -144,6 +144,9 @@ install_latest_singbox() {
 
 run_opkg update
 pkg_install kmod-nft-tproxy
+# TUN auto_redirect 在 Linux 上使用 nftables + NFQUEUE 做预匹配；OpenWrt 官方 sing-box 包
+# 也将 kmod-nft-queue 作为依赖。自装上游 .apk 时同样显式确保该能力存在。
+pkg_install kmod-nft-queue || true
 # sing-box 优先装上游最新稳定版（apk 固件 + 架构匹配）；任何失败都回退发行版软件包，
 # 保证「拿不到最新版」不会变成「装不上」。
 if install_latest_singbox; then

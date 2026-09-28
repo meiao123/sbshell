@@ -55,6 +55,7 @@ DEFAULTS_FILE=/etc/sing-box/defaults.conf
 CONFIG_FILE=/etc/sing-box/config.json
 MODE_FILE=/etc/sing-box/mode.conf
 LOCK_DIR=/tmp/sbshell-config.lock
+DEFAULT_TUN_TEMPLATE_URL="https://raw.githubusercontent.com/meiao123/public/refs/heads/main/singbox/configuration/1.2.x/config_sb_Tun_fakeip.json"
 LOCK_TIMEOUT=900
 
 [ "$(id -u)" -eq 0 ] || exec sudo bash "$0" "$@"
@@ -177,7 +178,7 @@ while true; do
     if [ -z "$TEMPLATE_URL" ]; then
         case "$MODE" in
             TProxy) TEMPLATE_URL=$(get_default TPROXY_TEMPLATE_URL) ;;
-            TUN) TEMPLATE_URL=$(get_default TUN_TEMPLATE_URL) ;;
+            TUN) TEMPLATE_URL=$(get_default TUN_TEMPLATE_URL); TEMPLATE_URL=${TEMPLATE_URL:-$DEFAULT_TUN_TEMPLATE_URL} ;;
             *) echo -e "${RED}未知的模式: $MODE${NC}"; exit 1 ;;
         esac
     fi

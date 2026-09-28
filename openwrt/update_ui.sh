@@ -177,6 +177,89 @@ warn_pwa_cache_hint() {
 SINGBOX_INITD=/etc/init.d/sing-box
 CONFIG_FILE=/etc/sing-box/config.json
 
+# sing-box 1.14+ 的 API service 已经内置 Dashboard，不再使用旧的
+# experimental.clash_api/external_ui 机制。当前仓库的主 TUN 配置采用：
+#   services[].type=api -> /dashboard/
+# 因此优先识别新格式，旧配置仍保留下面原有的 Zashboard/MetaCubeXD/YACD 路径。
+api_service_block() {
+    [ -s "$CONFIG_FILE" ] || return 1
+    sed -n '/"type"[[:space:]]*:[[:space:]]*"api"/,/^[[:space:]]*}[,]*[[:space:]]*$/p' "$CONFIG_FILE" 2>/dev/null | head -n 80
+}
+api_string_value() {
+    local key="$1"
+    api_service_block | sed -n "s/.*\"$key\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" | head -n1
+}
+api_number_value() {
+    local key="$1"
+    api_service_block | sed -n "s/.*\"$key\"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p" | head -n1
+}
+api_dashboard_enabled() {
+    local block
+    block=$(api_service_block 2>/dev/null || true)
+    [ -n "$block" ] || return 1
+    printf '%s\n' "$block" | grep -Eq '"dashboard"[[:space:]]*:' || return 1
+    printf '%s\n' "$block" | grep -Eq '"enabled"[[:space:]]*:[[:space:]]*true' || return 1
+}
+api_dashboard_configured() {
+    api_dashboard_enabled
+}
+api_dashboard_status() {
+    local listen port secret interval probe_host url code
+    listen=$(api_string_value listen)
+    port=$(api_number_value listen_port)
+    secret=$(api_string_value secret)
+    interval=$(api_string_value update_interval)
+    interval=${interval:-1d}
+
+    if [ -z "$listen" ] || [ -z "$port" ]; then
+        echo -e "${YELLOW}检测到 API service，但无法解析 listen/listen_port。请运行 sing-box check 检查配置。${NC}" >&2
+        return 0
+    fi
+
+    echo -e "${CYAN}当前使用 sing-box 1.14+ API + Dashboard，不再需要旧版 Clash UI 下载器。${NC}"
+    echo "API 监听: $listen:$port"
+    echo "Dashboard: http://$listen:$port/dashboard/"
+    echo "Dashboard 自动更新间隔: $interval"
+
+    case "$listen" in
+        127.0.0.1|localhost|'::1'|'[::1]') probe_host=127.0.0.1 ;;
+        0.0.0.0|'::'|'[::]') probe_host=127.0.0.1 ;;
+        *) probe_host="$listen" ;;
+    esac
+
+    if [ -z "$secret" ]; then
+        case "$listen" in
+            127.0.0.1|localhost|'::1'|'[::1]') ;;
+            *) echo -e "${RED}安全警告：API 当前不是仅本机监听，但 secret 为空，API 身份认证处于关闭状态。请设置随机 secret，或把 listen 改为 127.0.0.1。${NC}" >&2 ;;
+        esac
+    fi
+
+    url="http://$probe_host:$port/dashboard/"
+    code=$(curl --silent --show-error --location --proto '=http,https' --connect-timeout 3 --max-time 5 -o /dev/null -w '%{http_code}' "$url" 2>/dev/null) || true
+    case "$code" in
+        2*|3*) echo -e "${GREEN}Dashboard 正在响应：$url${NC}" ;;
+        ''|000) echo -e "${YELLOW}Dashboard 当前无响应：$url（可能是 sing-box 尚未启动）${NC}" >&2 ;;
+        *) echo -e "${YELLOW}Dashboard HTTP 状态：$code，URL：$url${NC}" >&2 ;;
+    esac
+    return 0
+}
+cleanup_legacy_ui_automation() {
+    # 新 API Dashboard 自己管理 dashboard 文件和 update_interval；旧 Sbshell cron 不能继续
+    # 根据 external_ui/zashboard 去覆盖或下载另一套面板。
+    local changed=0
+    if [ -f "$CRON_FILE" ] && grep -q "$CRON_MARK" "$CRON_FILE"; then
+        sed -i "/[[:space:]]$CRON_MARK\$/d" "$CRON_FILE"
+        changed=1
+    fi
+    if [ "$changed" -eq 1 ] && [ -x /etc/init.d/cron ]; then
+        /etc/init.d/cron restart >/dev/null 2>&1 || true
+    fi
+    if [ -f /etc/sing-box/update-ui.sh ] &&
+       grep -Eq 'external_ui|ZASHBOARD_RELEASE_API|METACUBEXD_URL|YACD_URL' /etc/sing-box/update-ui.sh 2>/dev/null; then
+        rm -f /etc/sing-box/update-ui.sh
+    fi
+}
+
 config_value() { sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" "$CONFIG_FILE" 2>/dev/null | head -n1; }
 
 # 打印本机探测 URL（http://<host>:<port>/ui/index.html）。
@@ -542,6 +625,12 @@ touch "$CRON_FILE"; sed -i "/[[:space:]]$CRON_MARK\$/d" "$CRON_FILE"; printf '%s
             fi
 echo -e "${GREEN}UI 自动更新已设置。${NC}"
 }
+if api_dashboard_configured; then
+    cleanup_legacy_ui_automation
+    api_dashboard_status
+    exit 0
+fi
+
 while true; do
     echo -e "${CYAN}======== Sbshell UI 管理菜单 ========${NC}"
     echo '1. 默认 UI'
