@@ -31,15 +31,15 @@ if ! command -v install >/dev/null 2>&1; then
     }
 fi
 # 固定更新版本：先解析 main 当前 commit，再让本次更新全部绑定到该 commit。
-export REPO_RAW="\${REPO_RAW:-https://raw.githubusercontent.com/meiao123/sbshell}"
+export REPO_RAW="${REPO_RAW:-https://raw.githubusercontent.com/meiao123/sbshell}"
 MAIN_REF="main"
 GITHUB_API_BASE="https://api.github.com/repos/meiao123/sbshell"
 resolve_main_commit() {
     local ref_file main_match main_sha
-    case "\${SBSHELL_PINNED_COMMIT:-}" in
+    case "${SBSHELL_PINNED_COMMIT:-}" in
         ''|*[!0-9a-fA-F]*) ;;
         *)
-            if [ "\${#SBSHELL_PINNED_COMMIT}" -eq 40 ]; then
+            if [ "${#SBSHELL_PINNED_COMMIT}" -eq 40 ]; then
                 printf '%s\n' "$SBSHELL_PINNED_COMMIT"; unset SBSHELL_PINNED_COMMIT; return 0
             fi ;;
     esac
@@ -52,7 +52,7 @@ resolve_main_commit() {
     main_match=$(grep -m1 -oE '"sha"[[:space:]]*:[[:space:]]*"[0-9a-fA-F]{40}"' "$ref_file" 2>/dev/null || true)
     rm -f "$ref_file"
     main_sha=$(printf '%s\n' "$main_match" | sed -n 's/.*"\([0-9a-fA-F]\{40\}\)".*/\1/p')
-    if [ -z "$main_sha" ] || [ "\${#main_sha}" -ne 40 ]; then return 1; fi
+    if [ -z "$main_sha" ] || [ "${#main_sha}" -ne 40 ]; then return 1; fi
     case "$main_sha" in *[!0-9a-fA-F]*) return 1;; esac
     printf '%s\n' "$main_sha"
 }
@@ -74,7 +74,7 @@ github_archive_download() {
     [ -s "$archive" ] || { rm -f "$archive"; return 1; }
     list=$(mktemp /tmp/sbshell-archive-list.XXXXXX) || { rm -f "$archive"; return 1; }
     if ! tar -tzf "$archive" > "$list" 2>/dev/null; then rm -f "$archive" "$list"; return 1; fi
-    first=$(head -n1 "$list") || true; prefix=\${first%%/*}; rm -f "$list"
+    first=$(head -n1 "$list") || true; prefix=${first%%/*}; rm -f "$list"
     [ -n "$prefix" ] || { rm -f "$archive"; return 1; }
     entry="$prefix/$path"
     case "$entry" in *..*|/*) rm -f "$archive"; return 1;; esac
@@ -155,7 +155,7 @@ verify_script_hashes() {
 # A-18：先装清理 trap（不引用尚未赋值的变量），再逐个创建并检查临时目录。
 download_script_batch() {
     local commit="$1" transport="$2" tmp_dir="$3" script
-    for script in "\${SCRIPTS[@]}"; do
+    for script in "${SCRIPTS[@]}"; do
         rm -f "$tmp_dir/$script"
         download_repo_file "openwrt/$script" "$commit" "$tmp_dir/$script" "$transport" || return 1
         [ -s "$tmp_dir/$script" ] || return 1
@@ -180,29 +180,29 @@ install -d -m 0755 "$SCRIPT_DIR"
 # 取锁失败（另一个入口正在更新）就退出，绝不与它交错写入。
 acquire_scripts_lock || exit 1
 SCRIPTS=(check_environment.sh install_singbox.sh manual_input.sh manual_update.sh auto_update.sh configure_tproxy.sh configure_tun.sh start_singbox.sh stop_singbox.sh clean_nft.sh set_defaults.sh commands.sh switch_mode.sh manage_autostart.sh check_config.sh update_scripts.sh update_ui.sh menu.sh)
-commit=$(resolve_main_commit) || { echo -e "\${RED}无法获取 main 当前 commit SHA，已中止更新（无法安全固定版本）。\${NC}" >&2; exit 1; }
+commit=$(resolve_main_commit) || { echo -e "${RED}无法获取 main 当前 commit SHA，已中止更新（无法安全固定版本）。${NC}" >&2; exit 1; }
 echo -e "本次脚本更新已固定到 main commit: $commit"
 verified=0
 for transport in raw api archive; do
     rm -rf "$TMP_DIR"; mkdir -p "$TMP_DIR" || exit 1
     if download_script_batch "$commit" "$transport" "$TMP_DIR"; then verified=1; break; fi
     case "$transport" in
-        raw) echo -e "\${YELLOW}Raw 下载失败或完整性校验失败，切换 GitHub Contents API。\${NC}" >&2 ;;
-        api) echo -e "\${YELLOW}GitHub Contents API 下载失败或完整性校验失败，切换 commit archive。\${NC}" >&2 ;;
-        archive) echo -e "\${RED}GitHub commit archive 下载或完整性校验仍然失败。\${NC}" >&2 ;;
+        raw) echo -e "${YELLOW}Raw 下载失败或完整性校验失败，切换 GitHub Contents API。${NC}" >&2 ;;
+        api) echo -e "${YELLOW}GitHub Contents API 下载失败或完整性校验失败，切换 commit archive。${NC}" >&2 ;;
+        archive) echo -e "${RED}GitHub commit archive 下载或完整性校验仍然失败。${NC}" >&2 ;;
     esac
 done
 [ "$verified" -eq 1 ] || exit 1
-for script in "\${SCRIPTS[@]}"; do
+for script in "${SCRIPTS[@]}"; do
     if [ -f "$SCRIPT_DIR/$script" ]; then cp -a "$SCRIPT_DIR/$script" "$BACKUP_DIR/$script"; fi
 done
 restore() {
     local script
-    for script in "\${SCRIPTS[@]}"; do
+    for script in "${SCRIPTS[@]}"; do
         if [ -f "$BACKUP_DIR/$script" ]; then install -o root -g root -m 0755 "$BACKUP_DIR/$script" "$SCRIPT_DIR/$script"; else rm -f "$SCRIPT_DIR/$script"; fi
     done
 }
-for script in "\${SCRIPTS[@]}"; do
+for script in "${SCRIPTS[@]}"; do
     if ! install -o root -g root -m 0755 "$TMP_DIR/$script" "$SCRIPT_DIR/$script"; then restore; exit 1; fi
 done
 echo 'OpenWrt 管理脚本已完成审核发布引用下载、语法校验和事务式更新。'
