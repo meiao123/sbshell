@@ -42,26 +42,64 @@ export REPO_RAW="${REPO_RAW:-https://raw.githubusercontent.com/meiao123/sbshell}
 MAIN_REF="main"
 GITHUB_API_BASE="https://api.github.com/repos/meiao123/sbshell"
 resolve_main_commit() {
-    local ref_file main_match main_sha
+    local endpoint response_file err_file curl_args main_sha
+
     case "${SBSHELL_PINNED_COMMIT:-}" in
         ''|*[!0-9a-fA-F]*) ;;
         *)
             if [ "${#SBSHELL_PINNED_COMMIT}" -eq 40 ]; then
-                printf '%s\n' "$SBSHELL_PINNED_COMMIT"; unset SBSHELL_PINNED_COMMIT; return 0
-            fi ;;
+                printf '%s\n' "$SBSHELL_PINNED_COMMIT"
+                unset SBSHELL_PINNED_COMMIT
+                return 0
+            fi
+            ;;
     esac
-    ref_file=$(mktemp /tmp/sbshell-main-ref.XXXXXX) || return 1
-    if ! curl --fail --silent --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 30 \
-        -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28' \
-        "$GITHUB_API_BASE/git/ref/heads/$MAIN_REF" -o "$ref_file" 2>/dev/null; then
-        rm -f "$ref_file"; return 1
-    fi
-    main_match=$(grep -m1 -oE '"sha"[[:space:]]*:[[:space:]]*"[0-9a-fA-F]{40}"' "$ref_file" 2>/dev/null || true)
-    rm -f "$ref_file"
-    main_sha=$(printf '%s\n' "$main_match" | sed -n 's/.*"\([0-9a-fA-F]\{40\}\)".*/\1/p')
-    if [ -z "$main_sha" ] || [ "${#main_sha}" -ne 40 ]; then return 1; fi
-    case "$main_sha" in *[!0-9a-fA-F]*) return 1;; esac
-    printf '%s\n' "$main_sha"
+
+    response_file=$(mktemp /tmp/sbshell-main-ref.XXXXXX) || return 1
+    err_file="${response_file}.err"
+
+    # 第一优先：Commits API，返回顶层 sha，避免依赖嵌套 ref 结构。
+    for curl_args in '' '-4'; do
+        endpoint="$GITHUB_API_BASE/commits/$MAIN_REF"
+        rm -f "$response_file" "$err_file"
+        if curl $curl_args --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+            --connect-timeout 8 --max-time 20 \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            "$endpoint" -o "$response_file" 2>"$err_file"; then
+            main_sha=$(grep -m1 -oE '"sha"[[:space:]]*:[[:space:]]*"[0-9a-fA-F]{40}"' "$response_file" 2>/dev/null | sed -n 's/.*"\([0-9a-fA-F]\{40\}\)".*/\1/p')
+            if [ -n "$main_sha" ] && [ "${#main_sha}" -eq 40 ]; then
+                rm -f "$response_file" "$err_file"
+                printf '%s\n' "$main_sha"
+                return 0
+            fi
+        fi
+    done
+
+    # 第二优先：Git Ref API，兼容旧版/不同 API 响应。
+    for curl_args in '' '-4'; do
+        endpoint="$GITHUB_API_BASE/git/ref/heads/$MAIN_REF"
+        rm -f "$response_file" "$err_file"
+        if curl $curl_args --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+            --connect-timeout 8 --max-time 20 \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            "$endpoint" -o "$response_file" 2>"$err_file"; then
+            main_sha=$(grep -m1 -oE '"sha"[[:space:]]*:[[:space:]]*"[0-9a-fA-F]{40}"' "$response_file" 2>/dev/null | sed -n 's/.*"\([0-9a-fA-F]\{40\}\)".*/\1/p')
+            if [ -n "$main_sha" ] && [ "${#main_sha}" -eq 40 ]; then
+                rm -f "$response_file" "$err_file"
+                printf '%s\n' "$main_sha"
+                return 0
+            fi
+        fi
+    done
+
+echo "获取 main commit SHA 失败：无法访问 GitHub API（api.github.com）。" >&2
+if [ -s "$err_file" ]; then
+    echo "API 请求错误：$(tr '\n' ' ' < "$err_file" | sed 's/[[:space:]]\+/ /g' | cut -c1-240)" >&2
+fi
+rm -f "$response_file" "$err_file"
+return 1
 }
 github_api_download() {
     local path="$1" ref="$2" output="$3"
