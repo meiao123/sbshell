@@ -55,7 +55,7 @@ valid_url() { [[ "$1" =~ ^https?://[^[:space:]]+$ ]]; }
 warn_plaintext_http() {
     case "$1" in
         http://127.0.0.1[:/]*|http://localhost[:/]*|http://\[::1\][:/]*) return 0 ;;
-        http://*) echo "提示：$1 使用明文 HTTP，凭据会明文经过网络，请仅在可信内网使用。" >&2 ;;
+        http://*) echo "提示：配置地址使用明文 HTTP，凭据可能明文经过网络，请仅在可信内网使用。" >&2 ;;
     esac
     return 0
 }
