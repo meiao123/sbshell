@@ -30,63 +30,72 @@ if ! command -v install >/dev/null 2>&1; then
         return 0
     }
 fi
-SCRIPT_DIR=/etc/sing-box/scripts
-REPO_RAW="https://raw.githubusercontent.com/meiao123/sbshell"
+# 固定更新版本：先解析 main 当前 commit，再让本次更新全部绑定到该 commit。
+export REPO_RAW="\${REPO_RAW:-https://raw.githubusercontent.com/meiao123/sbshell}"
+MAIN_REF="main"
+GITHUB_API_BASE="https://api.github.com/repos/meiao123/sbshell"
+resolve_main_commit() {
+    local ref_file main_match main_sha
+    case "\${SBSHELL_PINNED_COMMIT:-}" in
+        ''|*[!0-9a-fA-F]*) ;;
+        *)
+            if [ "\${#SBSHELL_PINNED_COMMIT}" -eq 40 ]; then
+                printf '%s\n' "$SBSHELL_PINNED_COMMIT"; unset SBSHELL_PINNED_COMMIT; return 0
+            fi ;;
+    esac
+    ref_file=$(mktemp /tmp/sbshell-main-ref.XXXXXX) || return 1
+    if ! curl --fail --silent --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 30 \
+        -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28' \
+        "$GITHUB_API_BASE/git/ref/heads/$MAIN_REF" -o "$ref_file" 2>/dev/null; then
+        rm -f "$ref_file"; return 1
+    fi
+    main_match=$(grep -m1 -oE '"sha"[[:space:]]*:[[:space:]]*"[0-9a-fA-F]{40}"' "$ref_file" 2>/dev/null || true)
+    rm -f "$ref_file"
+    main_sha=$(printf '%s\n' "$main_match" | sed -n 's/.*"\([0-9a-fA-F]\{40\}\)".*/\1/p')
+    if [ -z "$main_sha" ] || [ "\${#main_sha}" -ne 40 ]; then return 1; fi
+    case "$main_sha" in *[!0-9a-fA-F]*) return 1;; esac
+    printf '%s\n' "$main_sha"
+}
 github_api_download() {
     local path="$1" ref="$2" output="$3"
-    curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
-        --connect-timeout 10 --max-time 30 \
-        -H 'Accept: application/vnd.github.raw+json' \
-        -H 'X-GitHub-Api-Version: 2022-11-28' \
-        "https://api.github.com/repos/meiao123/sbshell/contents/$path?ref=$ref" -o "$output" || return 1
+    curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 30 \
+        -H 'Accept: application/vnd.github.raw+json' -H 'X-GitHub-Api-Version: 2022-11-28' \
+        "$GITHUB_API_BASE/contents/$path?ref=$ref" -o "$output" || return 1
     [ -s "$output" ] || { rm -f "$output"; return 1; }
 }
 github_archive_download() {
     local path="$1" ref="$2" output="$3" archive prefix entry
     command -v tar >/dev/null 2>&1 || return 1
     archive=$(mktemp /tmp/sbshell-archive.XXXXXX) || return 1
-    if ! curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
-        --connect-timeout 10 --max-time 120 \
+    if ! curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 120 \
         "https://github.com/meiao123/sbshell/archive/$ref.tar.gz" -o "$archive"; then
-        rm -f "$archive"
-        return 1
+        rm -f "$archive"; return 1
     fi
     [ -s "$archive" ] || { rm -f "$archive"; return 1; }
-    # 不要写成 `tar -tzf "$archive" | head -n1`：head 先退出会让 tar 收到 SIGPIPE（rc=141），
-    # 在 set -o pipefail 下赋值失败、脚本直接中止 —— 只有大归档才会命中（小归档碰巧正常）。
     list=$(mktemp /tmp/sbshell-archive-list.XXXXXX) || { rm -f "$archive"; return 1; }
-    if ! tar -tzf "$archive" > "$list" 2>/dev/null; then
-        rm -f "$archive" "$list"
-        return 1
-    fi
-    first=$(head -n1 "$list") || true
-    prefix=${first%%/*}
-    rm -f "$list"
+    if ! tar -tzf "$archive" > "$list" 2>/dev/null; then rm -f "$archive" "$list"; return 1; fi
+    first=$(head -n1 "$list") || true; prefix=\${first%%/*}; rm -f "$list"
     [ -n "$prefix" ] || { rm -f "$archive"; return 1; }
     entry="$prefix/$path"
-    case "$entry" in
-        *..*|/*) rm -f "$archive"; return 1 ;;
-    esac
-    tar -xOzf "$archive" "$entry" > "$output" 2>/dev/null || {
-        rm -f "$output" "$archive"
-        return 1
-    }
-    rm -f "$archive"
-    [ -s "$output" ] || { rm -f "$output"; return 1; }
+    case "$entry" in *..*|/*) rm -f "$archive"; return 1;; esac
+    tar -xOzf "$archive" "$entry" > "$output" 2>/dev/null || { rm -f "$output" "$archive"; return 1; }
+    rm -f "$archive"; [ -s "$output" ] || { rm -f "$output"; return 1; }
 }
 download_repo_file() {
-    local path="$1" ref="$2" output="$3"
-    if curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
-        --connect-timeout 10 --max-time 60 "$REPO_RAW/$ref/$path" -o "$output" 2>/dev/null && [ -s "$output" ]; then
-        return 0
-    fi
-    rm -f "$output"
-    if github_api_download "$path" "$ref" "$output"; then
-        return 0
-    fi
-    rm -f "$output"
-    github_archive_download "$path" "$ref" "$output"
+    local path="$1" ref="$2" output="$3" transport="$4"
+    case "$transport" in
+        raw)
+            if curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 60 \
+                "$REPO_RAW/$ref/$path" -o "$output" 2>/dev/null; then
+                if [ -s "$output" ]; then return 0; fi
+            fi ;;
+        api) github_api_download "$path" "$ref" "$output"; return $? ;;
+        archive) github_archive_download "$path" "$ref" "$output"; return $? ;;
+        *) return 2 ;;
+    esac
+    rm -f "$output"; return 1
 }
+
 # --- 脚本更新互斥（A-15）：menu.sh 的自动更新与 update_scripts.sh 都会重写 $SCRIPT_DIR 里
 # 同一批脚本，两个入口并发会交错安装不同批次的文件。这里用与配置/UI 更新同一套 mkdir 锁实现
 # （/tmp 世界可写，因此 pid 必须是纯数字、过期按 mtime 判定、并有 waited 硬上限）。
@@ -144,6 +153,19 @@ verify_script_hashes() {
     return 0
 }
 # A-18：先装清理 trap（不引用尚未赋值的变量），再逐个创建并检查临时目录。
+download_script_batch() {
+    local commit="$1" transport="$2" tmp_dir="$3" script
+    for script in "\${SCRIPTS[@]}"; do
+        rm -f "$tmp_dir/$script"
+        download_repo_file "openwrt/$script" "$commit" "$tmp_dir/$script" "$transport" || return 1
+        [ -s "$tmp_dir/$script" ] || return 1
+        bash -n "$tmp_dir/$script" || return 1
+        if head -n1 "$tmp_dir/$script" | grep -q '^#!/bin/sh' && ! sh -n "$tmp_dir/$script"; then return 1; fi
+    done
+    rm -f "$tmp_dir/SHA256SUMS"
+    download_repo_file "SHA256SUMS" "$commit" "$tmp_dir/SHA256SUMS" "$transport" || return 1
+    verify_script_hashes "$tmp_dir/SHA256SUMS" "$tmp_dir" openwrt
+}
 TMP_DIR=''
 BACKUP_DIR=''
 cleanup_update_tmp() {
@@ -158,26 +180,29 @@ install -d -m 0755 "$SCRIPT_DIR"
 # 取锁失败（另一个入口正在更新）就退出，绝不与它交错写入。
 acquire_scripts_lock || exit 1
 SCRIPTS=(check_environment.sh install_singbox.sh manual_input.sh manual_update.sh auto_update.sh configure_tproxy.sh configure_tun.sh start_singbox.sh stop_singbox.sh clean_nft.sh set_defaults.sh commands.sh switch_mode.sh manage_autostart.sh check_config.sh update_scripts.sh update_ui.sh menu.sh)
-for script in "${SCRIPTS[@]}"; do
-    download_repo_file "openwrt/$script" "main" "$TMP_DIR/$script"
-    # A-23：下载/校验没通过时不能只是静默 exit 1 —— 用户看不到是哪个文件、为什么失败。
-    [ -s "$TMP_DIR/$script" ] || { echo -e "${RED}脚本 $script 下载失败或为空，已中止更新（现有安装保持不变）。${NC}" >&2; exit 1; }
-    bash -n "$TMP_DIR/$script"
-    if head -n1 "$TMP_DIR/$script" | grep -q '^#!/bin/sh'; then sh -n "$TMP_DIR/$script"; fi
+commit=$(resolve_main_commit) || { echo -e "\${RED}无法获取 main 当前 commit SHA，已中止更新（无法安全固定版本）。\${NC}" >&2; exit 1; }
+echo -e "本次脚本更新已固定到 main commit: $commit"
+verified=0
+for transport in raw api archive; do
+    rm -rf "$TMP_DIR"; mkdir -p "$TMP_DIR" || exit 1
+    if download_script_batch "$commit" "$transport" "$TMP_DIR"; then verified=1; break; fi
+    case "$transport" in
+        raw) echo -e "\${YELLOW}Raw 下载失败或完整性校验失败，切换 GitHub Contents API。\${NC}" >&2 ;;
+        api) echo -e "\${YELLOW}GitHub Contents API 下载失败或完整性校验失败，切换 commit archive。\${NC}" >&2 ;;
+        archive) echo -e "\${RED}GitHub commit archive 下载或完整性校验仍然失败。\${NC}" >&2 ;;
+    esac
 done
-# A-12：安装前按清单逐个校验下载件，避免半截/被篡改的脚本进 /etc（三个传输层任一层出问题都能拦住）。
-download_repo_file "SHA256SUMS" "main" "$TMP_DIR/SHA256SUMS" || exit 1
-verify_script_hashes "$TMP_DIR/SHA256SUMS" "$TMP_DIR" openwrt || exit 1
-for script in "${SCRIPTS[@]}"; do
+[ "$verified" -eq 1 ] || exit 1
+for script in "\${SCRIPTS[@]}"; do
     if [ -f "$SCRIPT_DIR/$script" ]; then cp -a "$SCRIPT_DIR/$script" "$BACKUP_DIR/$script"; fi
 done
 restore() {
     local script
-    for script in "${SCRIPTS[@]}"; do
+    for script in "\${SCRIPTS[@]}"; do
         if [ -f "$BACKUP_DIR/$script" ]; then install -o root -g root -m 0755 "$BACKUP_DIR/$script" "$SCRIPT_DIR/$script"; else rm -f "$SCRIPT_DIR/$script"; fi
     done
 }
-for script in "${SCRIPTS[@]}"; do
+for script in "\${SCRIPTS[@]}"; do
     if ! install -o root -g root -m 0755 "$TMP_DIR/$script" "$SCRIPT_DIR/$script"; then restore; exit 1; fi
 done
 echo 'OpenWrt 管理脚本已完成审核发布引用下载、语法校验和事务式更新。'

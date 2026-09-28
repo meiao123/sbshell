@@ -37,69 +37,70 @@ CYAN='\033[0;36m'; GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[1;33m'; NC
 SCRIPT_DIR=/etc/sing-box/scripts
 INITIALIZED_FILE="$SCRIPT_DIR/.initialized"
 
-# 允许通过环境变量 REPO_RAW 覆盖镜像源；默认直连 raw.githubusercontent.com（无第三方代理）。
-export REPO_RAW="${REPO_RAW:-https://raw.githubusercontent.com/meiao123/sbshell}"
-
+# 固定更新版本：先解析 main 当前 commit，再让本次更新全部绑定到该 commit。
+export REPO_RAW="\${REPO_RAW:-https://raw.githubusercontent.com/meiao123/sbshell}"
+MAIN_REF="main"
+GITHUB_API_BASE="https://api.github.com/repos/meiao123/sbshell"
+resolve_main_commit() {
+    local ref_file main_match main_sha
+    case "\${SBSHELL_PINNED_COMMIT:-}" in
+        ''|*[!0-9a-fA-F]*) ;;
+        *)
+            if [ "\${#SBSHELL_PINNED_COMMIT}" -eq 40 ]; then
+                printf '%s\n' "$SBSHELL_PINNED_COMMIT"; unset SBSHELL_PINNED_COMMIT; return 0
+            fi ;;
+    esac
+    ref_file=$(mktemp /tmp/sbshell-main-ref.XXXXXX) || return 1
+    if ! curl --fail --silent --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 30 \
+        -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28' \
+        "$GITHUB_API_BASE/git/ref/heads/$MAIN_REF" -o "$ref_file" 2>/dev/null; then
+        rm -f "$ref_file"; return 1
+    fi
+    main_match=$(grep -m1 -oE '"sha"[[:space:]]*:[[:space:]]*"[0-9a-fA-F]{40}"' "$ref_file" 2>/dev/null || true)
+    rm -f "$ref_file"
+    main_sha=$(printf '%s\n' "$main_match" | sed -n 's/.*"\([0-9a-fA-F]\{40\}\)".*/\1/p')
+    if [ -z "$main_sha" ] || [ "\${#main_sha}" -ne 40 ]; then return 1; fi
+    case "$main_sha" in *[!0-9a-fA-F]*) return 1;; esac
+    printf '%s\n' "$main_sha"
+}
 github_api_download() {
     local path="$1" ref="$2" output="$3"
-    # 注意：只有 raw 下载走 REPO_RAW；api.github.com 与 github.com 归档下载是直连地址。
-    curl --fail --silent --location --proto '=https' --tlsv1.2 \
-        --connect-timeout 10 --max-time 30 \
-        -H 'Accept: application/vnd.github.raw+json' \
-        -H 'X-GitHub-Api-Version: 2022-11-28' \
-        "https://api.github.com/repos/meiao123/sbshell/contents/$path?ref=$ref" -o "$output" 2>/dev/null || return 1
+    curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 30 \
+        -H 'Accept: application/vnd.github.raw+json' -H 'X-GitHub-Api-Version: 2022-11-28' \
+        "$GITHUB_API_BASE/contents/$path?ref=$ref" -o "$output" || return 1
     [ -s "$output" ] || { rm -f "$output"; return 1; }
 }
-
 github_archive_download() {
     local path="$1" ref="$2" output="$3" archive prefix entry
     command -v tar >/dev/null 2>&1 || return 1
     archive=$(mktemp /tmp/sbshell-archive.XXXXXX) || return 1
-    if ! curl --fail --silent --location --proto '=https' --tlsv1.2 \
-        --connect-timeout 10 --max-time 120 \
-        "https://github.com/meiao123/sbshell/archive/$ref.tar.gz" -o "$archive" 2>/dev/null; then
-        rm -f "$archive"
-        return 1
+    if ! curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 120 \
+        "https://github.com/meiao123/sbshell/archive/$ref.tar.gz" -o "$archive"; then
+        rm -f "$archive"; return 1
     fi
     [ -s "$archive" ] || { rm -f "$archive"; return 1; }
-    # 不要写成 `tar -tzf "$archive" | head -n1`：head 先退出会让 tar 收到 SIGPIPE（rc=141），
-    # 在 set -o pipefail 下赋值失败、脚本直接中止 —— 只有大归档才会命中（小归档碰巧正常）。
     list=$(mktemp /tmp/sbshell-archive-list.XXXXXX) || { rm -f "$archive"; return 1; }
-    if ! tar -tzf "$archive" > "$list" 2>/dev/null; then
-        rm -f "$archive" "$list"
-        return 1
-    fi
-    first=$(head -n1 "$list") || true
-    prefix=${first%%/*}
-    rm -f "$list"
+    if ! tar -tzf "$archive" > "$list" 2>/dev/null; then rm -f "$archive" "$list"; return 1; fi
+    first=$(head -n1 "$list") || true; prefix=\${first%%/*}; rm -f "$list"
     [ -n "$prefix" ] || { rm -f "$archive"; return 1; }
     entry="$prefix/$path"
-    case "$entry" in
-        *..*|/*) rm -f "$archive"; return 1 ;;
-    esac
-    tar -xOzf "$archive" "$entry" > "$output" 2>/dev/null || {
-        rm -f "$output" "$archive"
-        return 1
-    }
-    rm -f "$archive"
-    [ -s "$output" ] || { rm -f "$output"; return 1; }
+    case "$entry" in *..*|/*) rm -f "$archive"; return 1;; esac
+    tar -xOzf "$archive" "$entry" > "$output" 2>/dev/null || { rm -f "$output" "$archive"; return 1; }
+    rm -f "$archive"; [ -s "$output" ] || { rm -f "$output"; return 1; }
 }
-
 download_repo_file() {
-    local path="$1" ref="$2" output="$3"
-    # 第一层：直连 / 代理 Raw
-    if curl --fail --silent --location --proto '=https' --tlsv1.2 \
-        --connect-timeout 10 --max-time 60 "$REPO_RAW/$ref/$path" -o "$output" 2>/dev/null && [ -s "$output" ]; then
-        return 0
-    fi
-    rm -f "$output"
-    # 第二层：API 容灾
-    if github_api_download "$path" "$ref" "$output"; then
-        return 0
-    fi
-    rm -f "$output"
-    # 第三层：全量压缩包解压提取
-    github_archive_download "$path" "$ref" "$output"
+    local path="$1" ref="$2" output="$3" transport="$4"
+    case "$transport" in
+        raw)
+            if curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 60 \
+                "$REPO_RAW/$ref/$path" -o "$output" 2>/dev/null; then
+                if [ -s "$output" ]; then return 0; fi
+            fi ;;
+        api) github_api_download "$path" "$ref" "$output"; return $? ;;
+        archive) github_archive_download "$path" "$ref" "$output"; return $? ;;
+        *) return 2 ;;
+    esac
+    rm -f "$output"; return 1
 }
 
 SCRIPTS=(check_environment.sh install_singbox.sh manual_input.sh manual_update.sh auto_update.sh configure_tproxy.sh configure_tun.sh start_singbox.sh stop_singbox.sh clean_nft.sh set_defaults.sh commands.sh switch_mode.sh manage_autostart.sh check_config.sh update_scripts.sh update_ui.sh menu.sh)
@@ -213,63 +214,64 @@ verify_script_hashes() {
     [ "$checked" -gt 0 ] || { echo 'SHA256SUMS 中没有本目录的条目，拒绝安装。' >&2; return 1; }
     return 0
 }
+verify_manifest_entry() {
+    local manifest="$1" manifest_name="$2" file="$3" hash actual
+    [ -f "$manifest" ] || { echo '未找到 SHA256SUMS，拒绝安装（无法校验下载内容）。' >&2; return 1; }
+    if ! command -v sha256sum >/dev/null 2>&1; then
+        echo '未找到 sha256sum，本次跳过下载内容校验（建议使用带 sha256sum 的 busybox 或安装 coreutils-sha256sum）。' >&2
+        return 0
+    fi
+    hash=$(awk -v target="$manifest_name" '$2 == target { print $1; exit }' "$manifest")
+    [ -n "$hash" ] || { echo "SHA256SUMS 中没有 $manifest_name 的条目。" >&2; return 1; }
+    actual=$(sha256sum "$file" 2>/dev/null | awk '{print $1}')
+    [ -n "$actual" ] || { echo "完整性校验失败：$manifest_name 未下载成功。" >&2; return 1; }
+    [ "$actual" = "$hash" ] || { echo "完整性校验失败：$manifest_name 与 SHA256SUMS 不符（期望 $hash，实际 $actual）。" >&2; return 1; }
+    return 0
+}
+
+download_script_batch() {
+    local commit="$1" transport="$2" tmp_dir="$3" s
+    for s in "\${SCRIPTS[@]}"; do
+        rm -f "$tmp_dir/$s"
+        download_repo_file "openwrt/$s" "$commit" "$tmp_dir/$s" "$transport" || return 1
+        [ -s "$tmp_dir/$s" ] || return 1
+        bash -n "$tmp_dir/$s" || return 1
+        if head -n1 "$tmp_dir/$s" | grep -q '^#!/bin/sh' && ! sh -n "$tmp_dir/$s"; then return 1; fi
+    done
+    rm -f "$tmp_dir/SHA256SUMS"
+    download_repo_file "SHA256SUMS" "$commit" "$tmp_dir/SHA256SUMS" "$transport" || return 1
+    verify_script_hashes "$tmp_dir/SHA256SUMS" "$tmp_dir" openwrt
+}
 update_scripts() {
-    local tmp backup s rc=0
+    local tmp backup s rc=0 commit transport verified=0
     local -a backed_up=()
     tmp=$(mktemp -d /tmp/sbshell-openwrt.XXXXXX) || return 1
     backup=$(mktemp -d /tmp/sbshell-openwrt-backup.XXXXXX) || { rm -rf "$tmp"; return 1; }
-
     restore_scripts() {
         local item
-        for item in "${backed_up[@]}"; do
-            install -o root -g root -m 0755 "$backup/$item" "$SCRIPT_DIR/$item" || true
-        done
+        for item in "\${backed_up[@]}"; do install -o root -g root -m 0755 "$backup/$item" "$SCRIPT_DIR/$item" || true; done
     }
-
-    # 关键修复：加入 openwrt/ 前缀
-    for s in "${SCRIPTS[@]}"; do
-        if ! download_repo_file "openwrt/$s" "main" "$tmp/$s" || [ ! -s "$tmp/$s" ] || ! bash -n "$tmp/$s"; then
-            rc=1
-            break
-        fi
-        if head -n1 "$tmp/$s" | grep -q '^#!/bin/sh' && ! sh -n "$tmp/$s"; then
-            rc=1
-            break
+    commit=$(resolve_main_commit) || { echo -e "\${RED}无法获取 main 当前 commit SHA，已中止更新（无法安全固定版本）。\${NC}" >&2; rm -rf "$tmp" "$backup"; return 1; }
+    echo -e "\${CYAN}本次脚本更新已固定到 main commit: $commit\${NC}"
+    for transport in raw api archive; do
+        rm -rf "$tmp"; mkdir -p "$tmp" || return 1
+        if download_script_batch "$commit" "$transport" "$tmp"; then verified=1; break; fi
+        case "$transport" in
+            raw) echo -e "\${YELLOW}Raw 下载失败或完整性校验失败，切换 GitHub Contents API。\${NC}" >&2 ;;
+            api) echo -e "\${YELLOW}GitHub Contents API 下载失败或完整性校验失败，切换 commit archive。\${NC}" >&2 ;;
+            archive) echo -e "\${RED}GitHub commit archive 下载或完整性校验仍然失败。\${NC}" >&2 ;;
+        esac
+    done
+    if [ "$verified" -ne 1 ]; then rm -rf "$tmp" "$backup"; return 1; fi
+    for s in "\${SCRIPTS[@]}"; do
+        if [ -f "$SCRIPT_DIR/$s" ]; then
+            if ! cp -a "$SCRIPT_DIR/$s" "$backup/$s"; then echo -e "\${RED}备份 $s 失败，已中止更新（现有安装保持不变）。\${NC}" >&2; rm -rf "$tmp" "$backup"; return 1; fi
+            backed_up+=("$s")
         fi
     done
-
-    if [ "$rc" -eq 0 ]; then
-        # A-12：安装前按清单校验下载件（三个传输层任一层出问题都能拦住）。
-        if ! download_repo_file "SHA256SUMS" "main" "$tmp/SHA256SUMS" ||
-            ! verify_script_hashes "$tmp/SHA256SUMS" "$tmp" openwrt; then
-            echo -e "${RED}下载内容完整性校验失败，已中止更新（现有安装保持不变）。${NC}" >&2
-            rc=1
-        fi
-    fi
-
-    if [ "$rc" -eq 0 ]; then
-        for s in "${SCRIPTS[@]}"; do
-            if [ -f "$SCRIPT_DIR/$s" ]; then
-                if ! cp -a "$SCRIPT_DIR/$s" "$backup/$s"; then
-                    echo -e "${RED}备份 $s 失败，已中止更新（现有安装保持不变）。${NC}" >&2
-                    rc=1
-                    break
-                fi
-                backed_up+=("$s")
-            fi
-        done
-    fi
-
-    if [ "$rc" -eq 0 ]; then
-        for s in "${SCRIPTS[@]}"; do
-            if ! install -o root -g root -m 0755 "$tmp/$s" "$SCRIPT_DIR/$s"; then
-                restore_scripts
-                rc=1
-                break
-            fi
-        done
-    fi
-
+    for s in "\${SCRIPTS[@]}"; do
+        if ! install -o root -g root -m 0755 "$tmp/$s" "$SCRIPT_DIR/$s"; then restore_scripts; rm -rf "$tmp" "$backup"; return 1; fi
+    done
     rm -rf "$tmp" "$backup"
     return "$rc"
 }

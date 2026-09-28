@@ -19,18 +19,14 @@ done
 
 assert_grep '^export REPO_RAW=' "$SBSHELL_SRC/openwrt/menu.sh" "openwrt/menu.sh 定义 REPO_RAW，避免 set -u 下变量未定义"
 
-suite_begin "release pin has been removed; main is the only update source"
+suite_begin "main ref is resolved once and update files are pinned to an immutable commit"
 for f in sbshall.sh openwrt/menu.sh openwrt/update_scripts.sh; do
-    # 去掉注释行再判断：脚本里保留“已移除 RELEASE 声明”的说明是好事，
-    # 这里只禁止代码/下载路径仍然依赖发布指针（与 workflow 的令牌检查一致）。
-    if grep -vE '^[[:space:]]*#' "$SBSHELL_SRC/$f" | grep -Eq 'RELEASE|RELEASE_REF|resolve_release_ref'; then
-        fail "$f 仍依赖 RELEASE 发布指针"
-    else
-        pass "$f 不再依赖 RELEASE 发布指针"
-    fi
+    assert_grep 'MAIN_REF="main"' "$SBSHELL_SRC/$f" "$f 固定以 main 作为最新代码入口"
+    assert_grep 'git/ref/heads/\$MAIN_REF' "$SBSHELL_SRC/$f" "$f 通过 GitHub API 解析 main commit SHA"
+    assert_no_grep 'download_repo_file "openwrt/[^"]*" "main"' "$SBSHELL_SRC/$f" "$f 不直接把 main 当作下载版本"
+    assert_grep 'archive/\$ref\.tar\.gz' "$SBSHELL_SRC/$f" "$f 的 archive 下载绑定到 commit ref"
 done
-assert_grep '"main"' "$SBSHELL_SRC/sbshall.sh" "sbshall.sh 使用 main 作为最新代码来源"
-assert_grep 'download_repo_file "openwrt/[^"]*" "main"' "$SBSHELL_SRC/openwrt/menu.sh" "OpenWrt 更新路径直接取自 main"
+assert_grep 'SBSHELL_PINNED_COMMIT="\$commit"' "$SBSHELL_SRC/sbshall.sh" "sbshall.sh 将已解析 commit 传给 menu.sh"
 
 # 批次 1 收紧：配置文件含节点凭据，OpenWrt 侧的 URL 校验与下载一律只允许 HTTPS
 # （此前接受明文 HTTP，与 OpenWrt 自己的错误文案都不一致）。

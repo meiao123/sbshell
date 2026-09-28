@@ -7,8 +7,8 @@ set -uo pipefail
 suite_begin "script download has an API fallback for broken raw host TLS"
 
 for f in sbshall.sh openwrt/menu.sh openwrt/update_scripts.sh; do
-    if grep -q '^github_api_download() {' "$SBSHELL_SRC/$f"; then
-        pass "$f 提供 GitHub Contents API 回退下载"
+    if grep -q '^github_api_download() {' "$SBSHELL_SRC/$f" && grep -q '^resolve_main_commit() {' "$SBSHELL_SRC/$f"; then
+        pass "$f 提供固定 commit 的 GitHub Contents API 回退下载"
     else
         fail "$f 缺少 GitHub Contents API 回退下载"
     fi
