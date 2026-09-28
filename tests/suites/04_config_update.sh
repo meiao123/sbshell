@@ -48,6 +48,30 @@ rc=$?
 assert_not_rc "$rc" 0 "无效配置导致失败"
 assert_eq "$(jq -c . /etc/sing-box/config.json)" "$(printf '%s' "$VALID_CLIENT_CONFIG" | jq -c .)" "失败时保留旧配置"
 
+suite_begin "manual_update: restart failure removes newly-created manual.conf and restores config"
+
+reset_stub_state
+reset_singbox_dir
+reset_openwrt_dirs
+reset_fixtures
+install_repo_scripts openwrt
+printf '%s\n' "$VALID_CLIENT_CONFIG" > /etc/sing-box/config.json
+fixture_write template.json "$NEW_CONFIG"
+
+export SBSHELL_INITD_FAIL=1
+printf '%s\n' \
+    y \
+    'https://backend.test' \
+    'TOKEN-NEW' \
+    'https://tpl.test/template.json' \
+    y \
+  | run_with_timeout bash /etc/sing-box/scripts/manual_update.sh >/tmp/mu_tx.out 2>&1
+rc=$?
+unset SBSHELL_INITD_FAIL
+assert_not_rc "$rc" 0 "新配置重启失败时手动更新整体失败"
+assert_no_file /etc/sing-box/manual.conf "首次设置地址但重启失败时不应留下新的 manual.conf"
+assert_eq "$(jq -c . /etc/sing-box/config.json)" "$(printf '%s' "$VALID_CLIENT_CONFIG" | jq -c .)" "重启失败时恢复原 config.json"
+
 suite_begin "manual_update: ubus 'Command failed' noise from the init script must not leak"
 
 # 真机回归（ImmortalWrt 25.12.2，包管理器提供的 init 脚本）：菜单 2 更新成功后仍会漏出一行
