@@ -167,7 +167,7 @@ download_bootstrap_menu() {
 }
 
 SCRIPT_DIR=/etc/sing-box/scripts
-GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
+GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; CYAN='\033[0;36m'; NC='\033[0m'
 
 [ "$(uname -s)" = Linux ] || { echo -e "${RED}当前系统不支持运行此脚本。${NC}" >&2; exit 1; }
 [ -r /etc/os-release ] || { echo -e "${RED}无法识别操作系统。${NC}" >&2; exit 1; }
@@ -243,7 +243,6 @@ export SBSHELL_PINNED_COMMIT="$commit"
 echo -e "${GREEN}主脚本下载并校验完成（代码引用: main@$commit）。${NC}"
 echo -e "${YELLOW}注意：脚本会修改系统网络、防火墙和 sing-box 配置，请确认已做好备份。${NC}"
 
-rm -f "$tmp"
 trap - EXIT
 
 # 此时环境变量 REPO_RAW 已经 export，menu.sh 可以直接读取

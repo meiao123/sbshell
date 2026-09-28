@@ -34,6 +34,10 @@ fi
 export REPO_RAW="${REPO_RAW:-https://raw.githubusercontent.com/meiao123/sbshell}"
 MAIN_REF="main"
 GITHUB_API_BASE="https://api.github.com/repos/meiao123/sbshell"
+# 独立入口：menu.sh 用 run() 以子进程方式启动本脚本，父进程的变量不会继承，
+# 而本脚本在 set -u 下运行，未定义的变量会直接终止更新。颜色与 SCRIPT_DIR 必须在此定义。
+CYAN='\033[0;36m'; GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[1;33m'; NC='\033[0m'
+SCRIPT_DIR=/etc/sing-box/scripts
 resolve_main_commit() {
     local endpoint response_file err_file curl_args main_sha
 
