@@ -69,7 +69,7 @@ valid_url() { [[ "$1" =~ ^https?://[^[:space:]]+$ ]]; }
 warn_plaintext_http() {
     case "$1" in
         http://127.0.0.1[:/]*|http://localhost[:/]*|http://\[::1\][:/]*) return 0 ;;
-        http://*) echo "提示：$1 使用明文 HTTP，凭据会明文经过网络，请仅在可信内网使用。" >&2 ;;
+        http://*) echo "提示：配置地址使用明文 HTTP，凭据可能明文经过网络，请仅在可信内网使用。" >&2 ;;
     esac
     return 0
 }
@@ -181,7 +181,11 @@ else
 fi
 
 acquire_lock
-if [ -f "$MANUAL_FILE" ]; then cp -a "$MANUAL_FILE" "$TMP_DIR/manual.backup" || { echo -e "${RED}备份地址配置失败。${NC}" >&2; exit 1; }; fi
+manual_existed=0
+if [ -f "$MANUAL_FILE" ]; then
+    cp -a "$MANUAL_FILE" "$TMP_DIR/manual.backup" || { echo -e "${RED}备份地址配置失败。${NC}" >&2; exit 1; }
+    manual_existed=1
+fi
 if [ -f "$CONFIG_FILE" ]; then cp -a "$CONFIG_FILE" "$BACKUP_FILE" || { echo -e "${RED}旧配置备份失败，已取消更新。${NC}" >&2; exit 1; }; fi
 
 # 与初始化路径（manual_input.sh）一致：30s 超时 + 实时倒计时。curl 放进后台子 shell 写状态文件，
@@ -270,7 +274,11 @@ if [ -f "$TMP_DIR/manual.conf" ]; then
 fi
 install -o root -g root -m 0600 "$TMP_DIR/config.json" "$CONFIG_FILE" || {
     [ ! -f "$BACKUP_FILE" ] || install -o root -g root -m 0600 "$BACKUP_FILE" "$CONFIG_FILE"
-    [ ! -f "$TMP_DIR/manual.backup" ] || install -o root -g root -m 0600 "$TMP_DIR/manual.backup" "$MANUAL_FILE"
+    if [ "$manual_existed" -eq 1 ]; then
+        install -o root -g root -m 0600 "$TMP_DIR/manual.backup" "$MANUAL_FILE" || true
+    else
+        rm -f "$MANUAL_FILE"
+    fi
     echo -e "${RED}新配置写入失败，已恢复旧配置。${NC}" >&2
     exit 1
 }
@@ -280,7 +288,11 @@ install -o root -g root -m 0600 "$TMP_DIR/config.json" "$CONFIG_FILE" || {
 # `Command failed: ubus call service delete { "name": "sing-box" } (Not found)`。
 if ! /etc/init.d/sing-box restart 2> >(sed '/^Command failed:.*Not found/d' >&2) || ! sleep 2 || ! pidof sing-box >/dev/null 2>&1; then
     [ ! -f "$BACKUP_FILE" ] || install -o root -g root -m 0600 "$BACKUP_FILE" "$CONFIG_FILE"
-    [ ! -f "$TMP_DIR/manual.backup" ] || install -o root -g root -m 0600 "$TMP_DIR/manual.backup" "$MANUAL_FILE"
+    if [ "$manual_existed" -eq 1 ]; then
+        install -o root -g root -m 0600 "$TMP_DIR/manual.backup" "$MANUAL_FILE" || true
+    else
+        rm -f "$MANUAL_FILE"
+    fi
     /etc/init.d/sing-box restart 2> >(sed '/^Command failed:.*Not found/d' >&2) || true
     echo -e "${RED}新配置启动失败，已恢复旧配置。${NC}" >&2
     exit 1
