@@ -52,15 +52,15 @@ assert_contains "$fn_one" 'sha256sum "$dir/$name"' "副本逐文件比对哈希"
 assert_contains "$fn_one" 'SHA256SUMS 中没有本目录的条目' "副本拒绝空覆盖（checked=0 即失败）"
 
 # 调用点：下载清单后必须校验，且校验在安装之前
-assert_grep 'download_repo_file "SHA256SUMS" "main" "\$TMP_DIR/SHA256SUMS"' \
+assert_grep 'download_repo_file "SHA256SUMS" "\$commit" "\$tmp_dir/SHA256SUMS"' \
     "$SRC/openwrt/update_scripts.sh" "update_scripts.sh 会下载清单"
-assert_grep 'verify_script_hashes "\$TMP_DIR/SHA256SUMS" "\$TMP_DIR" openwrt || exit 1' \
+assert_grep 'verify_script_hashes "\$tmp_dir/SHA256SUMS" "\$tmp_dir" openwrt' \
     "$SRC/openwrt/update_scripts.sh" "update_scripts.sh 校验失败即中止"
-assert_grep 'verify_script_hashes "\$tmp/SHA256SUMS" "\$tmp" openwrt' \
+assert_grep 'verify_script_hashes "\$tmp_dir/SHA256SUMS" "\$tmp_dir" openwrt' \
     "$SRC/openwrt/menu.sh" "menu.sh 走同一套校验"
 order=$(awk '
     /download_repo_file "SHA256SUMS"/ { dl = NR }
-    /verify_script_hashes "\$TMP_DIR\/SHA256SUMS"/ { vf = NR }
+    /verify_script_hashes "\$tmp_dir\/SHA256SUMS"/ { vf = NR }
     /install -o root -g root -m 0755 "\$TMP_DIR\/\$script"/ { ins = NR }
     END { if (dl && vf && ins && dl < vf && vf < ins) { print "ok" } else { print "bad" } }
 ' "$SRC/openwrt/update_scripts.sh")

@@ -31,13 +31,13 @@ assert_grep 'SBSHELL_PINNED_COMMIT="\$commit"' "$SBSHELL_SRC/sbshall.sh" "sbshal
 # 批次 1 收紧：配置文件含节点凭据，OpenWrt 侧的 URL 校验与下载一律只允许 HTTPS
 # （此前接受明文 HTTP，与 OpenWrt 自己的错误文案都不一致）。
 suite_begin "config URLs must be HTTPS (batch 1 hardened the OpenWrt validators)"
-assert_grep '\[\[ "\$1" =~ \^https?://' "$SBSHELL_SRC/openwrt/manual_input.sh" "manual_input.sh 同时接受 http 与 https URL"
+assert_grep '\[\[ "\$1" =~ \^https?://' "$SBSHELL_SRC/openwrt/lib.sh" "lib.sh 的 URL 校验同时接受 http 与 https URL"
 assert_grep --proto "$SBSHELL_SRC/openwrt/manual_input.sh" "manual_input.sh 使用显式协议白名单"
 # 不能用 'https\?://' 做否定断言：该文件里有说明性文字含 "https?://" 字面量，而
 # A-28：后端/订阅/模板地址是「参数」，允许明文 HTTP；风险由 warn_plaintext_http 提示。
 assert_grep "proto '=http,https'" "$SBSHELL_SRC/openwrt/manual_input.sh" "manual_input.sh 的配置下载允许明文 HTTP"
 assert_grep 'warn_plaintext_http' "$SBSHELL_SRC/openwrt/manual_input.sh" "非回环 http 会提示风险"
-assert_grep '\[\[ "\$1" =~ \^https?://' "$SBSHELL_SRC/openwrt/set_defaults.sh" "set_defaults.sh 同时接受 http 与 https URL"
+assert_grep '\[\[ "\$1" =~ \^https?://' "$SBSHELL_SRC/openwrt/lib.sh" "lib.sh 的 URL 校验（set_defaults 复用）同时接受 http 与 https"
 
 suite_begin "config URL uses the documented subscription/template concatenation"
 assert_grep 'FULL_URL="\${BACKEND_URL%/}/config/\${SUBSCRIPTION_URL}&file=\${TEMPLATE_URL}"' "$SBSHELL_SRC/openwrt/manual_input.sh" "后端配置 URL 保持 /config/订阅地址&file=模板地址 拼接规则"

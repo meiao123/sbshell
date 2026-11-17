@@ -3,7 +3,9 @@ set -Eeuo pipefail
 GREEN='\033[0;32m'; RED='\033[0;31m'; MAGENTA='\033[0;35m'; NC='\033[0m'
 [ "$(id -u)" -eq 0 ] || { echo '请以 root 运行。' >&2; exit 1; }
 SCRIPT_DIR=/etc/sing-box/scripts
-MODE=$(sed -n 's/^MODE=//p' /etc/sing-box/mode.conf 2>/dev/null | head -n1)
+# 与 configure_tun.sh 一致：mode.conf 缺失时 sed 会返回非 0，配合 pipefail + errexit 会让
+# 赋值失败并静默退出，下面 `case` 的「未知代理模式」分支永远到不了。
+MODE=$( { sed -n 's/^MODE=//p' /etc/sing-box/mode.conf 2>/dev/null || true; } | head -n1)
 
 if pidof sing-box >/dev/null 2>&1; then
     echo -e "${GREEN}sing-box 已在运行，无需重复启动。${NC}"

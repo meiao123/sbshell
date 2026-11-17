@@ -21,11 +21,13 @@ SRC="${SBSHELL_SRC:-/src}"
 # 拉取仓库自身文件与面板 zip 的下载链仍然只走 https。
 suite_begin "batch1 F5/A-28: OpenWrt 配置 URL 接受 http，下载链仍限 HTTPS"
 
+# URL 校验与明文提示已收敛到 lib.sh：脚本只 source，不再各自复制实现。
+assert_grep 'valid_url() { \[\[ "\$1" =~ \^https?://' "$SRC/openwrt/lib.sh" \
+    "lib.sh 的 URL 校验同时接受 http 与 https"
+assert_grep 'warn_plaintext_http() {' "$SRC/openwrt/lib.sh" \
+    "lib.sh 定义了明文 HTTP 风险提示函数"
 for f in manual_input.sh manual_update.sh set_defaults.sh; do
-    assert_grep 'valid_url() { \[\[ "\$1" =~ \^https?://' "$SRC/openwrt/$f" \
-        "openwrt/$f 的 URL 校验同时接受 http 与 https"
-    assert_grep 'warn_plaintext_http() {' "$SRC/openwrt/$f" \
-        "openwrt/$f 定义了明文 HTTP 风险提示函数"
+    assert_grep '_sbshell_lib_dir/lib.sh' "$SRC/openwrt/$f" "openwrt/$f 加载公共库"
 done
 for f in manual_input.sh manual_update.sh set_defaults.sh; do
     assert_grep 'warn_plaintext_http' "$SRC/openwrt/$f" "openwrt/$f 调用风险提示"
@@ -46,7 +48,7 @@ suite_begin "batch1 F5/A-28: 校验函数行为（回环 http 被接受、内网
 # 不会走到提示循环，真机行为由真机日志与本段的静态断言共同保证。改为把两个函数原样抽出后
 # 直接驱动，确定性且失败信息可诊断。
 url_helpers=$(mktemp)
-awk '/^valid_url\(\)/{p=1} p{print} p&&/^\}$/{exit}' "$SRC/openwrt/manual_input.sh" > "$url_helpers"
+awk '/^valid_url\(\)/{p=1} p{print} p&&/^\}$/{exit}' "$SRC/openwrt/lib.sh" > "$url_helpers"
 assert_grep 'warn_plaintext_http() {' "$url_helpers" "成功抽出 valid_url 与 warn_plaintext_http"
 assert_no_grep 'valid_subscription' "$url_helpers" "只抽到这两个函数（不多带下游逻辑）"
 
@@ -68,14 +70,13 @@ assert_eq "$(probe "warn_plaintext_http 'http://localhost:5000/x'" 2>&1)" "" "lo
 assert_contains "$(probe "warn_plaintext_http 'http://192.168.8.9:5000/x'" 2>&1)" "使用明文 HTTP" \
     "非回环 http 提示风险"
 assert_eq "$(probe "warn_plaintext_http 'https://example.test/x'" 2>&1)" "" "https 不提示"
-for f in manual_input.sh manual_update.sh set_defaults.sh; do
-    helper=$(mktemp)
-    awk '/^valid_url\(\)/{p=1} p{print} p&&/^\}$/{if (++n==2) exit}' "$SRC/openwrt/$f" > "$helper"
-    warning_out=$( ( . "$helper"; warn_plaintext_http 'http://192.168.8.9:5000/config/SECRET-TOKEN&file=https://tpl.test/template.json' ) 2>&1 )
-    assert_contains "$warning_out" "使用明文 HTTP" "$f 的明文 HTTP 提示仍然存在"
-    assert_not_contains "$warning_out" "SECRET-TOKEN" "$f 的明文 HTTP 提示不得泄露订阅 token"
-    rm -f "$helper"
-done
+# lib.sh 现在只有一份实现：抽一次，验证提示文案与 token 不被带出即可。
+helper=$(mktemp)
+awk '/^valid_url\(\)/{p=1} p{print} p&&/^\}$/{if (++n==2) exit}' "$SRC/openwrt/lib.sh" > "$helper"
+warning_out=$( ( . "$helper"; warn_plaintext_http 'http://192.168.8.9:5000/config/SECRET-TOKEN&file=https://tpl.test/template.json' ) 2>&1 )
+assert_contains "$warning_out" "使用明文 HTTP" "lib.sh 的明文 HTTP 提示仍然存在"
+assert_not_contains "$warning_out" "SECRET-TOKEN" "lib.sh 的明文 HTTP 提示不得泄露订阅 token"
+rm -f "$helper"
 # 提示不改变退出码（调用方不会因为它而失败）
 probe "warn_plaintext_http 'http://192.168.8.9:5000/x'" >/dev/null 2>&1
 assert_rc "$?" 0 "明文提示不影响调用方退出码"

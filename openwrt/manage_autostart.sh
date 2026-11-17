@@ -91,8 +91,19 @@ case $autostart_choice in
         fi
 
         /etc/init.d/sing-box enable
+        # D1：ImmortalWrt 的包脚本按 UCI 开关门控（enabled=0 时 start 返回 0 却不启动），
+        # 所以先把开关写进去；start 之后再补一次进程实检。
+        if command -v uci >/dev/null 2>&1; then
+            uci -q set sing-box.main.enabled=1 && uci -q commit sing-box || true
+        fi
         /etc/init.d/sing-box start 2> >(sed '/^Command failed:.*Not found/d' >&2)
         cmd_status=$?
+
+        # D1：start 的 rc 只说明调用成功，进程可能根本没起来（UCI 门控/配置被拒）。
+        sleep 1
+        pidof sing-box >/dev/null 2>&1 || {
+            echo -e "${RED}sing-box 未运行（自启动开关已写，但服务没起来）。${NC}" >&2
+        }
 
         if [ "$cmd_status" -eq 0 ]; then
             echo -e "${GREEN}自启动已成功启用（含开机防火墙规则恢复）。${NC}"
@@ -109,7 +120,8 @@ case $autostart_choice in
 
         echo -e "${RED}禁用自启动...${NC}"
 
-        # 禁用并停止服务
+        # D2：这里只关闭开机自启，不停止正在运行的服务（最小行为变更）。
+        echo "说明：只关闭开机自启，sing-box 仍在运行（需要停服请用「停止 sing-box」选项）。"
         /etc/init.d/sing-box disable
         cmd_status=$?
         if [ -f "$INIT_SCRIPT" ]; then

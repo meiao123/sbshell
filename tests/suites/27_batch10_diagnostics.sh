@@ -23,16 +23,14 @@ extract_failure_reason() {
     awk '/^download_failure_reason\(\) \{/ { p = 1 } p { print } p && /^\}$/ { exit }' "$1"
 }
 
-suite_begin "批次10 P2：三份 download_failure_reason 逐字一致"
+suite_begin "批次10 P2：失败原因翻译收敛到 lib.sh，cron 生成体保持自包含"
 
-extract_failure_reason "$SRC/openwrt/manual_input.sh" > /tmp/g27-input.txt
-extract_failure_reason "$SRC/openwrt/manual_update.sh" > /tmp/g27-update.txt
+extract_failure_reason "$SRC/openwrt/lib.sh" > /tmp/g27-lib.txt
+assert_grep 'reason_rc' /tmp/g27-lib.txt "lib.sh 里抽到了原因解释函数"
 extract_failure_reason "$SRC/openwrt/auto_update.sh" > /tmp/g27-auto.txt
-assert_grep 'reason_rc' /tmp/g27-input.txt "抽到了原因解释函数"
-if cmp -s /tmp/g27-input.txt /tmp/g27-update.txt; then pass "manual_update.sh 的副本与 manual_input.sh 逐字一致"
-else fail "manual_update.sh 的副本与 manual_input.sh 不一致"; fi
-if cmp -s /tmp/g27-input.txt /tmp/g27-auto.txt; then pass "auto_update.sh 的副本与 manual_input.sh 逐字一致"
-else fail "auto_update.sh 的副本与 manual_input.sh 不一致"; fi
+assert_grep 'reason_rc' /tmp/g27-auto.txt "cron 生成体里仍有一份自包含的内联实现（cron 下没有 lib.sh）"
+assert_grep 'download_failure_reason ' "$SRC/openwrt/manual_input.sh" "manual_input 调用 lib 的实现"
+assert_grep 'download_failure_reason ' "$SRC/openwrt/manual_update.sh" "manual_update 调用 lib 的实现"
 
 suite_begin "批次10 P2：更新路径也报出具体原因与 HTTP 码"
 

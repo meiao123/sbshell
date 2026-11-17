@@ -85,9 +85,9 @@ suite_begin "openwrt: config privacy and self-update invariants"
 assert_grep 'install -o root -g root -m 0600.*\$CONFIG_FILE' "$SBSHELL_SRC/openwrt/manual_update.sh" "manual_update config 为 0600"
 assert_grep 'install -o root -g root -m 0600.*\$CONFIG_FILE' "$SBSHELL_SRC/openwrt/auto_update.sh" "auto_update config 为 0600"
 assert_grep 'chmod 0600.*tmp_config' "$SBSHELL_SRC/openwrt/manual_input.sh" "manual_input 临时 config 为 0600"
-assert_grep 'release_lock' "$SBSHELL_SRC/openwrt/manual_input.sh" "manual_input ownership-safe lock release"
-assert_grep 'release_lock' "$SBSHELL_SRC/openwrt/manual_update.sh" "manual_update ownership-safe lock release"
-assert_grep 'release_lock' "$SBSHELL_SRC/openwrt/auto_update.sh" "auto_update ownership-safe lock release"
+assert_grep 'acquire_lock "\$LOCK_DIR" "\$LOCK_TIMEOUT" cleanup' "$SBSHELL_SRC/openwrt/manual_input.sh" "manual_input 用 lib 的按目录锁（cleanup 同进 trap）"
+assert_grep 'acquire_lock "\$LOCK_DIR" "\$LOCK_TIMEOUT"' "$SBSHELL_SRC/openwrt/manual_update.sh" "manual_update 用 lib 的按目录锁"
+assert_grep 'release_lock' "$SBSHELL_SRC/openwrt/auto_update.sh" "auto_update 的 cron 生成体自带 owner 放锁"
 assert_grep 'release_ui_lock' "$SBSHELL_SRC/openwrt/update_ui.sh" "interactive UI updater ownership-safe lock release"
 assert_grep 'failed_ui=' "$SBSHELL_SRC/openwrt/update_ui.sh" "UI updater records failed deployment for rollback"
 assert_grep 'mv "\$UI_DIR" "\$failed_ui"' "$SBSHELL_SRC/openwrt/update_ui.sh" "UI updater removes failed deployment before restoring backup"
@@ -96,7 +96,7 @@ assert_grep 'update_scripts.sh' "$SBSHELL_SRC/openwrt/menu.sh" "menu 保留自�
 
 suite_begin "openwrt: manual update requires HTTPS backend URLs (batch 1)"
 # A-28：后端/模板地址 http、https 都接受（回环/内网后端常见）；下载链未放松。
-assert_grep '\[\[ "\$1" =~ \^https?://' "$SBSHELL_SRC/openwrt/manual_update.sh" "manual_update 同时接受 http 与 https 地址"
+assert_grep '\[\[ "\$1" =~ \^https?://' "$SBSHELL_SRC/openwrt/lib.sh" "manual_update 用的 URL 校验（已收敛到 lib.sh）同时接受 http 与 https"
 assert_grep "proto '=http,https'" "$SBSHELL_SRC/openwrt/manual_update.sh" "manual_update 配置下载允许明文 HTTP"
 
 suite_begin "openwrt: UI initialization and menu separator"

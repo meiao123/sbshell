@@ -1,6 +1,10 @@
 #!/bin/bash
 set -Eeuo pipefail
 [ "$(id -u)" -eq 0 ] || { echo -e "\033[0;31m请以 root 运行。\033[0m" >&2; exit 1; }
+# 公共实现（install 兜底）集中在 lib.sh。
+_sbshell_lib_dir=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source=lib.sh
+. "$_sbshell_lib_dir/lib.sh" || { echo '缺少 lib.sh，请先在菜单 9 更新脚本。' >&2; exit 1; }
 UI_DIR=/etc/sing-box/ui
 BACKUP_DIR=/etc/sing-box/ui-backups
 CRON_FILE=/etc/crontabs/root
@@ -43,10 +47,13 @@ ensure_curl() {
 # 只在实际解析压缩包时按需安装；zipinfo 不再是必需项（见 validate_archive 的 unzip -Z 回退）。
 ensure_unzip() {
     command -v unzip >/dev/null 2>&1 && return 0
-    { pkg_update && pkg_install unzip; } || true
+    # 包管理器日志必须丢掉：本函数常在 $(archive_top …) 里执行，日志会混进 top 变量。
+    { pkg_update && pkg_install unzip; } >/dev/null || true
     command -v unzip >/dev/null 2>&1
 }
 if ! command -v curl >/dev/null 2>&1; then ensure_curl || exit 1; fi
+# 与 lib.sh 的 valid_url（http/https 都接受）不同：UI 面板包只允许从 HTTPS 下载，
+# 这里刻意保留「仅 https」的本地实现，不换成公共版本（否则明文 HTTP 也能通过校验）。
 valid_url() { [[ "$1" =~ ^https://[^[:space:]]+$ ]]; }
 get_config_url() { sed -n 's/.*"external_ui_download_url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' /etc/sing-box/config.json 2>/dev/null | head -n1; }
 # 解析 zashboard 最新 release 的构建资产地址：dist-cdn-fonts.zip 优先，其次任意 dist-*.zip。
@@ -70,11 +77,13 @@ resolve_latest_zashboard_url() {
     [ -n "$url" ] || return 1
     printf '%s\n' "$url"
 }
-release_ui_lock() {
-    [ -d "$UI_LOCK_DIR" ] || return 0
-    owner=$(cat "$UI_LOCK_DIR/pid" 2>/dev/null || true)
-    [ "$owner" = "$$" ] && rm -rf "$UI_LOCK_DIR"
-}
+# 释放锁的「只由属主删除」判定与 lib.sh 的 release_lock 一致，这里只保留函数名：
+# acquire_ui_lock 的 EXIT/INT/TERM trap 与测试断言都依赖 release_ui_lock。
+release_ui_lock() { release_lock "$UI_LOCK_DIR"; }
+# 有意保留本地实现，不换成 lib.sh 的 acquire_lock：
+#   * 库版本在「属主已死」时只给 5 秒宽限就接管，这里要等锁龄满 LOCK_TIMEOUT 才接管；
+#   * 超时文案是本文件的「等待 UI 更新锁超时」。
+# 两者语义不等价，按「只替换逐字等价的重复块」的约定保留。
 acquire_ui_lock() {
         waited=0
         while ! mkdir "$UI_LOCK_DIR" 2>/dev/null; do
@@ -622,7 +631,8 @@ if url=$(panel_url) && pidof sing-box >/dev/null 2>&1; then
 fi
 EOF
 chmod 0755 /etc/sing-box/update-ui.sh; chown root:root /etc/sing-box/update-ui.sh
-touch "$CRON_FILE"; sed -i "/[[:space:]]$CRON_MARK\$/d" "$CRON_FILE"; printf '%s /etc/sing-box/update-ui.sh %s\n' "$schedule" "$CRON_MARK" >> "$CRON_FILE"; chmod 0600 "$CRON_FILE"; chown root:root "$CRON_FILE"; if ! /etc/init.d/cron restart >/dev/null 2>&1; then
+# 追加前补足行尾换行：sed 删旧行后文件末行可能无 \n，printf 会粘到上一行。
+touch "$CRON_FILE"; sed -i "/[[:space:]]$CRON_MARK\$/d" "$CRON_FILE"; [ ! -s "$CRON_FILE" ] || [ -z "$(tail -c 1 "$CRON_FILE")" ] || printf '\n' >> "$CRON_FILE"; printf '%s /etc/sing-box/update-ui.sh %s\n' "$schedule" "$CRON_MARK" >> "$CRON_FILE"; chmod 0600 "$CRON_FILE"; chown root:root "$CRON_FILE"; if ! /etc/init.d/cron restart >/dev/null 2>&1; then
                 echo -e "${RED}计划任务未生效：cron 重启失败，请手动执行 /etc/init.d/cron restart。${NC}" >&2
             fi
 echo -e "${GREEN}UI 自动更新已设置。${NC}"

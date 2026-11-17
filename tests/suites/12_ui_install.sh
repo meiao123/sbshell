@@ -14,7 +14,7 @@ SRC="$SBSHELL_SRC/openwrt"
 #   * 主菜单从 $SCRIPT_DIR 之外的一份副本运行，避免自更新把「正在运行的脚本」就地覆盖；
 #   * 各步骤脚本用桩放进 $SCRIPT_DIR（并同时写进 fixtures，让自更新也能成功装上桩），
 #     这样整个过程完全不需要联网，还能观察到调用顺序。
-SCRIPTS_LIST='check_environment.sh install_singbox.sh manual_input.sh manual_update.sh auto_update.sh configure_tproxy.sh configure_tun.sh start_singbox.sh stop_singbox.sh clean_nft.sh set_defaults.sh commands.sh switch_mode.sh manage_autostart.sh check_config.sh update_scripts.sh update_ui.sh menu.sh'
+SCRIPTS_LIST='check_environment.sh install_singbox.sh manual_input.sh manual_update.sh auto_update.sh configure_tproxy.sh configure_tun.sh start_singbox.sh stop_singbox.sh clean_nft.sh set_defaults.sh commands.sh switch_mode.sh manage_autostart.sh check_config.sh update_scripts.sh update_ui.sh lib.sh menu.sh'
 
 STUB_BODY='#!/bin/bash
 name=$(basename "$0" .sh)

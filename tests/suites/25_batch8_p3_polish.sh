@@ -22,8 +22,8 @@ assert_eq "$(grep -cE '^[[:space:]]*show_submenu$' "$SRC/openwrt/commands.sh")" 
     "二级菜单只由外层 while 打印（选 0 退出时不再多印一遍）"
 # A-20(2)/(3) 经核对已自洽：A-28 把 valid_url 放宽为 http/https 后文案同步更新，
 # 批次 4 删掉了恒真的 `!= ''`。这里做固化，防止回退。
-assert_grep 'valid_url() { \[\[ "\$1" =~ \^https?://' "$SRC/openwrt/manual_update.sh" \
-    "manual_update.sh 的 URL 校验只接受 https"
+assert_grep 'valid_url() { \[\[ "\$1" =~ \^https?://' "$SRC/openwrt/lib.sh" \
+    "URL 校验（manual_update 复用，已收敛到 lib.sh）同时接受 http 与 https"
 assert_eq "$(grep -c "!= ''" "$SRC/openwrt/manual_update.sh")" "0" \
     "manual_update.sh 不再有恒真死条件"
 

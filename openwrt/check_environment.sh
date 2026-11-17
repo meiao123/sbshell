@@ -28,7 +28,10 @@ if command -v nft >/dev/null 2>&1; then
     nft_version=$(nft --version 2>/dev/null | head -n1)
     echo "nft 可用${nft_version:+：$nft_version}"
 else
-    echo "警告：未找到 nft，TProxy/TUN 规则无法下发（请安装 nftables）。"
+    # menu.sh 用 `run check_environment.sh || return 1` 兜底：缺 nft 必须非 0 退出，
+    # 否则会被静默放过，直到 configure_* 才失败（用户看到的是别的报错）。
+    echo "错误：未找到 nft，TProxy/TUN 规则无法下发（请安装 nftables）。" >&2
+    exit 1
 fi
 if [ -c /dev/net/tun ]; then
     echo "/dev/net/tun 可用，TUN 模式可启用。"

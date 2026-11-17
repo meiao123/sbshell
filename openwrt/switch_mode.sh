@@ -1,50 +1,10 @@
 #!/bin/bash
 set -Eeuo pipefail
 
-
-
-# --- busybox 兼容：ImmortalWrt/OpenWrt 的 busybox 常常没有 install applet ---
-# 真机实测（ImmortalWrt）：一键引导在第一步就中止
-#   /dev/fd/64: line 57: install: command not found
-# 本仓库大量依赖 GNU install 的 -d/-o/-g/-m，busybox 没有等价命令，因此这里在缺失时
-# 定义一个只覆盖本仓库用法的兜底实现；只要系统有真正的 install，这段完全不生效。
-#
-# 与调用方 `set -Eeuo pipefail` 的关系（踩过坑）：
-#   * chmod 失败必须让本次 install **返回非 0**（fail-closed：凭据文件绝不能悄悄留在 0644），
-#     并且要 `return 1` 而不是让 errexit 在函数内部直接终止整个脚本——否则调用方的
-#     `if ! install …; then restore; fi` 回滚逻辑根本没机会执行；
-#   * chown 失败不影响返回码（所有权不构成安全边界，且 vfat/extroot 等文件系统上会失败）。
-# 写法上一律用 `[ -z "$x" ] || { cmd … || …; }`：判空为真时整行返回 0，
-# 且 `cmd` 处于 `||` 列表首位时不受 errexit 影响，失败能被显式处理。
-if ! command -v install >/dev/null 2>&1; then
-    install() {
-        local d=0 m='' o='' g=''
-        while [ $# -gt 0 ]; do
-            case "$1" in
-                -d) d=1; shift ;;
-                -m) m="$2"; shift 2 ;;
-                -o) o="$2"; shift 2 ;;
-                -g) g="$2"; shift 2 ;;
-                -*) shift ;;
-                *) break ;;
-            esac
-        done
-        if [ "$d" -eq 1 ]; then
-            mkdir -p "$@" || return 1
-            [ -z "$m" ] || { chmod "$m" "$@" 2>/dev/null || return 1; }
-        else
-            # 本仓库只用 `install [-m M] [-o U] [-g G] SRC DST`
-            [ $# -eq 2 ] || return 1
-            # 先 rm 再写，避免覆盖正在运行脚本的 inode（写正在执行的脚本会 ETXTBSY 而失败）。
-            rm -f "$2" 2>/dev/null || true
-            cp -f "$1" "$2" || return 1
-            [ -z "$m" ] || { chmod "$m" "$2" 2>/dev/null || return 1; }
-            set -- "$2"
-        fi
-        [ -z "$o" ] || { chown "$o${g:+:$g}" "$@" 2>/dev/null || true; }
-        return 0
-    }
-fi
+# 公共实现（install 兜底、防火墙参数）集中在 lib.sh，避免三份副本漂移。
+_sbshell_lib_dir=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source=lib.sh
+. "$_sbshell_lib_dir/lib.sh" || { echo '缺少 lib.sh，请先在菜单 9 更新脚本。' >&2; exit 1; }
 
 GREEN='\033[0;32m'
 RED='\033[0;31m'
@@ -105,7 +65,9 @@ mv -f "$TMP_MODE" "$MODE_FILE"
 if ! bash "$SCRIPT_DIR/clean_nft.sh"; then
     chmod 0644 "$BACKUP_MODE"; chown root:root "$BACKUP_MODE"
     mv -f "$BACKUP_MODE" "$MODE_FILE"
-    echo -e "${RED}旧模式的防火墙状态无法安全清理，已恢复原模式: ${OLD_MODE:-未设置}${NC}" >&2
+    # D1：服务已在上面停掉，恢复 mode.conf 后必须尝试重启，否则"已恢复原模式"实际是停服状态。
+    /etc/init.d/sing-box start >/dev/null 2>&1 || true
+    echo -e "${RED}旧模式的防火墙状态无法安全清理，已恢复原模式: ${OLD_MODE:-未设置} 并尝试重新启动 sing-box；若启动失败请执行菜单 4 手动启动${NC}" >&2
     exit 1
 fi
 

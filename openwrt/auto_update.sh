@@ -1,50 +1,12 @@
 #!/bin/bash
 set -Eeuo pipefail
 
-
-
-# --- busybox 兼容：ImmortalWrt/OpenWrt 的 busybox 常常没有 install applet ---
-# 真机实测（ImmortalWrt）：一键引导在第一步就中止
-#   /dev/fd/64: line 57: install: command not found
-# 本仓库大量依赖 GNU install 的 -d/-o/-g/-m，busybox 没有等价命令，因此这里在缺失时
-# 定义一个只覆盖本仓库用法的兜底实现；只要系统有真正的 install，这段完全不生效。
-#
-# 与调用方 `set -Eeuo pipefail` 的关系（踩过坑）：
-#   * chmod 失败必须让本次 install **返回非 0**（fail-closed：凭据文件绝不能悄悄留在 0644），
-#     并且要 `return 1` 而不是让 errexit 在函数内部直接终止整个脚本——否则调用方的
-#     `if ! install …; then restore; fi` 回滚逻辑根本没机会执行；
-#   * chown 失败不影响返回码（所有权不构成安全边界，且 vfat/extroot 等文件系统上会失败）。
-# 写法上一律用 `[ -z "$x" ] || { cmd … || …; }`：判空为真时整行返回 0，
-# 且 `cmd` 处于 `||` 列表首位时不受 errexit 影响，失败能被显式处理。
-if ! command -v install >/dev/null 2>&1; then
-    install() {
-        local d=0 m='' o='' g=''
-        while [ $# -gt 0 ]; do
-            case "$1" in
-                -d) d=1; shift ;;
-                -m) m="$2"; shift 2 ;;
-                -o) o="$2"; shift 2 ;;
-                -g) g="$2"; shift 2 ;;
-                -*) shift ;;
-                *) break ;;
-            esac
-        done
-        if [ "$d" -eq 1 ]; then
-            mkdir -p "$@" || return 1
-            [ -z "$m" ] || { chmod "$m" "$@" 2>/dev/null || return 1; }
-        else
-            # 本仓库只用 `install [-m M] [-o U] [-g G] SRC DST`
-            [ $# -eq 2 ] || return 1
-            # 先 rm 再写，避免覆盖正在运行脚本的 inode（写正在执行的脚本会 ETXTBSY 而失败）。
-            rm -f "$2" 2>/dev/null || true
-            cp -f "$1" "$2" || return 1
-            [ -z "$m" ] || { chmod "$m" "$2" 2>/dev/null || return 1; }
-            set -- "$2"
-        fi
-        [ -z "$o" ] || { chown "$o${g:+:$g}" "$@" 2>/dev/null || true; }
-        return 0
-    }
-fi
+# 公共实现（install 兜底、URL 校验、锁、原子提交）集中在 lib.sh，避免多处副本漂移。
+# 注意：下面 heredoc 生成给 cron 的 update-singbox.sh 必须自包含（cron 下没有 lib.sh），
+# 因此那份副本里的 install 兜底等实现保持内联，不改成调用本库。
+_sbshell_lib_dir=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source=lib.sh
+. "$_sbshell_lib_dir/lib.sh" || { echo '缺少 lib.sh，请先在菜单 9 更新脚本。' >&2; exit 1; }
 GREEN='\033[0;32m'; RED='\033[0;31m'; NC='\033[0m'
 [ "$(id -u)" -eq 0 ] || { echo '请以 root 运行。' >&2; exit 1; }
 MANUAL_FILE=/etc/sing-box/manual.conf
@@ -53,7 +15,11 @@ CRON_FILE=/etc/crontabs/root
 CRON_MARK='# sbshell-singbox-auto-update'
 [ -f "$MANUAL_FILE" ] || { echo '未找到 manual.conf。' >&2; exit 1; }
 
-cat > "$UPDATE_SCRIPT" <<'EOF'
+# 先写同目录临时文件、自检通过后再 mv：原地 cat > 被中断会留下截断或 0644 的脚本，
+# cron 此后每小时都会静默失败。UPDATE_SCRIPT_TMP 这个命名也便于测试抽取生成体。
+UPDATE_SCRIPT_TMP=$(mktemp /etc/sing-box/.update-singbox.XXXXXX) || { echo '无法创建临时文件，已保留旧的更新脚本。' >&2; exit 1; }
+trap 'rm -f "$UPDATE_SCRIPT_TMP"' EXIT
+cat > "$UPDATE_SCRIPT_TMP" <<'EOF'
 #!/bin/sh
 set -eu
 
@@ -184,7 +150,8 @@ download_http=$(mktemp /tmp/sbshell-auto-http.XXXXXX)
     rc=0
     # -w 把 HTTP 状态码写进单独文件：cron 日志里才能区分 5xx / 401 / 403 / 404。
     # A-28：允许 http（回环/内网后端常见）——这里请求的是用户自己的后端。
-    curl --fail --silent --show-error --location --proto '=http,https' --tlsv1.2 --connect-timeout 10 --max-time 30 -w '%{http_code}' "$U" -o "$TMP/config.json" > "$download_http" || rc=$?
+    # --max-filesize 10 MiB：异常端点返回超大内容时直接失败（curl 63），不把磁盘写满。
+    curl --fail --silent --show-error --location --proto '=http,https' --tlsv1.2 --connect-timeout 10 --max-time 30 --max-filesize 10485760 -w '%{http_code}' "$U" -o "$TMP/config.json" > "$download_http" || rc=$?
     printf '%s\n' "$rc" > "$download_status"
     exit 0
 ) &
@@ -240,7 +207,13 @@ if ! restart_singbox || ! sleep 2 || ! pidof sing-box >/dev/null 2>&1; then
     exit 1
 fi
 EOF
-chmod 0755 "$UPDATE_SCRIPT"; chown root:root "$UPDATE_SCRIPT"
+# 权限与语法自检都在临时文件上做；任何一步失败都保留上一份可用的 update-singbox.sh。
+chmod 0755 "$UPDATE_SCRIPT_TMP"; chown root:root "$UPDATE_SCRIPT_TMP"
+if ! sh -n "$UPDATE_SCRIPT_TMP"; then
+    echo '生成的自动更新脚本未通过语法检查，已保留旧的 update-singbox.sh。' >&2
+    exit 1
+fi
+mv -f "$UPDATE_SCRIPT_TMP" "$UPDATE_SCRIPT"
 
 while true; do
     echo '1. 设置自动更新间隔'; echo '2. 取消自动更新'
@@ -252,6 +225,8 @@ while true; do
             case "$h" in 1|2|3|4|6|8|12) ;; *) echo -e "${RED}请输入 1/2/3/4/6/8/12。${NC}"; continue;; esac
             touch "$CRON_FILE"
             sed -i "/[[:space:]]$CRON_MARK\$/d" "$CRON_FILE"
+            # 追加前保证文件以换行结尾，否则新任务会粘在上一条任务尾部、cron 解析失败。
+            [ ! -s "$CRON_FILE" ] || [ -z "$(tail -c 1 "$CRON_FILE")" ] || printf '\n' >> "$CRON_FILE"
             printf '0 */%s * * * %s %s\n' "$h" "$UPDATE_SCRIPT" "$CRON_MARK" >> "$CRON_FILE"
             chmod 0600 "$CRON_FILE"; chown root:root "$CRON_FILE"
             if ! /etc/init.d/cron restart >/dev/null 2>&1; then

@@ -15,10 +15,14 @@ SCRIPTS=/etc/sing-box/scripts
 # ------------------------------------------------------------------ F6 静态
 suite_begin "batch2 F6: install() 兜底先 rm 再 cp（避免就地覆盖运行中的脚本）"
 
-for f in sbshall.sh openwrt/menu.sh openwrt/update_scripts.sh openwrt/auto_update.sh \
-         openwrt/configure_tun.sh openwrt/configure_tproxy.sh openwrt/manual_input.sh \
-         openwrt/manual_update.sh openwrt/set_defaults.sh openwrt/switch_mode.sh; do
+# 内联兜底的只剩 bootstrap/ash/cron 三处（其余脚本通过 lib.sh 获得同一实现）。
+for f in sbshall.sh openwrt/menu.sh openwrt/update_scripts.sh openwrt/auto_update.sh openwrt/lib.sh; do
     assert_grep 'rm -f "\$2" 2>/dev/null || true' "$SBSHELL_SRC/$f" "$f: 兜底先 unlink 再写"
+done
+# 其余用 install 的脚本必须加载公共库（否则 busybox 上 command not found）。
+for f in openwrt/configure_tun.sh openwrt/configure_tproxy.sh openwrt/manual_input.sh \
+         openwrt/manual_update.sh openwrt/set_defaults.sh openwrt/switch_mode.sh; do
+    assert_grep '_sbshell_lib_dir/lib.sh' "$SBSHELL_SRC/$f" "$f: 通过 lib.sh 获得 install 兜底"
 done
 
 shim_order=$(awk '

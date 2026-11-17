@@ -46,7 +46,6 @@ resolve_main_commit() {
         *)
             if [ "${#SBSHELL_PINNED_COMMIT}" -eq 40 ]; then
                 printf '%s\n' "$SBSHELL_PINNED_COMMIT"
-                unset SBSHELL_PINNED_COMMIT
                 return 0
             fi
             ;;
@@ -108,20 +107,33 @@ github_api_download() {
 github_archive_download() {
     local path="$1" ref="$2" output="$3" archive prefix entry
     command -v tar >/dev/null 2>&1 || return 1
-    archive=$(mktemp /tmp/sbshell-archive.XXXXXX) || return 1
-    if ! curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 120 \
-        "https://github.com/meiao123/sbshell/archive/$ref.tar.gz" -o "$archive"; then
-        rm -f "$archive"; return 1
+    # 归档缓存：raw/api 都失败时，旧实现会为每个文件各下一次 tar.gz（19 次 × max-time 120）。
+    # 同一批次只下载一次到 $SBSHELL_ARCHIVE_CACHE，其余文件直接从缓存里 tar -xOzf 提取；
+    # 缓存变量为空（例如 sbshall.sh 的引导路径）时退回逐次下载，语义不变。
+    if [ -n "${SBSHELL_ARCHIVE_CACHE:-}" ] && [ "${SBSHELL_ARCHIVE_REF:-}" = "$ref" ] && [ -s "$SBSHELL_ARCHIVE_CACHE" ]; then
+        archive="$SBSHELL_ARCHIVE_CACHE"
+    else
+        archive=$(mktemp /tmp/sbshell-archive.XXXXXX) || return 1
+        if ! curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 120 \
+            "https://github.com/meiao123/sbshell/archive/$ref.tar.gz" -o "$archive"; then
+            rm -f "$archive"; return 1
+        fi
+        [ -s "$archive" ] || { rm -f "$archive"; return 1; }
+        if [ -n "${SBSHELL_ARCHIVE_CACHE:-}" ]; then
+            if mv -f "$archive" "$SBSHELL_ARCHIVE_CACHE"; then
+                archive="$SBSHELL_ARCHIVE_CACHE"
+                SBSHELL_ARCHIVE_REF="$ref"
+            fi
+        fi
     fi
-    [ -s "$archive" ] || { rm -f "$archive"; return 1; }
     list=$(mktemp /tmp/sbshell-archive-list.XXXXXX) || { rm -f "$archive"; return 1; }
-    if ! tar -tzf "$archive" > "$list" 2>/dev/null; then rm -f "$archive" "$list"; return 1; fi
+    if ! tar -tzf "$archive" > "$list" 2>/dev/null; then rm -f "$list"; return 1; fi
     first=$(head -n1 "$list") || true; prefix=${first%%/*}; rm -f "$list"
-    [ -n "$prefix" ] || { rm -f "$archive"; return 1; }
+    [ -n "$prefix" ] || return 1
     entry="$prefix/$path"
-    case "$entry" in *..*|/*) rm -f "$archive"; return 1;; esac
-    tar -xOzf "$archive" "$entry" > "$output" 2>/dev/null || { rm -f "$output" "$archive"; return 1; }
-    rm -f "$archive"; [ -s "$output" ] || { rm -f "$output"; return 1; }
+    case "$entry" in *..*|/*) return 1;; esac
+    tar -xOzf "$archive" "$entry" > "$output" 2>/dev/null || { rm -f "$output"; return 1; }
+    [ -s "$output" ] || { rm -f "$output"; return 1; }
 }
 download_repo_file() {
     local path="$1" ref="$2" output="$3" transport="$4"
@@ -176,11 +188,16 @@ acquire_scripts_lock() {
 # --- 下载内容完整性校验（A-12）：与 menu.sh 里的同名函数逐字一致 ---
 verify_script_hashes() {
     # $1=清单路径 $2=脚本目录 $3=清单里的路径前缀（如 openwrt）
-    local manifest="$1" dir="$2" prefix="$3" hash name actual checked=0
+    local manifest="$1" dir="$2" prefix="$3" hash name actual checked=0 total=0
     [ -f "$manifest" ] || { echo '未找到 SHA256SUMS，拒绝安装（无法校验下载内容）。' >&2; return 1; }
     if ! command -v sha256sum >/dev/null 2>&1; then
-        echo '未找到 sha256sum，本次跳过下载内容校验（建议使用带 sha256sum 的 busybox 或安装 coreutils-sha256sum）。' >&2
-        return 0
+        # 精简固件只有 busybox 的 sha256sum applet：用函数兜底，保留下面的调用写法。
+        if command -v busybox >/dev/null 2>&1; then
+            sha256sum() { busybox sha256sum "$@"; }
+        else
+            echo '未找到 sha256sum，本次跳过下载内容校验（建议使用带 sha256sum 的 busybox 或安装 coreutils-sha256sum）。' >&2
+            return 0
+        fi
     fi
     while read -r hash name; do
         case "$hash" in ''|\#*) continue ;; esac
@@ -192,6 +209,9 @@ verify_script_hashes() {
         checked=$((checked + 1))
     done < "$manifest"
     [ "$checked" -gt 0 ] || { echo 'SHA256SUMS 中没有本目录的条目，拒绝安装。' >&2; return 1; }
+    # 覆盖数必须等于目录里的脚本数：新增脚本忘加哈希时不能只校验老脚本就安装。
+    for name in "$dir"/*.sh; do [ -e "$name" ] || continue; total=$((total + 1)); done
+    [ "$total" -eq "$checked" ] || { echo "SHA256SUMS 只覆盖 $checked/$total 个脚本，拒绝安装（新增脚本可能没有哈希）。" >&2; return 1; }
     return 0
 }
 # A-18：先装清理 trap（不引用尚未赋值的变量），再逐个创建并检查临时目录。
@@ -210,9 +230,15 @@ download_script_batch() {
 }
 TMP_DIR=''
 BACKUP_DIR=''
+# 归档缓存与暂存目录在清理 trap 里统一回收（trap 安装时都还没有值，必须 ${VAR:-} 保护）。
+SBSHELL_ARCHIVE_CACHE=''
+SBSHELL_ARCHIVE_REF=''
+NEW_SCRIPTS_DIR=''
 cleanup_update_tmp() {
     [ -z "${TMP_DIR:-}" ] || rm -rf "$TMP_DIR"
     [ -z "${BACKUP_DIR:-}" ] || rm -rf "$BACKUP_DIR"
+    [ -z "${NEW_SCRIPTS_DIR:-}" ] || rm -rf "$NEW_SCRIPTS_DIR"
+    [ -z "${SBSHELL_ARCHIVE_CACHE:-}" ] || rm -f "$SBSHELL_ARCHIVE_CACHE"
 }
 trap 'release_scripts_lock; cleanup_update_tmp' EXIT
 TMP_DIR=$(mktemp -d /tmp/sbshell-update.XXXXXX) || { echo '无法创建临时目录（/tmp 是否可写？）。' >&2; exit 1; }
@@ -221,8 +247,10 @@ BACKUP_DIR=$(mktemp -d /tmp/sbshell-update-backup.XXXXXX) || { echo '无法创�
 install -d -m 0755 "$SCRIPT_DIR"
 # 取锁失败（另一个入口正在更新）就退出，绝不与它交错写入。
 acquire_scripts_lock || exit 1
-SCRIPTS=(check_environment.sh install_singbox.sh manual_input.sh manual_update.sh auto_update.sh configure_tproxy.sh configure_tun.sh start_singbox.sh stop_singbox.sh clean_nft.sh set_defaults.sh commands.sh switch_mode.sh manage_autostart.sh check_config.sh update_scripts.sh update_ui.sh menu.sh)
+SCRIPTS=(check_environment.sh install_singbox.sh manual_input.sh manual_update.sh auto_update.sh configure_tproxy.sh configure_tun.sh start_singbox.sh stop_singbox.sh clean_nft.sh set_defaults.sh commands.sh switch_mode.sh manage_autostart.sh check_config.sh update_scripts.sh update_ui.sh lib.sh menu.sh)
 commit=$(resolve_main_commit) || { echo -e "${RED}无法获取 main 当前 commit SHA，已中止更新（无法安全固定版本）。${NC}" >&2; exit 1; }
+# 函数内的 unset 写在 $() 子 shell 里永远无效，只能在父 shell 真正清掉 pin。
+unset SBSHELL_PINNED_COMMIT 2>/dev/null || true
 echo -e "本次脚本更新已固定到 main commit: $commit"
 verified=0
 for transport in raw api archive; do
@@ -235,16 +263,44 @@ for transport in raw api archive; do
     esac
 done
 [ "$verified" -eq 1 ] || exit 1
-for script in "${SCRIPTS[@]}"; do
-    if [ -f "$SCRIPT_DIR/$script" ]; then cp -a "$SCRIPT_DIR/$script" "$BACKUP_DIR/$script"; fi
-done
-restore() {
-    local script
-    for script in "${SCRIPTS[@]}"; do
-        if [ -f "$BACKUP_DIR/$script" ]; then install -o root -g root -m 0755 "$BACKUP_DIR/$script" "$SCRIPT_DIR/$script"; else rm -f "$SCRIPT_DIR/$script"; fi
-    done
+# 目录级原子部署：先把整套脚本装进 ${SCRIPT_DIR}.new.XXXXXX，再整体 rename 替换。
+# 逐文件 install 的旧做法被中断时会留下「半新半旧」的脚本集；rename 只有全旧或全新两种状态。
+# 正在运行的 menu.sh 已经打开了旧 inode，目录被换走不会影响它的继续执行。
+NEW_SCRIPTS_DIR=$(mktemp -d "${SCRIPT_DIR}.new.XXXXXX") || { echo '无法创建脚本暂存目录，现有安装保持不变。' >&2; exit 1; }
+OLD_SCRIPTS_DIR="${SCRIPT_DIR}.old.$$"
+restore_dir() {
+    # 交换过程失败时把旧目录换回来（只有第一次 rename 成功后才存在 .old）。
+    [ -d "$OLD_SCRIPTS_DIR" ] || return 0
+    rm -rf "$SCRIPT_DIR" 2>/dev/null || true
+    mv "$OLD_SCRIPTS_DIR" "$SCRIPT_DIR" 2>/dev/null || true
 }
-for script in "${SCRIPTS[@]}"; do
-    if ! install -o root -g root -m 0755 "$TMP_DIR/$script" "$SCRIPT_DIR/$script"; then restore; exit 1; fi
+# 收到 SIGINT/SIGTERM/SIGHUP 时也要回滚并释放锁，不能只在 install 返回失败时回滚。
+trap 'restore_dir; cleanup_update_tmp; release_scripts_lock; exit 1' INT TERM HUP
+# 目录里可能有非脚本文件（.initialized 等），整体替换前先带过去，否则会被当成"未初始化"。
+for extra in "$SCRIPT_DIR"/* "$SCRIPT_DIR"/.[!.]*; do
+    [ -e "$extra" ] || continue
+    case "$(basename "$extra")" in *.sh) continue ;; esac
+    cp -a "$extra" "$NEW_SCRIPTS_DIR/" || { echo '复制脚本目录附加文件失败，现有安装保持不变。' >&2; restore_dir; exit 1; }
 done
+for script in "${SCRIPTS[@]}"; do
+    if ! install -o root -g root -m 0755 "$TMP_DIR/$script" "$NEW_SCRIPTS_DIR/$script"; then
+        echo '写入新脚本失败，现有安装保持不变。' >&2
+        restore_dir
+        exit 1
+    fi
+done
+chmod 0755 "$NEW_SCRIPTS_DIR" || { restore_dir; exit 1; }
+if ! mv "$SCRIPT_DIR" "$OLD_SCRIPTS_DIR"; then
+    echo '替换脚本目录失败，现有安装保持不变。' >&2
+    restore_dir
+    exit 1
+fi
+if ! mv "$NEW_SCRIPTS_DIR" "$SCRIPT_DIR"; then
+    restore_dir
+    echo '替换脚本目录失败，已恢复原脚本目录。' >&2
+    exit 1
+fi
+NEW_SCRIPTS_DIR=''
+rm -rf "$OLD_SCRIPTS_DIR"
+trap - INT TERM HUP
 echo 'OpenWrt 管理脚本已完成审核发布引用下载、语法校验和事务式更新。'

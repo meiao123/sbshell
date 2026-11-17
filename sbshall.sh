@@ -43,7 +43,6 @@ resolve_main_commit() {
         *)
             if [ "${#SBSHELL_PINNED_COMMIT}" -eq 40 ]; then
                 printf '%s\n' "$SBSHELL_PINNED_COMMIT"
-                unset SBSHELL_PINNED_COMMIT
                 return 0
             fi
             ;;
@@ -139,8 +138,13 @@ verify_manifest_entry() {
     local manifest="$1" manifest_name="$2" file="$3" hash actual
     [ -f "$manifest" ] || { echo '未找到 SHA256SUMS，拒绝安装（无法校验下载内容）。' >&2; return 1; }
     if ! command -v sha256sum >/dev/null 2>&1; then
-        echo '未找到 sha256sum，本次跳过下载内容校验（建议使用带 sha256sum 的 busybox 或安装 coreutils-sha256sum）。' >&2
-        return 0
+        # 精简固件只有 busybox 的 sha256sum applet：用函数兜底，保留下面的调用写法。
+        if command -v busybox >/dev/null 2>&1; then
+            sha256sum() { busybox sha256sum "$@"; }
+        else
+            echo '未找到 sha256sum，本次跳过下载内容校验（建议使用带 sha256sum 的 busybox 或安装 coreutils-sha256sum）。' >&2
+            return 0
+        fi
     fi
     hash=$(awk -v target="$manifest_name" '$2 == target { print $1; exit }' "$manifest")
     [ -n "$hash" ] || { echo "SHA256SUMS 中没有 $manifest_name 的条目。" >&2; return 1; }
@@ -194,9 +198,10 @@ PKG_UPDATED=false
 install_package() {
     local package="$1"
     if ! $PKG_UPDATED; then
+        # 索引刷新失败必须显式 return 1（否则只在成功后才标记已刷新，失败会被当成已刷新）。
         case "$PKG_MGR" in
-            opkg) opkg update ;;
-            apk)  apk update ;;
+            opkg) opkg update || return 1 ;;
+            apk)  apk update || return 1 ;;
             none) echo -e "${RED}未找到 opkg 或 apk 包管理器。${NC}" >&2; return 1 ;;
         esac
         PKG_UPDATED=true
@@ -213,9 +218,10 @@ ensure_command() {
     command -v "$command" >/dev/null 2>&1 || install_package "$package"
 }
 
-ensure_command curl curl
-ensure_command bash bash
-ensure_command nft nftables
+# 失败必须显式处理：set -e 下裸调用会静默退出，后面的「安装失败」提示永远走不到。
+ensure_command curl curl || { echo -e "${RED}curl 安装失败。${NC}" >&2; exit 1; }
+ensure_command bash bash || { echo -e "${RED}bash 安装失败。${NC}" >&2; exit 1; }
+ensure_command nft nftables || { echo -e "${RED}nft 安装失败。${NC}" >&2; exit 1; }
 
 command -v curl >/dev/null 2>&1 || { echo -e "${RED}curl 安装失败。${NC}" >&2; exit 1; }
 command -v bash >/dev/null 2>&1 || { echo -e "${RED}bash 安装失败。${NC}" >&2; exit 1; }
@@ -226,6 +232,8 @@ install -d -o root -g root -m 0755 "$SCRIPT_DIR"
 bootstrap_tmp=$(mktemp -d /tmp/sbshell-bootstrap.XXXXXX) || { echo -e "${RED}无法创建主脚本临时目录。${NC}" >&2; exit 1; }
 trap 'rm -rf "$bootstrap_tmp"' EXIT
 commit=$(resolve_main_commit) || { echo -e "${RED}无法获取 main 当前 commit SHA，已中止更新（无法安全固定版本）。${NC}" >&2; exit 1; }
+# 函数内的 unset 写在 $() 子 shell 里永远无效，只能在父 shell 真正清掉 pin。
+unset SBSHELL_PINNED_COMMIT 2>/dev/null || true
 echo -e "${CYAN}本次更新已固定到 main commit: $commit${NC}"
 if ! download_bootstrap_menu "$commit" "$bootstrap_tmp/menu.sh" "$bootstrap_tmp/SHA256SUMS"; then
     echo -e "${RED}主脚本下载或完整性校验失败，已中止更新。${NC}" >&2; exit 1
@@ -243,7 +251,8 @@ export SBSHELL_PINNED_COMMIT="$commit"
 echo -e "${GREEN}主脚本下载并校验完成（代码引用: main@$commit）。${NC}"
 echo -e "${YELLOW}注意：脚本会修改系统网络、防火墙和 sing-box 配置，请确认已做好备份。${NC}"
 
-trap - EXIT
+# exec 会替换当前 shell，EXIT trap 不会触发；这里必须显式删掉引导临时目录。
+rm -rf "$bootstrap_tmp"; trap - EXIT
 
 # 此时环境变量 REPO_RAW 已经 export，menu.sh 可以直接读取
 exec bash "$SCRIPT_DIR/menu.sh" "$@"

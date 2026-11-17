@@ -85,7 +85,7 @@ printf 'BACKEND_URL=\nSUBSCRIPTION_URL=https://old.example/sub\nTPROXY_TEMPLATE_
 before=$(sha256sum "$defaults_file" | awk '{print $1}')
 
 # 注意这是 BRE：括号不转义才是字面量（`\(` 在 BRE 里是分组，会假失败）。
-assert_grep 'valid_subscription() {' "$set_defaults" "set_defaults.sh 带上与 manual_input.sh 相同的校验函数"
+assert_grep 'valid_subscription() {' "$SRC/openwrt/lib.sh" "订阅校验已收敛到 lib.sh（set_defaults 与 manual_input 共用）"
 
 # 含空格的订阅地址（4 个 read：后端 / 订阅 / TProxy / TUN）
 out=$(printf 'https://b.example/x\nhttps://s.example/a b\nhttps://t.example/t.json\nhttps://u.example/u.json\n' \

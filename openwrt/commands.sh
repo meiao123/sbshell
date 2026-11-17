@@ -37,7 +37,16 @@ function show_submenu() {
 
 function handle_submenu_choice() {
     while true; do
-        read -rp "请选择操作: " choice
+        # A-20/E1：菜单必须在每次 read 之前打印——只放在外层 while 时，选完 1 回到这里
+        # 屏幕上只剩一行裸的「请选择操作:」，用户看不到还有哪些选项。
+        show_submenu
+        # E2：stdin EOF（管道输入用尽/非交互）时 read 失败，choice 保持不变会反复走
+        # `*)` 分支刷屏占满 CPU；这里直接退出子菜单并说明原因。
+        if ! read -rp "请选择操作: " choice; then
+            echo
+            echo -e "${RED}输入已结束（EOF），返回主菜单。${NC}"
+            return 0
+        fi
         case $choice in
             1) view_firewall_rules ;;
             2) check_config ;;
@@ -45,16 +54,12 @@ function handle_submenu_choice() {
             0) return 0 ;;
             *) echo -e "${RED}无效的选择${NC}" ;;
         esac
-        # A-20：菜单由外层 while 统一打印（下方 `while $menu_active` 里的 show_submenu），
-        # 这里再打一次会在选 0 退出时多印一遍。
     done
-    return 0  # 确保函数结束时返回 0
 }
 
 # 显示并处理二级菜单
 menu_active=true
 while $menu_active; do
-    show_submenu
     handle_submenu_choice
     choice_returned=$?  # 捕获函数返回值
     if [[ $choice_returned -eq 0 ]]; then

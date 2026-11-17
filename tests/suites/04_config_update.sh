@@ -20,7 +20,7 @@ TEMPLATE_URL=https://tpl.test/template.json
 EOF
 fixture_write template.json "$NEW_CONFIG"
 
-run_with_timeout bash /etc/sing-box/scripts/manual_update.sh >/tmp/mu1.out 2>&1
+printf 'n\n' | run_with_timeout bash /etc/sing-box/scripts/manual_update.sh >/tmp/mu1.out 2>&1
 rc=$?
 assert_rc "$rc" 0 "留空后端地址时仍能更新（旧代码直接 exit 1）"
 assert_eq "$(jq -c . /etc/sing-box/config.json)" "$(printf '%s' "$NEW_CONFIG" | jq -c .)" "配置已更新"
@@ -35,7 +35,7 @@ BACKEND_URL=https://backend.test
 SUBSCRIPTION_URL=tk&file=https://evil.test/x
 TEMPLATE_URL=https://tpl.test/template.json
 EOF
-run_with_timeout bash /etc/sing-box/scripts/manual_update.sh >/tmp/mu3.out 2>&1
+printf 'n\n' | run_with_timeout bash /etc/sing-box/scripts/manual_update.sh >/tmp/mu3.out 2>&1
 rc=$?
 assert_not_rc "$rc" 0 "含 &file= 的订阅地址被拒绝"
 assert_eq "$(jq -c . /etc/sing-box/config.json)" "$(printf '%s' "$VALID_CLIENT_CONFIG" | jq -c .)" "拒绝时未改动现有配置"
@@ -43,7 +43,7 @@ assert_eq "$(jq -c . /etc/sing-box/config.json)" "$(printf '%s' "$VALID_CLIENT_C
 suite_begin "manual_update: invalid downloaded config is not committed (atomicity)"
 
 fixture_write template.json 'this is not json'
-run_with_timeout bash /etc/sing-box/scripts/manual_update.sh >/tmp/mu4.out 2>&1
+printf 'n\n' | run_with_timeout bash /etc/sing-box/scripts/manual_update.sh >/tmp/mu4.out 2>&1
 rc=$?
 assert_not_rc "$rc" 0 "无效配置导致失败"
 assert_eq "$(jq -c . /etc/sing-box/config.json)" "$(printf '%s' "$VALID_CLIENT_CONFIG" | jq -c .)" "失败时保留旧配置"
@@ -94,7 +94,7 @@ fixture_write template.json "$NEW_CONFIG"
 export SBSHELL_INITD_NOISE=1
 # 让桩 curl 慢 2 秒，这样倒计时一定会打印出中间值（需求③：更新配置也要有 30s 倒计时）
 export SBSHELL_CURL_SLEEP=2
-run_with_timeout bash /etc/sing-box/scripts/manual_update.sh >/tmp/mu_noise.out 2>&1
+printf 'n\n' | run_with_timeout bash /etc/sing-box/scripts/manual_update.sh >/tmp/mu_noise.out 2>&1
 rc=$?
 unset SBSHELL_INITD_NOISE SBSHELL_CURL_SLEEP
 assert_rc "$rc" 0 "服务脚本吐 ubus 噪音时更新依然成功"

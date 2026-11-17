@@ -54,6 +54,8 @@ for f in sbshall.sh openwrt/*.sh; do
     grep -qE '(^|[^-[:alnum:]_])install[[:space:]]+-' "$SBSHELL_SRC/$f" || continue
     if grep -q 'command -v install' "$SBSHELL_SRC/$f"; then
         pass "$f 自带 install 兜底"
+    elif grep -q '_sbshell_lib_dir/lib.sh' "$SBSHELL_SRC/$f"; then
+        pass "$f 通过 lib.sh 获得 install 兜底"
     else
         fail "$f 依赖 install 却没有兜底（busybox 上会 command not found）"
     fi

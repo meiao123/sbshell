@@ -13,7 +13,7 @@ Sbshell 是一款针对 官方sing-box 的辅助运行脚本，旨在让官方si
 - **便捷命令**：集成常用命令，避免手动查找与复制的繁琐。
 - **在线更新**：支持脚本在线更新，始终保持最新版本。
 - **代码来源**：一键安装与脚本自更新直接使用 `main` 分支当前代码，不再使用 `RELEASE` 发布指针；`main` 是唯一的在线更新源。
-- **完整性校验**：每次自更新都会先取仓库根的 `SHA256SUMS`，逐文件核对 SHA-256 后才安装；校验失败即中止并保留现有安装。设备上没有 `sha256sum`（精简 busybox）时会打印警告并跳过校验。
+- **完整性校验**：每次自更新都会先取仓库根的 `SHA256SUMS`，逐文件核对 SHA-256 后才安装；校验失败即中止并保留现有安装。设备上没有 `sha256sum` 时会尝试 `busybox sha256sum`；两者都没有时打印警告并跳过校验（精简 busybox 上的既有取舍）。清单必须覆盖下载目录里的每个脚本，缺条目同样拒绝安装。
 - **面板适配**：优先适配 sing-box 1.14+ 原生 API + Dashboard；旧版 `experimental.clash_api` 的 Zashboard/MetaCubeXD/YACD 管理仍保留，仅在旧配置下启用。
 
 
@@ -24,6 +24,8 @@ Sbshell 是一款针对 官方sing-box 的辅助运行脚本，旨在让官方si
 - Debian / Ubuntu / Armbian 相关的脚本、模板与测试已整体移除，仓库只保留 OpenWrt 路径。
 - 依赖：需要 `bash` 与 `curl`（一键脚本本身就是 bash 脚本）；面板解压需要 `unzip`，缺失时安装面板会按需通过 `apk`/`opkg` 自动安装，装不上则中止并说明原因。
 - 防火墙仅支持 nftables，不支持 iptables；TUN 模式需要内核提供 `/dev/net/tun`。菜单里的「环境检查」会直接报出 `sing-box` 版本、`nft` 是否可用以及 `/dev/net/tun` 是否存在。
+- **TProxy 模式目前只代理 IPv4**：`configure_tproxy.sh` 在两条链首行显式 `meta nfproto ipv6 return`，IPv6 流量既不代理也不被拦截（避免落到没人监听的 tproxy 端口）。需要代理 v6 请用 TUN 模式。
+- **内核版本与模板要匹配**：ImmortalWrt 25.12 的 feed 包是 sing-box 1.12.25，而仓库默认模板要求 1.14+（`services[].type=api`、`http_clients`）。安装脚本会在检测到内核低于 1.14 时告警；请改用 1.12 兼容模板，或保证能连 GitHub 安装上游最新版。
 - 已在 ImmortalWrt 25.12.2 上实际使用；真机上踩到的问题（busybox 没有 `install`、HTTP 500 被误报成下载超时等）与修法都记在 `openwrt/` 内的注释里。
 - 自定义固件请确认已包含 nftables 与 tun 相关内核模块（`kmod-nft-tproxy`、`kmod-tun` 等）。
 
@@ -51,9 +53,18 @@ bash <(curl -sL https://raw.githubusercontent.com/meiao123/sbshell/refs/heads/ma
   「装不上」。**注意**：配置里的 `external_ui_download_url` 会**优先于**这套自动解析被“默认 UI”
   使用 —— 想始终拿最新，就把配置里那一行删掉（本仓库自带模板已删除该项）；填死版本号等于永远
   固定在该版本。
-- **脚本完整性校验**：仓库根的 `SHA256SUMS` 覆盖 `sbshall.sh` 与 `openwrt/*.sh`，自更新会在
+- **脚本完整性校验**：仓库根的 `SHA256SUMS` 覆盖 `sbshall.sh`、`openwrt/*.sh` 与公共库 `openwrt/lib.sh`，自更新会在
   安装前逐文件核对；CI 也会比对清单与实际文件，防止清单漂移。它只能防传输损坏与中间层替换，
   **不等于仓库签名**；想更强保证请自行核对 commit（`git log -1`）。
+- **公共实现集中在 `openwrt/lib.sh`**：busybox `install` 兜底、URL/订阅校验、明文 HTTP 提示、默认值解析、
+  互斥锁、原子提交（`commit_file`）都只有一份实现，由各入口 `source`。`sbshall.sh`/`menu.sh` 因运行早于
+  该库落地、`install_singbox.sh` 因是 `#!/bin/sh`（busybox ash）、以及 cron 生成体因必须自包含，仍保留
+  各自内联副本（有意为之）。缺 `lib.sh` 时入口会明确提示「请先在菜单 9 更新脚本」。
+- **脚本更新是目录级原子替换**：整批脚本先装进 `/etc/sing-box/scripts.new.XXXXXX`，再整体 rename 成
+  `scripts`，目录里的 `.initialized` 等非脚本文件会一并带过去。中途失败只会是"全旧"，不会出现半新半旧。
+- **防火墙状态两阶段提交**：下发规则前先写 `tproxy.state.pending` / `tun.state.pending`，`nft -f` 成功后
+  才落正式 state 并删除 pending。若在两步之间断电/被 kill，下一次 `configure_*` 或 `clean_nft.sh` 会把
+  `.pending` 当作 Sbshell 所有并回收，不再留下"表在、state 不在"的无主表。
 - **面板打开是空白页（PWA 缓存）**：面板是 Vite PWA，浏览器会用 Service Worker 缓存旧页面。
   UI 更新后若打开是空白（但标题栏有内容），请在浏览器里对 `http://<路由器IP>:9095/ui/` 注销
   Service Worker 并清掉该站点的 Cache Storage（或先用无痕窗口验证）—— 这属于浏览器端缓存，

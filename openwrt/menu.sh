@@ -49,7 +49,6 @@ resolve_main_commit() {
         *)
             if [ "${#SBSHELL_PINNED_COMMIT}" -eq 40 ]; then
                 printf '%s\n' "$SBSHELL_PINNED_COMMIT"
-                unset SBSHELL_PINNED_COMMIT
                 return 0
             fi
             ;;
@@ -111,20 +110,32 @@ github_api_download() {
 github_archive_download() {
     local path="$1" ref="$2" output="$3" archive prefix entry
     command -v tar >/dev/null 2>&1 || return 1
-    archive=$(mktemp /tmp/sbshell-archive.XXXXXX) || return 1
-    if ! curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 120 \
-        "https://github.com/meiao123/sbshell/archive/$ref.tar.gz" -o "$archive"; then
-        rm -f "$archive"; return 1
+    # 归档缓存：raw/api 都失败时，旧实现会为每个文件各下一次 tar.gz（19 次 × max-time 120）。
+    # 同一批次只下载一次到 $SBSHELL_ARCHIVE_CACHE，其余文件直接从缓存里 tar -xOzf 提取。
+    if [ -n "${SBSHELL_ARCHIVE_CACHE:-}" ] && [ "${SBSHELL_ARCHIVE_REF:-}" = "$ref" ] && [ -s "$SBSHELL_ARCHIVE_CACHE" ]; then
+        archive="$SBSHELL_ARCHIVE_CACHE"
+    else
+        archive=$(mktemp /tmp/sbshell-archive.XXXXXX) || return 1
+        if ! curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 120 \
+            "https://github.com/meiao123/sbshell/archive/$ref.tar.gz" -o "$archive"; then
+            rm -f "$archive"; return 1
+        fi
+        [ -s "$archive" ] || { rm -f "$archive"; return 1; }
+        if [ -n "${SBSHELL_ARCHIVE_CACHE:-}" ]; then
+            if mv -f "$archive" "$SBSHELL_ARCHIVE_CACHE"; then
+                archive="$SBSHELL_ARCHIVE_CACHE"
+                SBSHELL_ARCHIVE_REF="$ref"
+            fi
+        fi
     fi
-    [ -s "$archive" ] || { rm -f "$archive"; return 1; }
     list=$(mktemp /tmp/sbshell-archive-list.XXXXXX) || { rm -f "$archive"; return 1; }
-    if ! tar -tzf "$archive" > "$list" 2>/dev/null; then rm -f "$archive" "$list"; return 1; fi
+    if ! tar -tzf "$archive" > "$list" 2>/dev/null; then rm -f "$list"; return 1; fi
     first=$(head -n1 "$list") || true; prefix=${first%%/*}; rm -f "$list"
-    [ -n "$prefix" ] || { rm -f "$archive"; return 1; }
+    [ -n "$prefix" ] || return 1
     entry="$prefix/$path"
-    case "$entry" in *..*|/*) rm -f "$archive"; return 1;; esac
-    tar -xOzf "$archive" "$entry" > "$output" 2>/dev/null || { rm -f "$output" "$archive"; return 1; }
-    rm -f "$archive"; [ -s "$output" ] || { rm -f "$output"; return 1; }
+    case "$entry" in *..*|/*) return 1;; esac
+    tar -xOzf "$archive" "$entry" > "$output" 2>/dev/null || { rm -f "$output"; return 1; }
+    [ -s "$output" ] || { rm -f "$output"; return 1; }
 }
 download_repo_file() {
     local path="$1" ref="$2" output="$3" transport="$4"
@@ -141,7 +152,7 @@ download_repo_file() {
     rm -f "$output"; return 1
 }
 
-SCRIPTS=(check_environment.sh install_singbox.sh manual_input.sh manual_update.sh auto_update.sh configure_tproxy.sh configure_tun.sh start_singbox.sh stop_singbox.sh clean_nft.sh set_defaults.sh commands.sh switch_mode.sh manage_autostart.sh check_config.sh update_scripts.sh update_ui.sh menu.sh)
+SCRIPTS=(check_environment.sh install_singbox.sh manual_input.sh manual_update.sh auto_update.sh configure_tproxy.sh configure_tun.sh start_singbox.sh stop_singbox.sh clean_nft.sh set_defaults.sh commands.sh switch_mode.sh manage_autostart.sh check_config.sh update_scripts.sh update_ui.sh lib.sh menu.sh)
 install -d -o root -g root -m 0755 "$SCRIPT_DIR"
 
 confirm_yes() {
@@ -234,11 +245,16 @@ uninstall_sbshell() {
 # --- 下载内容完整性校验（A-12）：与 update_scripts.sh 里的同名函数逐字一致 ---
 verify_script_hashes() {
     # $1=清单路径 $2=脚本目录 $3=清单里的路径前缀（如 openwrt）
-    local manifest="$1" dir="$2" prefix="$3" hash name actual checked=0
+    local manifest="$1" dir="$2" prefix="$3" hash name actual checked=0 total=0
     [ -f "$manifest" ] || { echo '未找到 SHA256SUMS，拒绝安装（无法校验下载内容）。' >&2; return 1; }
     if ! command -v sha256sum >/dev/null 2>&1; then
-        echo '未找到 sha256sum，本次跳过下载内容校验（建议使用带 sha256sum 的 busybox 或安装 coreutils-sha256sum）。' >&2
-        return 0
+        # 精简固件只有 busybox 的 sha256sum applet：用函数兜底，保留下面的调用写法。
+        if command -v busybox >/dev/null 2>&1; then
+            sha256sum() { busybox sha256sum "$@"; }
+        else
+            echo '未找到 sha256sum，本次跳过下载内容校验（建议使用带 sha256sum 的 busybox 或安装 coreutils-sha256sum）。' >&2
+            return 0
+        fi
     fi
     while read -r hash name; do
         case "$hash" in ''|\#*) continue ;; esac
@@ -250,6 +266,9 @@ verify_script_hashes() {
         checked=$((checked + 1))
     done < "$manifest"
     [ "$checked" -gt 0 ] || { echo 'SHA256SUMS 中没有本目录的条目，拒绝安装。' >&2; return 1; }
+    # 覆盖数必须等于目录里的脚本数：新增脚本忘加哈希时不能只校验老脚本就安装。
+    for name in "$dir"/*.sh; do [ -e "$name" ] || continue; total=$((total + 1)); done
+    [ "$total" -eq "$checked" ] || { echo "SHA256SUMS 只覆盖 $checked/$total 个脚本，拒绝安装（新增脚本可能没有哈希）。" >&2; return 1; }
     return 0
 }
 verify_manifest_entry() {
@@ -281,18 +300,31 @@ download_script_batch() {
     verify_script_hashes "$tmp_dir/SHA256SUMS" "$tmp_dir" openwrt
 }
 update_scripts() {
-    local tmp backup s rc=0 commit transport verified=0
-    local -a backed_up=()
+    local tmp backup s rc=0 commit transport verified=0 NEW_SCRIPTS_DIR='' OLD_SCRIPTS_DIR='' extra
     tmp=$(mktemp -d /tmp/sbshell-openwrt.XXXXXX) || return 1
     backup=$(mktemp -d /tmp/sbshell-openwrt-backup.XXXXXX) || { rm -rf "$tmp"; return 1; }
-    restore_scripts() {
-        local item
-        for item in "${backed_up[@]}"; do install -o root -g root -m 0755 "$backup/$item" "$SCRIPT_DIR/$item" || true; done
+    # 归档缓存：同一批次只下一次 tar.gz（raw/api 都失败时不再逐文件重下）。
+    SBSHELL_ARCHIVE_CACHE=$(mktemp /tmp/sbshell-repo-archive.XXXXXX) || SBSHELL_ARCHIVE_CACHE=''
+    SBSHELL_ARCHIVE_REF=''
+    cleanup_update_ctx() {
+        rm -rf "$tmp" "$backup"
+        [ -z "${NEW_SCRIPTS_DIR:-}" ] || rm -rf "$NEW_SCRIPTS_DIR"
+        [ -z "${SBSHELL_ARCHIVE_CACHE:-}" ] || rm -f "$SBSHELL_ARCHIVE_CACHE"
     }
-    commit=$(resolve_main_commit) || { echo -e "${RED}无法获取 main 当前 commit SHA，已中止更新（无法安全固定版本）。${NC}" >&2; rm -rf "$tmp" "$backup"; return 1; }
+    restore_scripts() {
+        # 目录级部署：交换失败时把旧目录换回来（只有第一次 rename 成功后才存在 .old）。
+        [ -d "${OLD_SCRIPTS_DIR:-}" ] || return 0
+        rm -rf "$SCRIPT_DIR" 2>/dev/null || true
+        mv "$OLD_SCRIPTS_DIR" "$SCRIPT_DIR" 2>/dev/null || true
+    }
+    # 收到 SIGINT/SIGTERM/SIGHUP 也要回滚并清理临时目录，不能只在 install 返回失败时回滚。
+    trap 'restore_scripts; cleanup_update_ctx; exit 1' INT TERM HUP
+    commit=$(resolve_main_commit) || { trap - INT TERM HUP; echo -e "${RED}无法获取 main 当前 commit SHA，已中止更新（无法安全固定版本）。${NC}" >&2; cleanup_update_ctx; return 1; }
+    # 函数内的 unset 写在 $() 子 shell 里永远无效，只能在父 shell 真正清掉 pin。
+    unset SBSHELL_PINNED_COMMIT 2>/dev/null || true
     echo -e "${CYAN}本次脚本更新已固定到 main commit: $commit${NC}"
     for transport in raw api archive; do
-        rm -rf "$tmp"; mkdir -p "$tmp" || return 1
+        rm -rf "$tmp"; mkdir -p "$tmp" || { trap - INT TERM HUP; cleanup_update_ctx; return 1; }
         if download_script_batch "$commit" "$transport" "$tmp"; then verified=1; break; fi
         case "$transport" in
             raw) echo -e "${YELLOW}Raw 下载失败或完整性校验失败，切换 GitHub Contents API。${NC}" >&2 ;;
@@ -300,21 +332,51 @@ update_scripts() {
             archive) echo -e "${RED}GitHub commit archive 下载或完整性校验仍然失败。${NC}" >&2 ;;
         esac
     done
-    if [ "$verified" -ne 1 ]; then rm -rf "$tmp" "$backup"; return 1; fi
+    if [ "$verified" -ne 1 ]; then trap - INT TERM HUP; cleanup_update_ctx; return 1; fi
+    # 目录级原子部署：整套脚本先装进 ${SCRIPT_DIR}.new.XXXXXX，再整体 rename 替换。
+    # 逐文件 install 被中断会留下「半新半旧」的脚本集；rename 只有全旧或全新两种状态。
+    NEW_SCRIPTS_DIR=$(mktemp -d "${SCRIPT_DIR}.new.XXXXXX") || { trap - INT TERM HUP; echo -e "${RED}无法创建脚本暂存目录，现有安装保持不变。${NC}" >&2; cleanup_update_ctx; return 1; }
+    OLD_SCRIPTS_DIR="${SCRIPT_DIR}.old.$$"
+    # 目录里的非脚本文件（.initialized 等）必须跟过去，否则会被当成「未初始化」。
+    for extra in "$SCRIPT_DIR"/* "$SCRIPT_DIR"/.[!.]*; do
+        [ -e "$extra" ] || continue
+        case "$(basename "$extra")" in *.sh) continue ;; esac
+        cp -a "$extra" "$NEW_SCRIPTS_DIR/" || { trap - INT TERM HUP; echo -e "${RED}复制脚本目录附加文件失败，现有安装保持不变。${NC}" >&2; restore_scripts; cleanup_update_ctx; return 1; }
+    done
     for s in "${SCRIPTS[@]}"; do
-        if [ -f "$SCRIPT_DIR/$s" ]; then
-            if ! cp -a "$SCRIPT_DIR/$s" "$backup/$s"; then echo -e "${RED}备份 $s 失败，已中止更新（现有安装保持不变）。${NC}" >&2; rm -rf "$tmp" "$backup"; return 1; fi
-            backed_up+=("$s")
+        if ! install -o root -g root -m 0755 "$tmp/$s" "$NEW_SCRIPTS_DIR/$s"; then
+            trap - INT TERM HUP
+            echo -e "${RED}写入新脚本失败，现有安装保持不变。${NC}" >&2
+            restore_scripts
+            cleanup_update_ctx
+            return 1
         fi
     done
-    for s in "${SCRIPTS[@]}"; do
-        if ! install -o root -g root -m 0755 "$tmp/$s" "$SCRIPT_DIR/$s"; then restore_scripts; rm -rf "$tmp" "$backup"; return 1; fi
-    done
-    rm -rf "$tmp" "$backup"
+    chmod 0755 "$NEW_SCRIPTS_DIR" || { trap - INT TERM HUP; restore_scripts; cleanup_update_ctx; return 1; }
+    if ! mv "$SCRIPT_DIR" "$OLD_SCRIPTS_DIR"; then
+        trap - INT TERM HUP
+        echo -e "${RED}替换脚本目录失败，现有安装保持不变。${NC}" >&2
+        restore_scripts
+        cleanup_update_ctx
+        return 1
+    fi
+    if ! mv "$NEW_SCRIPTS_DIR" "$SCRIPT_DIR"; then
+        trap - INT TERM HUP
+        restore_scripts
+        echo -e "${RED}替换脚本目录失败，已恢复原脚本目录。${NC}" >&2
+        cleanup_update_ctx
+        return 1
+    fi
+    NEW_SCRIPTS_DIR=''
+    rm -rf "$OLD_SCRIPTS_DIR"
+    cleanup_update_ctx
+    trap - INT TERM HUP
     return "$rc"
 }
 
 run() { bash "$SCRIPT_DIR/$1"; }
+# 菜单里单步失败只告警并回到菜单：run() 原样透传退出码，set -e 会连带杀掉整个交互菜单。
+run_action() { local rc=0; bash "$SCRIPT_DIR/$1" || rc=$?; [ "$rc" -eq 0 ] || echo -e "${RED}$1 失败（退出码 $rc）。${NC}" >&2; return "$rc"; }
 
 UI_DIR=/etc/sing-box/ui
 
@@ -433,19 +495,20 @@ while true; do
     echo '0. 退出'
     echo -e "${CYAN}===============================================${NC}"
     read -rp '请选择操作: ' choice
+    # 分支失败只回到菜单继续循环（选 0 仍 exit 0），不再被 set -e 带走整个菜单。
     case "$choice" in
-        1) run switch_mode.sh; run manual_input.sh; run start_singbox.sh;;
-        2) run manual_update.sh;;
-        3) run auto_update.sh;;
-        4) run start_singbox.sh;;
-        5) run stop_singbox.sh;;
-        6) run set_defaults.sh;;
-        7) run manage_autostart.sh;;
-        8) run commands.sh;;
-        9) run update_scripts.sh;;
-        10) run update_ui.sh;;
+        1) run_action switch_mode.sh && run_action manual_input.sh && run_action start_singbox.sh;;
+        2) run_action manual_update.sh;;
+        3) run_action auto_update.sh;;
+        4) run_action start_singbox.sh;;
+        5) run_action stop_singbox.sh;;
+        6) run_action set_defaults.sh;;
+        7) run_action manage_autostart.sh;;
+        8) run_action commands.sh;;
+        9) run_action update_scripts.sh;;
+        10) run_action update_ui.sh;;
         11) uninstall_sbshell;;
         0) exit 0;;
         *) echo -e "${RED}无效的选择。${NC}";;
-    esac
+    esac || true
 done

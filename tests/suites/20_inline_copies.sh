@@ -52,20 +52,24 @@ for f in "$SRC"/sbshall.sh "$SRC"/openwrt/*.sh; do
     assert_min_count "$f" 'chmod "$m"' "$anchors" "$rel: 每份兜底都处理 -m"
     assert_min_count "$f" 'chown "$o${g:+:$g}"' "$anchors" "$rel: 每份兜底都处理 -o/-g"
 done
-assert_eq "$shim_files" "10" "10 个文件内联了 install 兜底（新增下载/安装脚本时必须一并添加）"
+assert_eq "$shim_files" "5" "5 个文件内联了 install 兜底（bootstrap 三处 + cron 生成体 + lib.sh 本体）"
 
 # 用了 `install -` 却没有兜底 = 在 ImmortalWrt 上必然 command not found。
+# 实现收敛后，除 bootstrap/ash/cron 三处外，脚本通过加载 lib.sh 获得兜底。
 missing=''
 for f in "$SRC"/sbshall.sh "$SRC"/openwrt/*.sh; do
     if grep -E '(^|[^-[:alnum:]_])install[[:space:]]+-' "$f" 2>/dev/null | grep -qvE '(opkg|apk)[[:space:]]+install'; then
-        grep -q '^[[:space:]]*install() {' "$f" || missing="$missing ${f#"$SRC"/}"
+        if ! grep -q '^[[:space:]]*install() {' "$f" && ! grep -q '_sbshell_lib_dir/lib.sh' "$f"; then
+            missing="$missing ${f#"$SRC"/}"
+        fi
     fi
 done
-assert_eq "$missing" "" "所有使用 install 的脚本都自带兜底$missing"
+assert_eq "$missing" "" "所有使用 install 的脚本都自带兜底或加载 lib.sh$missing"
 
-# cron 生成体：auto_update.sh 里有两份（自身 + heredoc 给 cron 的那份）。
-assert_min_count "$SRC/openwrt/auto_update.sh" '^[[:space:]]*install() {' 2 \
-    "auto_update.sh 的 cron 生成体里也保留了 install 兜底（漏了会让 cron 静默不更新配置）"
+# cron 生成体（heredoc）必须自包含：那份内联兜底不能跟着 script 本体的收敛一起删掉。
+assert_min_count "$SRC/openwrt/auto_update.sh" '^[[:space:]]*install() {' 1 \
+    "auto_update.sh 生成给 cron 的脚本仍自带 install 兜底"
+assert_grep '_sbshell_lib_dir/lib.sh' "$SRC/openwrt/auto_update.sh" "auto_update.sh 本体加载 lib.sh"
 
 # ------------------------------------------------ 下载链：每份副本都只走 HTTPS
 suite_begin "inline copies: 下载链的 HTTPS 与路径校验在每份副本里都在"

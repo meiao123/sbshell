@@ -24,7 +24,8 @@ tests/run.sh --local    # 在本地 Linux 主机以 root 直接运行
 | `fakebin/` | `nft` `ip` `systemctl` `sing-box` `curl` `sysctl` `ss` `pidof` `opkg` `apk` `uci` `logread` `ufw` `sshd` 等 stub |
 | `fakebin-busybox/` | 模拟 busybox `grep`（不支持 `-P`），用于 OpenWrt 兼容性测试 |
 | `rc.common` / `initd/` | 极简 `/etc/rc.common` 与 OpenWrt 风格 init 脚本（`sing-box` 极简桩、`sing-box-package` 复刻包里的 UCI 门控桩） |
-| `suites/` | 21 个行为测试套件 |
+| `suites/` | 32 个行为测试套件 |
+| `../openwrt/lib.sh` | 被测的公共库（install 兜底、URL 校验、默认值、锁、原子提交、防火墙常量），随脚本一起安装 |
 
 状态都保存在 `$SBSHELL_STUB_STATE`（默认 `/tmp/sbshell-stub-state`），断言直接检查
 nft 表、ip rule/route、state 文件、锁目录、cron 文件等可观测结果。
@@ -64,6 +65,9 @@ nft 表、ip rule/route、state 文件、锁目录、cron 文件等可观测结�
 | `20_inline_copies.sh` | 批次 4 补：内联副本一致性 —— 实测这些副本**并非逐字相同**（1 份注释差异、下载链只差 `--show-error`/`2>/dev/null`），因此断言每份副本的**必备行为**（`rm -f "$2"`、`mkdir -p "$@"`、`chmod "$m"`、`chown "$o${g:+:$g}"`、`--proto '=https'`、`--tlsv1.2`、`*..*|/*` 穿越防护、`[ -s "$output" ]`），只对确实逐字相同的 `route_default_exists`/`rule_pref_for_mark` 断言哈希；另有“用 `install -` 却没带兜底就失败”与“内联兜底文件数=10” |
 | `21_busybox_compat.sh` | 批次 3 补：busybox 兼容性护栏 —— shebang 白名单、`#!/bin/sh` 脚本不得含 bash 专有语法、GNU 专有选项黑名单、`timeout` 不得当命令调用、`stat -c` 只用 `%Y`（上游 `busybox/coreutils/stat.c` 已确认支持）、`unzip/zipinfo` 自动安装。全部在**去掉整行注释**的代码行上断言（整篇匹配被骗过三次） |
 | `22_apply_phase_rollback.sh` | 批次 5b：`configure_tproxy.sh` 缺 ERR trap（A-10）—— 用 `SBSHELL_IP_FAIL_RULE_SHOW=1` 打在**没有显式 `rollback` 保护**的点上，断言被拆掉的 TUN 表由 rollback 恢复、且不留新建表；以及 state 文件原子落盘（A-09）：0600、无 `.tproxy.state.*` 残留 |
+| `31_option2_defaults.sh` | 真机回归（菜单 6 → 菜单 2）：设好默认参数后，选项 2 三个地址提示直接回车必须能沿用已配置的地址。默认值解析顺序为 `defaults.conf` → `manual.conf`：选项 6 允许留空的字段（例如 TProxy 模板地址）不再让回车被 URL 校验打回并反复重问；没有 `defaults.conf` 时也不会把 `manual.conf` 的后端/订阅写成空值 |
+| `32_audit_fixes.sh` | 全量审计（x86_64 / ImmortalWrt 25.12.2）回归：菜单失败只提示并回到菜单、默认值显式空值语义（纯模板模式）、`config.json`/`manual.conf`/`defaults.conf` 原子提交、cron 脚本原子生成与 crontab 换行、安装链路兜底（索引/内核模块）与「内核 1.12 vs 模板 1.14」版本契约、`check_config` 花括号配对解析、二级菜单重打印与 EOF 不退绕、防火墙 IPv6 显式放行 / 端口以 `config.json` 为准 / 三入口同一把 flock / 先删表后删路由 |
+| `33_structural.sh` | 结构性重构回归：公共实现只在 `lib.sh` 一份（bootstrap/ash/cron 三处例外）、各入口缺库时明确报错、`commit_file` 原子提交行为、目录级原子部署（`scripts.new` → rename、保留 `.initialized`）、自更新归档缓存（同一 commit 只下一次 `tar.gz`）、防火墙两阶段提交（`*.pending` 也算 Sbshell 所有，三份 `fw_owned` 逐字一致）、防火墙常量集中到 `lib.sh` |
 
 ## 本地开发
 

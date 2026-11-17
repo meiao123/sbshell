@@ -8,6 +8,16 @@ read -rp '是否停止 sing-box?(y/n): ' confirm_stop
 [[ "$confirm_stop" =~ ^[Yy]$ ]] || { echo -e "${CYAN}已取消。${NC}"; exit 0; }
 if ! pidof sing-box >/dev/null 2>&1; then
     echo -e "${GREEN}sing-box 未运行，无需重复停止。${NC}"
+    # E1：崩溃后进程可能已经不在了，但 nft 表/ip rule/table 100 路由还残留，先问是否清理。
+    read -rp '检测到 sing-box 未运行，是否清理残留防火墙规则？(y/n): ' confirm_residual || true
+    if [[ "$confirm_residual" =~ ^[Yy]$ ]]; then
+        if ! bash "$SCRIPT_DIR/clean_nft.sh"; then
+            echo -e "${RED}sing-box 防火墙规则清理失败（sing-box 已停止）。${NC}" >&2
+            echo -e "${YELLOW}可手工重试：bash $SCRIPT_DIR/clean_nft.sh${NC}" >&2
+            exit 1
+        fi
+        echo -e "${GREEN}sing-box 防火墙残留规则清理完成。${NC}"
+    fi
     exit 0
 fi
 if ! /etc/init.d/sing-box stop 2> >(sed '/^Command failed:.*Not found/d' >&2); then
@@ -25,4 +35,7 @@ if [[ "$confirm_cleanup" =~ ^[Yy]$ ]]; then
         exit 1
     fi
     echo -e "${GREEN}sing-box 防火墙规则清理完成。${NC}"
+else
+    # E2：不清理时输出链的 mark + table 100 本地路由会让本机出站继续被代理规则拦截。
+    echo -e "${YELLOW}保留防火墙规则会让本机出站被代理规则拦截，建议清理。${NC}"
 fi

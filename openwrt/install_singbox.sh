@@ -85,7 +85,9 @@ install_latest_singbox() {
     # 30 MB 级下载不能放 /tmp（tmpfs 即内存），放 sing-box 目录（overlay）并检查空间。
     workdir=$(mktemp -d /etc/sing-box/.pkg.XXXXXX 2>/dev/null || true)
     [ -n "$workdir" ] || { echo '无法创建包临时目录，改用发行版软件包。' >&2; return 1; }
-    trap 'rm -rf "$workdir"' EXIT INT TERM
+    # EXIT 只清理；INT/TERM 必须带 exit，否则 Ctrl+C 被吞掉后安装会继续往下跑。
+    trap 'rm -rf "$workdir"' EXIT
+    trap 'rm -rf "$workdir"; exit 130' INT TERM
     json="$workdir/release.json"
     if ! curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
             --connect-timeout 10 --max-time 120 "$SINGBOX_RELEASE_API" -o "$json"; then
@@ -142,11 +144,13 @@ install_latest_singbox() {
     return 0
 }
 
-run_opkg update
-pkg_install kmod-nft-tproxy
+# 尽力而为：离线/索引损坏时 update 失败不应把整轮初始化带走（否则连菜单都进不去）。
+run_opkg update || echo '提示：包索引刷新失败，继续尝试用本地缓存安装。' >&2
+# 纯 TUN 用户不该被 TProxy 依赖挡住：失败只提示，不中断。
+pkg_install kmod-nft-tproxy || echo '提示：kmod-nft-tproxy 安装失败，TProxy 模式可能不可用（TUN 不受影响）。' >&2
 # TUN auto_redirect 在 Linux 上使用 nftables + NFQUEUE 做预匹配；OpenWrt 官方 sing-box 包
 # 也将 kmod-nft-queue 作为依赖。自装上游 .apk 时同样显式确保该能力存在。
-pkg_install kmod-nft-queue || true
+pkg_install kmod-nft-queue || echo '提示：kmod-nft-queue 安装失败，TUN auto_redirect 将不可用。' >&2
 # sing-box 优先装上游最新稳定版（apk 固件 + 架构匹配）；任何失败都回退发行版软件包，
 # 保证「拿不到最新版」不会变成「装不上」。
 if install_latest_singbox; then
@@ -156,8 +160,23 @@ else
 fi
 # TUN 模式需要 /dev/net/tun（OpenWrt 上通常由 kmod-tun 提供）。部分目标把 tun 编进内核、
 # 没有该包，因此这里尽力而为，失败不阻断安装。
-pkg_install kmod-tun >/dev/null 2>&1 || true
+pkg_install kmod-tun >/dev/null 2>&1 || true   # 末尾注释保留，测试 05 断言本行带「|| true」
+# 包管理器只保证模块「已安装」，OpenWrt 不会立刻加载它：/dev/net/tun 可能要等重启。
+[ -e /dev/net/tun ] || { modprobe tun 2>/dev/null || insmod tun 2>/dev/null || true; }
+[ -e /dev/net/tun ] || echo '提示：/dev/net/tun 尚未出现（模块已装），TUN 模式可能需要重启后再用。' >&2
 command -v sing-box >/dev/null 2>&1 || { echo 'sing-box 安装失败。' >&2; exit 1; }
+
+# 版本契约：feed 包是 1.12.25，而仓库默认模板要求 1.14（services[].type=api、http_clients）。
+# 主版本.次版本 < 1.14 时只警告、不中止安装，避免用户对着「模板不兼容」的报错猜原因。
+sb_version=$(installed_base_version)
+sb_major=${sb_version%%.*}
+sb_rest=${sb_version#*.}
+sb_minor=${sb_rest%%.*}
+case "$sb_major" in ''|*[!0-9]*) sb_major=1; sb_minor=0 ;; esac
+case "$sb_minor" in ''|*[!0-9]*) sb_minor=0 ;; esac
+if [ "$sb_major" -lt 1 ] || { [ "$sb_major" -eq 1 ] && [ "$sb_minor" -lt 14 ]; }; then
+    echo "警告：当前内核版本 ${sb_version:-未知} 与仓库默认模板（要求 sing-box 1.14+）不兼容：请改用 1.12 兼容模板，或确保能访问 GitHub 安装上游最新版。" >&2
+fi
 
 # 预检只为「不拿坏配置去启动服务」。现有配置与当前 sing-box 版本不兼容时（例如 1.11 起废弃的
 # block/dns 特殊出站）不能让整个初始化失败：初始化失败会让 sb 每次都重跑引导、连菜单都进不去，
@@ -218,6 +237,12 @@ else
         # conffile 为空时包脚本会执行 `sing-box run -c ''`，同样起不来。
         [ -n "$(uci -q get sing-box.main.conffile 2>/dev/null || true)" ] || uci -q set sing-box.main.conffile=/etc/sing-box/config.json || true
         uci -q commit sing-box || true
+        # commit 也是 || true，所以这里显式断言开关真的落盘（否则 restart 返回 0 也没进程）。
+        if command -v uci >/dev/null 2>&1 && uci -q get sing-box.main >/dev/null 2>&1; then
+            [ "$(uci -q get sing-box.main.enabled)" = 1 ] || {
+                echo '提示：sing-box 服务的 UCI 开关未打开，服务可能不会启动。' >&2
+            }
+        fi
     fi
 fi
 
@@ -231,4 +256,10 @@ if [ "$SKIP_RESTART" != 1 ]; then
     sed '/^Command failed:.*Not found/d' "$restart_err" >&2
     rm -f "$restart_err"
     [ "$rc" -eq 0 ] || exit "$rc"
+    # restart 的 rc 只代表「调用成功」；进程可能根本没起来（UCI 门控、配置被拒等）。
+    sleep 1
+    pidof sing-box >/dev/null 2>&1 || {
+        echo 'sing-box 服务未运行（restart 返回 0 但进程不存在），请检查 /etc/config/sing-box 与日志。' >&2
+        exit 1
+    }
 fi
