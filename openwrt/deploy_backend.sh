@@ -49,8 +49,13 @@ MIN_FREE_KB=2097152   # 2 GiB：基础镜像 + pip 依赖 + 构建缓存的安�
 DEFAULTS_FILE=${SBSHELL_DEFAULTS_FILE:-/etc/sing-box/defaults.conf}
 MANUAL_FILE=${SBSHELL_MANUAL_FILE:-/etc/sing-box/manual.conf}
 MODE_FILE=${SBSHELL_MODE_FILE:-/etc/sing-box/mode.conf}
+# 记录「当前实际部署的是哪个 ref」，用于下次切换版本时提示，避免无声降级/升级。
+REF_STATE_FILE=${SBSHELL_BACKEND_REF_FILE:-/etc/sing-box/backend.ref}
+# 上游最新 main（atom feed，不耗 GitHub API 配额）。
+UPSTREAM_COMMITS_ATOM="https://github.com/$BACKEND_REPO/commits/main.atom"
 
-REF="$BACKEND_PIN"
+# 允许用环境变量覆盖默认 ref：SBSHELL_BACKEND_REF=main sb → 菜单 12 也跟随上游最新。
+REF=${SBSHELL_BACKEND_REF:-"$BACKEND_PIN"}
 BUILD_ONLY=0
 SKIP_E2E=0
 FORCE=0
@@ -96,6 +101,44 @@ parse_args() {
     case "$CONTAINER_NAME" in
         *[!A-Za-z0-9_.-]*) die "容器名只能包含字母、数字、下划线、点和短横线：$CONTAINER_NAME" ;;
     esac
+}
+
+# 上游最新 main commit（atom feed；拿不到就返回空，绝不让它成为失败点）。
+upstream_latest_sha() {
+    curl --silent --show-error --location --proto '=https' --tlsv1.2 \
+        --connect-timeout 5 --max-time 10 "$UPSTREAM_COMMITS_ATOM" 2>/dev/null \
+        | grep -m1 -oE 'Grit::Commit/[0-9a-fA-F]{40}' | sed 's#.*/##'
+}
+
+# 打印「固定版本 / 本次使用 / 上游最新」三行信息，升级前不用自己去查。
+report_versions() {
+    local latest=''
+    echo "固定版本: ${BACKEND_PIN:0:7}；本次构建使用: ${REF:0:7}"
+    latest=$(upstream_latest_sha 2>/dev/null || true)
+    if [ -z "$latest" ]; then
+        echo '上游最新: 查询失败（可忽略，不影响按固定版本构建）'
+    elif [ "$latest" = "$BACKEND_PIN" ]; then
+        echo "上游最新: ${latest:0:7}（与固定版本一致）"
+    else
+        echo "上游最新: ${latest:0:7}（固定版本已落后；可升级 BACKEND_PIN，或本次加 --ref ${latest:0:7} 试装）"
+    fi
+}
+
+# 上次部署的 ref 与本次不同就提示一句（典型场景：先用 --ref main 试新，再点菜单 12 回到固定版本）。
+warn_ref_switch() {
+    local prev=''
+    [ -f "$REF_STATE_FILE" ] || return 0
+    prev=$(sed -n '1p' "$REF_STATE_FILE" 2>/dev/null | tr -d '\r' || true)
+    case "$prev" in ''|*[!0-9a-fA-F]*) return 0 ;; esac
+    [ "$prev" = "$REF" ] && return 0
+    echo -e "${YELLOW}注意：当前运行的后端是 ${prev:0:7}，本次将切换为 ${REF:0:7}（部署成功后生效）。${NC}" >&2
+    return 0
+}
+
+# 部署成功后记录本次 ref；失败/回滚时不会写，保持旧值。
+record_ref() {
+    [ -d "$(dirname "$REF_STATE_FILE")" ] || return 0
+    printf '%s\n' "$REF" > "$REF_STATE_FILE" 2>/dev/null || true
 }
 
 # ---------- 1. 预检 ----------
@@ -343,6 +386,8 @@ e2e_check() {
 main() {
     parse_args "$@"
     preflight "$@"
+    report_versions
+    warn_ref_switch
     fetch_source
     build_image
     if [ "$BUILD_ONLY" = 1 ]; then
@@ -356,6 +401,7 @@ main() {
     else
         e2e_check
     fi
+    record_ref
     echo
     ok '后端部署完成。'
     echo -e "${CYAN}下一步：菜单 6 确认后端/订阅/模板地址，再运行菜单 2 拉取配置。${NC}"

@@ -97,6 +97,9 @@ case "$url" in
         [ "${SBSHELL_TEST_FETCH_FAIL:-0}" = 1 ] && exit 22
         tar -czf "$out" -C "${SBSHELL_TEST_SRC_PARENT}" sing-box-subscribe-test
         exit 0 ;;
+    */commits/main.atom)
+        printf '<feed><id>tag:github.com,2008:Grit::Commit/%s</id></feed>\n' "${SBSHELL_TEST_UPSTREAM_SHA:-25f9fd20d2c51420f8ef378e6d211f5937ad1caf}"
+        exit 0 ;;
     *github.com/Toperlock*) exit 0 ;;
     */config/*)
         [ "${SBSHELL_TEST_E2E_FAIL:-0}" = 1 ] && exit 7
@@ -133,6 +136,8 @@ def_file=$(mktemp)
 man_file=$(mktemp)
 mode_file=$(mktemp)
 printf 'MODE=TUN\n' > "$mode_file"
+ref_file=$(mktemp)
+: > "$ref_file"
 printf 'BACKEND_URL=http://127.0.0.1:5000/\nSUBSCRIPTION_URL=http://127.0.0.1:3001/sub/download/collection/proxy?target=sing-box\nTUN_TEMPLATE_URL=https://example.test/config.json\n' > "$def_file"
 
 deploy() { # deploy <额外env字符串> [脚本参数]...
@@ -143,13 +148,13 @@ deploy() { # deploy <额外env字符串> [脚本参数]...
         env PATH="$stub_dir:$PATH" SBSHELL_STUB_STATE="$state" \
             SBSHELL_BACKEND_BUILD_ROOT="$build_root" SBSHELL_BACKEND_WAIT_SECS=2 \
             SBSHELL_TEST_SRC_PARENT="$src_parent" SBSHELL_DEFAULTS_FILE="$def_file" \
-            SBSHELL_MANUAL_FILE="$man_file" SBSHELL_MODE_FILE="$mode_file" $st \
+            SBSHELL_MANUAL_FILE="$man_file" SBSHELL_MODE_FILE="$mode_file" SBSHELL_BACKEND_REF_FILE="$ref_file" $st \
             bash "$O/deploy_backend.sh" "$@" 2>&1
     else
         env PATH="$stub_dir:$PATH" SBSHELL_STUB_STATE="$state" \
             SBSHELL_BACKEND_BUILD_ROOT="$build_root" SBSHELL_BACKEND_WAIT_SECS=2 \
             SBSHELL_TEST_SRC_PARENT="$src_parent" SBSHELL_DEFAULTS_FILE="$def_file" \
-            SBSHELL_MANUAL_FILE="$man_file" SBSHELL_MODE_FILE="$mode_file" \
+            SBSHELL_MANUAL_FILE="$man_file" SBSHELL_MODE_FILE="$mode_file" SBSHELL_BACKEND_REF_FILE="$ref_file" \
             bash "$O/deploy_backend.sh" "$@" 2>&1
     fi
 }
@@ -284,5 +289,42 @@ case "$out" in
     *) pass '没有除零错误' ;;
 esac
 
-rm -rf "$stub_dir" "$state" "$(dirname "$build_root")" "$src_parent" "$def_file" "$man_file" "$mode_file"
+suite_begin "deploy_backend：ref 覆盖 / 版本报告 / 切换提醒"
+
+assert_grep 'SBSHELL_BACKEND_REF' "$O/deploy_backend.sh" "支持环境变量覆盖默认 ref"
+assert_grep 'REF_STATE_FILE' "$O/deploy_backend.sh" "记录已部署 ref"
+assert_grep '^upstream_latest_sha() {' "$O/deploy_backend.sh" "用 atom feed 查上游最新"
+assert_grep '^report_versions() {' "$O/deploy_backend.sh" "构建前打印版本信息"
+assert_grep '^warn_ref_switch() {' "$O/deploy_backend.sh" "切换 ref 时给出提醒"
+assert_grep '^record_ref() {' "$O/deploy_backend.sh" "部署成功后记录 ref"
+
+: > "$ref_file"
+out=$(deploy 'SBSHELL_TEST_UPSTREAM_SHA=25f9fd20d2c51420f8ef378e6d211f5937ad1caf' --build-only); rc=$?
+assert_rc "$rc" 0 "默认构建成功"
+assert_contains "$out" '与固定版本一致' "上游与固定版本一致时会说明"
+assert_eq "$(cat "$ref_file")" "" "仅构建模式不写 ref 状态"
+
+out=$(deploy 'SBSHELL_TEST_UPSTREAM_SHA=0123456789abcdef0123456789abcdef01234567' --build-only); rc=$?
+assert_rc "$rc" 0 "上游更新时仍能构建"
+assert_contains "$out" '已落后' "提醒固定版本已落后"
+assert_contains "$out" '0123456' "打印上游最新短 SHA"
+
+printf 'abcdef0123456789abcdef0123456789abcdef01\n' > "$ref_file"
+out=$(deploy 'SBSHELL_TEST_UPSTREAM_SHA=25f9fd20d2c51420f8ef378e6d211f5937ad1caf' --build-only); rc=$?
+assert_contains "$out" '将切换为' "上次 ref 与本次不同会提醒"
+assert_contains "$out" 'abcdef0' "提醒里带上当前运行的短 SHA"
+
+: > "$ref_file"
+out=$(deploy 'SBSHELL_BACKEND_REF=main SBSHELL_TEST_CONTAINER_EXISTS=1' --skip-e2e); rc=$?
+assert_rc "$rc" 0 "SBSHELL_BACKEND_REF=main 构建部署成功"
+assert_grep 'sbshell-backend:main' "$state/docker.log" "镜像 tag 使用 main"
+assert_grep 'main\.tar\.gz' "$state/curl.log" "拉取的是 main 分支源码"
+assert_eq "$(cat "$ref_file")" "main" "部署成功后记录 ref=main"
+
+: > "$ref_file"
+out=$(deploy 'SBSHELL_TEST_CONTAINER_EXISTS=1' --skip-e2e); rc=$?
+assert_rc "$rc" 0 "默认 ref 部署成功"
+assert_eq "$(cat "$ref_file")" "25f9fd20d2c51420f8ef378e6d211f5937ad1caf" "部署成功后记录固定版本"
+
+rm -rf "$stub_dir" "$state" "$(dirname "$build_root")" "$src_parent" "$def_file" "$man_file" "$mode_file" "$ref_file"
 suite_end

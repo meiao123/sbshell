@@ -75,7 +75,11 @@ GET /config/<订阅URL>&file=<模板URL>
 构建失败只告警，初始化继续（之后可用菜单 12 重试）。
 
 - 只构建不动容器：`deploy_backend.sh --build-only`；跳过端到端校验：`--skip-e2e`；
-  跟随上游最新：`--ref main`（默认固定 commit，可复现）。
+  跟随上游最新：`--ref main`（默认固定 commit，可复现）。也可以让菜单 12 跟随：
+  `SBSHELL_BACKEND_REF=main sb`（不设该变量时仍用固定 commit）。
+- **版本可见**：每次构建前打印「固定版本 / 本次使用 / 上游最新（用 atom feed 取，不耗 API 配额）」，
+  固定版本落后时会提示；部署成功后把实际 ref 记到 `/etc/sing-box/backend.ref`，下次切换版本
+  （例如先用 `main` 试装、又点菜单 12）会明确提示"本次将切换为 …"，避免无声降级。
 - 构建期间每 30 秒打印一次心跳（`SBSHELL_BACKEND_BUILD_HEARTBEAT`），并默认在
   **1800 秒**后中止（`SBSHELL_BACKEND_BUILD_TIMEOUT`）——Docker 自身没有构建超时。
 - 预检会探测 `registry-1.docker.io`：不可达时**不强制 `--pull`**（用本地缓存的基础镜像），
