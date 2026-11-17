@@ -8,6 +8,7 @@ _sbshell_lib_dir=$(cd "$(dirname "$0")" && pwd)
 
 GREEN='\033[0;32m'
 RED='\033[0;31m'
+YELLOW='\033[0;33m'
 NC='\033[0m'
 MANUAL_FILE=/etc/sing-box/manual.conf
 # DEFAULTS_FILE 不在这里直接引用，但它由 lib.sh 的 resolve_default 读取（依赖调用方变量）。
@@ -17,7 +18,6 @@ CONFIG_FILE=/etc/sing-box/config.json
 BACKUP_FILE=/etc/sing-box/config.json.bak
 MODE_FILE=/etc/sing-box/mode.conf
 LOCK_DIR=/tmp/sbshell-config.lock
-DEFAULT_TUN_TEMPLATE_URL="https://raw.githubusercontent.com/meiao123/public/refs/heads/main/singbox/configuration/1.2.x/config_sb_Tun_fakeip.json"
 LOCK_TIMEOUT=900
 # 先提权再建临时目录（exec 不触发 EXIT trap）。
 [ "$(id -u)" -eq 0 ] || exec sudo bash "$0" "$@"
@@ -25,6 +25,15 @@ TMP_DIR=$(mktemp -d /tmp/sbshell-config.XXXXXX) || exit 1
 # acquire_lock（lib.sh）会在 EXIT/INT/TERM 里与放锁一起执行本函数，这里不再自设 trap。
 cleanup() { rm -rf "$TMP_DIR"; }
 trap cleanup EXIT
+
+# 下载失败时的可操作提示：后端就在本机却连不上，基本就是容器没起/后端崩了。
+hint_local_backend() {
+    case "${BACKEND_URL:-}" in
+        http://127.0.0.1[:/]*|http://localhost[:/]*|http://\[::1\][:/]*)
+            echo -e "${YELLOW}提示：本机后端可能没在运行；可在菜单 12 构建/重建后端（Toperlock/sing-box-subscribe）。${NC}" >&2 ;;
+    esac
+    return 0
+}
 
 build_full_url() {
     if [ -n "$BACKEND_URL" ]; then
@@ -65,21 +74,20 @@ confirm_yes() {
 # 默认值解析顺序（defaults.conf 优先、键缺失/为空时回退 manual.conf、nz 参数语义）见
 # lib.sh 的 resolve_default：菜单 6 只填了部分字段时，选项 2 直接回车仍能沿用当前生效的地址。
 prompt_user_input() {
-    local default_backend default_subscription default_template sub_hint
+    local default_backend default_subscription default_template
     while true; do
-        default_backend=$(resolve_default BACKEND_URL BACKEND_URL 1)
-        default_subscription=$(resolve_default SUBSCRIPTION_URL SUBSCRIPTION_URL 1)
+        # 默认值：已保存值（defaults.conf → manual.conf）> lib.sh 出厂值；选项 2 里直接回显，
+        # 回车即用。订阅地址在这里直接回显——本机/局域网后端下没有打码的必要。
+        default_backend=$(default_or_factory BACKEND_URL)
+        default_subscription=$(default_or_factory SUBSCRIPTION_URL)
         case "$MODE" in
             TProxy) default_template=$(resolve_default TPROXY_TEMPLATE_URL TEMPLATE_URL 0);;
-            TUN) default_template=$(resolve_default TUN_TEMPLATE_URL TEMPLATE_URL 0); default_template=${default_template:-$DEFAULT_TUN_TEMPLATE_URL};;
+            TUN) default_template=$(resolve_default TUN_TEMPLATE_URL TEMPLATE_URL 0); default_template=${default_template:-$(factory_default TUN_TEMPLATE_URL)};;
             *) default_template='';;
         esac
-        # 订阅地址含用户 token，提示里只说「已隐藏」，不把原文打到终端。
-        sub_hint='无'
-        [ -z "$default_subscription" ] || sub_hint='已隐藏'
         read -rp "后端地址(留空使用默认: ${default_backend:-无}): " BACKEND_URL || { echo -e "${RED}无法读取后端地址。${NC}" >&2; return 1; }
         BACKEND_URL=${BACKEND_URL:-$default_backend}
-        read -rp "订阅地址(留空使用默认: ${sub_hint}): " SUBSCRIPTION_URL || { echo -e "${RED}无法读取订阅地址。${NC}" >&2; return 1; }
+        read -rp "订阅地址(留空使用默认: ${default_subscription:-无}): " SUBSCRIPTION_URL || { echo -e "${RED}无法读取订阅地址。${NC}" >&2; return 1; }
         SUBSCRIPTION_URL=${SUBSCRIPTION_URL:-$default_subscription}
         read -rp "配置文件地址(留空使用默认: ${default_template:-无}): " TEMPLATE_URL || { echo -e "${RED}无法读取配置文件地址。${NC}" >&2; return 1; }
         if [ -z "$TEMPLATE_URL" ]; then
@@ -159,6 +167,7 @@ if [ ! -s "$download_status" ]; then
     wait "$curl_pid" 2>/dev/null || true
     printf '\n'
     echo -e "${RED}新配置下载超时（30s，$(download_failure_reason 28)），已保留之前的 config.json。${NC}" >&2
+    hint_local_backend
     rm -f "$download_status" "$download_http"
     exit 1
 fi
@@ -171,6 +180,7 @@ if [ "$download_rc" -ne 0 ]; then
     # 与初始化路径（manual_input.sh）一致：给出 curl 退出码对应的具体原因与 HTTP 状态码，
     # 不要只说「下载失败」。这里**不打印请求 URL**（其中含订阅 token）。
     echo -e "${RED}新配置下载失败（$(download_failure_reason "$download_rc" "$download_http_code")），已保留之前的 config.json。${NC}" >&2
+    hint_local_backend
     exit 1
 fi
 printf '\r配置文件下载中，超时倒计时: 00s\n'

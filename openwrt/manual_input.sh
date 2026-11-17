@@ -17,7 +17,6 @@ DEFAULTS_FILE=/etc/sing-box/defaults.conf
 CONFIG_FILE=/etc/sing-box/config.json
 MODE_FILE=/etc/sing-box/mode.conf
 LOCK_DIR=/tmp/sbshell-config.lock
-DEFAULT_TUN_TEMPLATE_URL="https://raw.githubusercontent.com/meiao123/public/refs/heads/main/singbox/configuration/1.2.x/config_sb_Tun_fakeip.json"
 LOCK_TIMEOUT=900
 
 [ "$(id -u)" -eq 0 ] || exec sudo bash "$0" "$@"
@@ -30,15 +29,19 @@ cleanup() { local file; for file in ${TMP_FILES[@]+"${TMP_FILES[@]}"}; do rm -f 
 trap cleanup EXIT
 
 while true; do
-    read -rp '请输入后端地址(回车使用默认值可留空): ' BACKEND_URL
-    BACKEND_URL=${BACKEND_URL:-$(resolve_default BACKEND_URL BACKEND_URL 1)}
-    read -rp '请输入订阅地址(回车使用默认值可留空): ' SUBSCRIPTION_URL
-    SUBSCRIPTION_URL=${SUBSCRIPTION_URL:-$(resolve_default SUBSCRIPTION_URL SUBSCRIPTION_URL 1)}
+    # 默认值优先级：已保存值（defaults.conf → manual.conf）> lib.sh 的出厂值。
+    # 提示里把默认值显示出来：回车即采用，直接输入则覆盖（再次执行菜单 6 也能改）。
+    def_backend=$(default_or_factory BACKEND_URL)
+    def_subscription=$(default_or_factory SUBSCRIPTION_URL)
+    read -rp "请输入后端地址(回车使用默认: ${def_backend:-空}): " BACKEND_URL
+    BACKEND_URL=${BACKEND_URL:-$def_backend}
+    read -rp "请输入订阅地址(回车使用默认: ${def_subscription:-空}): " SUBSCRIPTION_URL
+    SUBSCRIPTION_URL=${SUBSCRIPTION_URL:-$def_subscription}
     read -rp '请输入配置文件地址(回车使用默认值可留空): ' TEMPLATE_URL
     if [ -z "$TEMPLATE_URL" ]; then
         case "$MODE" in
             TProxy) TEMPLATE_URL=$(resolve_default TPROXY_TEMPLATE_URL TEMPLATE_URL 0) ;;
-            TUN) TEMPLATE_URL=$(resolve_default TUN_TEMPLATE_URL TEMPLATE_URL 0); TEMPLATE_URL=${TEMPLATE_URL:-$DEFAULT_TUN_TEMPLATE_URL} ;;
+            TUN) TEMPLATE_URL=$(resolve_default TUN_TEMPLATE_URL TEMPLATE_URL 0); TEMPLATE_URL=${TEMPLATE_URL:-$(factory_default TUN_TEMPLATE_URL)} ;;
             *) echo -e "${RED}未知的模式: $MODE${NC}"; exit 1 ;;
         esac
     fi

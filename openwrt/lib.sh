@@ -231,3 +231,38 @@ SBSHELL_ROUTE_TABLE=${SBSHELL_ROUTE_TABLE:-100}
 SBSHELL_RULE_PREF=${SBSHELL_RULE_PREF:-10010}
 SBSHELL_RESERVED_V4=${SBSHELL_RESERVED_V4:-'{ 127.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 169.254.0.0/16, 172.16.0.0/12, 192.0.0.0/24, 192.0.2.0/24, 198.51.100.0/24, 192.168.0.0/16, 203.0.113.0/24, 224.0.0.0/4, 240.0.0.0/4, 255.255.255.255/32 }'}
 SBSHELL_BYPASS_V4=${SBSHELL_BYPASS_V4:-'{ 192.168.0.0/16, 10.0.0.0/8 }'}
+
+# ---------- 8. 出厂默认地址 ----------
+# 单一事实来源：菜单 6 尚未写入 defaults.conf 时，菜单 1/2/6 都回退到这里的出厂值。
+# 允许用环境变量覆盖（便于在别的设备上试跑，不影响文件内容）。
+SBSHELL_FACTORY_BACKEND_URL=${SBSHELL_FACTORY_BACKEND_URL:-'http://127.0.0.1:5000/'}
+SBSHELL_FACTORY_SUBSCRIPTION_URL=${SBSHELL_FACTORY_SUBSCRIPTION_URL:-'http://127.0.0.1:3001/CKg2abstVnOeRpm1aB4G/download/collection/proxy?target=sing-box'}
+SBSHELL_FACTORY_TUN_TEMPLATE_URL=${SBSHELL_FACTORY_TUN_TEMPLATE_URL:-'https://raw.githubusercontent.com/meiao123/public/refs/heads/main/singbox/configuration/1.14.x/config_sb_Tun_fakeip.json'}
+
+# 取某个键的出厂值；TProxy 没有出厂地址，返回空字符串。
+factory_default() { # $1=键（BACKEND_URL/SUBSCRIPTION_URL/TPROXY_TEMPLATE_URL/TUN_TEMPLATE_URL）
+    case "${1:-}" in
+        BACKEND_URL) printf '%s' "$SBSHELL_FACTORY_BACKEND_URL" ;;
+        SUBSCRIPTION_URL) printf '%s' "$SBSHELL_FACTORY_SUBSCRIPTION_URL" ;;
+        TUN_TEMPLATE_URL) printf '%s' "$SBSHELL_FACTORY_TUN_TEMPLATE_URL" ;;
+        *) printf '%s' '' ;;
+    esac
+}
+
+# 解析默认值：defaults.conf → manual.conf（resolve_default）→ 出厂值。
+# 语义：键在 defaults.conf/manual.conf 里**存在但为空**时代表用户显式留空，不再回退出厂值
+# （否则「清空后端、只用模板直连」这个合法状态会被悄悄改回来）。
+default_or_factory() { # $1=键；依赖调用方的 DEFAULTS_FILE / MANUAL_FILE
+    local key="$1" value
+    value=$(resolve_default "$key" "$key" 1)
+    if [ -n "$value" ]; then printf '%s' "$value"; return 0; fi
+    if [ -n "${DEFAULTS_FILE:-}" ] && [ -f "$DEFAULTS_FILE" ] && grep -q "^$key=" "$DEFAULTS_FILE" 2>/dev/null; then
+        printf '%s' ''
+        return 0
+    fi
+    if [ -n "${MANUAL_FILE:-}" ] && [ -f "$MANUAL_FILE" ] && grep -q "^$key=" "$MANUAL_FILE" 2>/dev/null; then
+        printf '%s' ''
+        return 0
+    fi
+    factory_default "$key"
+}

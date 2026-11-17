@@ -187,7 +187,7 @@ download_repo_file() {
     rm -f "$output"; return 1
 }
 
-SCRIPTS=(check_environment.sh install_singbox.sh manual_input.sh manual_update.sh auto_update.sh configure_tproxy.sh configure_tun.sh start_singbox.sh stop_singbox.sh clean_nft.sh set_defaults.sh commands.sh switch_mode.sh manage_autostart.sh check_config.sh update_scripts.sh update_ui.sh lib.sh menu.sh)
+SCRIPTS=(check_environment.sh install_singbox.sh manual_input.sh manual_update.sh auto_update.sh configure_tproxy.sh configure_tun.sh start_singbox.sh stop_singbox.sh clean_nft.sh set_defaults.sh commands.sh switch_mode.sh manage_autostart.sh check_config.sh update_scripts.sh update_ui.sh deploy_backend.sh lib.sh menu.sh)
 install -d -o root -g root -m 0755 "$SCRIPT_DIR"
 
 confirm_yes() {
@@ -521,6 +521,21 @@ fi
 # 失败只告警，不阻挡菜单显示。
 install_default_ui || true
 
+# 本机后端体检（P4）：只在默认后端指向回环地址时探测，最多等 2 秒；不可达就给一句可操作提示。
+# 远程后端不该被这个检查打扰，所以先看地址前缀。
+backend_hint() {
+    local backend
+    backend=$(awk -F= '$1 == "BACKEND_URL" {sub(/^[^=]*=/, ""); print; exit}' /etc/sing-box/defaults.conf 2>/dev/null || true)
+    case "$backend" in
+        http://127.0.0.1[:/]*|http://localhost[:/]*|http://\[::1\][:/]*) ;;
+        *) return 0 ;;
+    esac
+    curl --fail --silent --max-time 2 -o /dev/null "$backend" 2>/dev/null && return 0
+    echo -e "${YELLOW}提示：本机后端 $backend 当前不可达；可用菜单 12 构建/重建后端（Toperlock/sing-box-subscribe）。${NC}" >&2
+    return 0
+}
+backend_hint || true
+
 while true; do
     echo -e "${CYAN}=========== Sbshell OpenWrt 管理菜单 ===========${NC}"
     echo '1. TProxy/TUN 模式切换'
@@ -534,6 +549,7 @@ while true; do
     echo '9. 更新脚本'
     echo '10. 更新控制面板'
     echo '11. 卸载Sbshell'
+    echo '12. 部署/重建后端（Docker 本地构建）'
     echo '0. 退出'
     echo -e "${CYAN}===============================================${NC}"
     read -rp '请选择操作: ' choice
@@ -550,6 +566,7 @@ while true; do
         9) run_action update_scripts.sh;;
         10) run_action update_ui.sh;;
         11) uninstall_sbshell;;
+        12) run_action deploy_backend.sh;;
         0) exit 0;;
         *) echo -e "${RED}无效的选择。${NC}";;
     esac || true

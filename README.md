@@ -12,6 +12,9 @@ Sbshell 是一款针对 官方sing-box 的辅助运行脚本，旨在让官方si
 - **网络配置**：内置网络配置模块，可快速修改系统 IP、网关和 DNS，自动提示是否需要调整。
 - **便捷命令**：集成常用命令，避免手动查找与复制的繁琐。
 - **在线更新**：支持脚本在线更新，始终保持最新版本。
+- **后端可选本地构建**：菜单 12 可在路由器上用 Docker 本地构建并部署
+  [Toperlock/sing-box-subscribe](https://github.com/Toperlock/sing-box-subscribe) 后端（固定上游 commit、
+  健康检查、端到端 `sing-box check` 校验，失败自动回滚旧容器）。
 - **代码来源**：一键安装与脚本自更新直接使用 `main` 分支当前代码，不再使用 `RELEASE` 发布指针；`main` 是唯一的在线更新源。
 - **完整性校验**：每次自更新都会先取仓库根的 `SHA256SUMS`，逐文件核对 SHA-256 后才安装；校验失败即中止并保留现有安装。设备上没有 `sha256sum` 时会尝试 `busybox sha256sum`；两者都没有时打印警告并跳过校验（精简 busybox 上的既有取舍）。清单必须覆盖下载目录里的每个脚本，缺条目同样拒绝安装。
 - **面板适配**：优先适配 sing-box 1.14+ 原生 API + Dashboard；旧版 `experimental.clash_api` 的 Zashboard/MetaCubeXD/YACD 管理仍保留，仅在旧配置下启用。
@@ -49,6 +52,28 @@ tar -xzf sb.tgz && cd sbshell-main && sha256sum -c SHA256SUMS && bash sbshall.sh
 - 初始化运行结束，输入“**sb**”进入菜单
 - 目前支持系统为 OpenWrt / ImmortalWrt。
 - 防火墙仅支持nftables，不支持iptables。
+
+## 后端（sing-box-subscribe）：可选本地构建
+
+Sbshell 只负责客户端；配置由你自己的「后端 + 订阅 + 模板」生成。后端需实现这个接口
+（与 [Toperlock/sing-box-subscribe](https://github.com/Toperlock/sing-box-subscribe) 一致）：
+
+```
+GET /config/<订阅URL>&file=<模板URL>
+```
+
+菜单 **12「部署/重建后端（Docker 本地构建）」** 会：校验 docker 与磁盘 → 拉取固定 commit 的源码 →
+`docker build` → 以 `--network host` 启动 `sbshell-backend` 容器 → 健康检查 `127.0.0.1:5000/` →
+用已保存的订阅+模板实际生成一次配置并 `sing-box check`。构建/启动失败会**保留或回滚旧容器**，不会把
+能用的后端换成一个起不来的。
+
+- 只构建不动容器：`deploy_backend.sh --build-only`；跳过端到端校验：`--skip-e2e`；
+  跟随上游最新：`--ref main`（默认固定 commit，可复现）。
+- 官方没有发布镜像，社区镜像年久失修（旧版解析 base64 订阅会直接 500），因此默认走本地构建。
+- 后端是单线程 Flask：订阅很大时生成可能超过选项 2 的 30 秒下载超时，届时先手动 `curl` 验证后端。
+- **模板版本**：本项目要求 sing-box **1.14+**。出厂模板为
+  `singbox/configuration/1.14.x/config_sb_Tun_fakeip.json`；上游文件名带 `1.2.x` 的是历史命名，
+  内容早已按 1.14 适配，仓库中保留旧路径仅为兼容旧引用。
 
 ## 安全与运维说明：
 
@@ -96,6 +121,11 @@ tar -xzf sb.tgz && cd sbshell-main && sha256sum -c SHA256SUMS && bash sbshall.sh
   运行会在超时后接管；`/etc/sing-box/` 下的 `mode.conf`、`tproxy.state`、`tun.state` 决定
   清理时该删哪些 nft 表与路由，**手工删表后请一并清理对应状态文件**，否则后续清理会认为
   没有需要处理的对象。
+- **出厂默认地址（菜单 6）**：后端、订阅、TUN 模板的出厂值集中在 `openwrt/lib.sh` 的
+  `SBSHELL_FACTORY_*`。首次运行菜单 6 直接回车即写入出厂值；之后再运行菜单 6 用新输入覆盖
+  （优先级：本轮输入 > 已保存值 > 出厂值）。**显式留空**（键存在但值为空）不会被改回出厂值，
+  这样「清空后端、只用模板直连」的合法状态不会被悄悄改回来。选项 2 现在直接回显订阅地址，
+  便于核对（本机/局域网后端下没有打码的必要）。
 
 ## 其他问题：
 

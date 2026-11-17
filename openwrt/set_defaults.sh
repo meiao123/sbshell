@@ -8,14 +8,20 @@ _sbshell_lib_dir=$(cd "$(dirname "$0")" && pwd)
 
 [ "$(id -u)" -eq 0 ] || { echo '请以 root 运行。' >&2; exit 1; }
 DEFAULTS_FILE=/etc/sing-box/defaults.conf
-DEFAULT_TUN_TEMPLATE_URL="https://raw.githubusercontent.com/meiao123/public/refs/heads/main/singbox/configuration/1.2.x/config_sb_Tun_fakeip.json"
+# 后端/订阅/TUN 模板的出厂值集中在 lib.sh（factory_default），这里只负责展示与落盘。
 install -d -m 0755 /etc/sing-box
 
-read -rp "请输入后端地址: " BACKEND_URL; BACKEND_URL=${BACKEND_URL:-$(read_value BACKEND_URL "$DEFAULTS_FILE")}
-read -rp "请输入订阅地址: " SUBSCRIPTION_URL; SUBSCRIPTION_URL=${SUBSCRIPTION_URL:-$(read_value SUBSCRIPTION_URL "$DEFAULTS_FILE")}
-read -rp "请输入TProxy配置文件地址: " TPROXY_TEMPLATE_URL; TPROXY_TEMPLATE_URL=${TPROXY_TEMPLATE_URL:-$(read_value TPROXY_TEMPLATE_URL "$DEFAULTS_FILE")}
-read -rp "请输入TUN配置文件地址: " TUN_TEMPLATE_URL; TUN_TEMPLATE_URL=${TUN_TEMPLATE_URL:-$(read_value TUN_TEMPLATE_URL "$DEFAULTS_FILE")}
-TUN_TEMPLATE_URL=${TUN_TEMPLATE_URL:-$DEFAULT_TUN_TEMPLATE_URL}
+# 展示优先级：已保存的值 > 出厂值。用户在本轮输入的值会覆盖两者——所以再执行一次菜单 6
+# 就能改掉默认地址；直接回车则保持当前生效值（首次运行即出厂值）。
+def_backend=$(read_value BACKEND_URL "$DEFAULTS_FILE"); def_backend=${def_backend:-$(factory_default BACKEND_URL)}
+def_subscription=$(read_value SUBSCRIPTION_URL "$DEFAULTS_FILE"); def_subscription=${def_subscription:-$(factory_default SUBSCRIPTION_URL)}
+def_tproxy=$(read_value TPROXY_TEMPLATE_URL "$DEFAULTS_FILE")
+def_tun=$(read_value TUN_TEMPLATE_URL "$DEFAULTS_FILE"); def_tun=${def_tun:-$(factory_default TUN_TEMPLATE_URL)}
+
+read -rp "请输入后端地址 [回车使用默认: ${def_backend:-无}]: " BACKEND_URL; BACKEND_URL=${BACKEND_URL:-$def_backend}
+read -rp "请输入订阅地址 [回车使用默认: ${def_subscription:-无}]: " SUBSCRIPTION_URL; SUBSCRIPTION_URL=${SUBSCRIPTION_URL:-$def_subscription}
+read -rp "请输入TProxy配置文件地址 [回车使用默认: ${def_tproxy:-无}]: " TPROXY_TEMPLATE_URL; TPROXY_TEMPLATE_URL=${TPROXY_TEMPLATE_URL:-$def_tproxy}
+read -rp "请输入TUN配置文件地址 [回车使用默认: ${def_tun:-无}]: " TUN_TEMPLATE_URL; TUN_TEMPLATE_URL=${TUN_TEMPLATE_URL:-$def_tun}
 
 for value in "$BACKEND_URL" "$TPROXY_TEMPLATE_URL" "$TUN_TEMPLATE_URL"; do
     [ -z "$value" ] || valid_url "$value" || { echo '所有配置 URL 必须是 http:// 或 https:// 的地址。' >&2; exit 1; }

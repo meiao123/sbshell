@@ -289,7 +289,7 @@ BACKUP_DIR=$(mktemp -d /tmp/sbshell-update-backup.XXXXXX) || { echo '无法创�
 install -d -m 0755 "$SCRIPT_DIR"
 # 取锁失败（另一个入口正在更新）就退出，绝不与它交错写入。
 acquire_scripts_lock || exit 1
-SCRIPTS=(check_environment.sh install_singbox.sh manual_input.sh manual_update.sh auto_update.sh configure_tproxy.sh configure_tun.sh start_singbox.sh stop_singbox.sh clean_nft.sh set_defaults.sh commands.sh switch_mode.sh manage_autostart.sh check_config.sh update_scripts.sh update_ui.sh lib.sh menu.sh)
+SCRIPTS=(check_environment.sh install_singbox.sh manual_input.sh manual_update.sh auto_update.sh configure_tproxy.sh configure_tun.sh start_singbox.sh stop_singbox.sh clean_nft.sh set_defaults.sh commands.sh switch_mode.sh manage_autostart.sh check_config.sh update_scripts.sh update_ui.sh deploy_backend.sh lib.sh menu.sh)
 commit=$(resolve_main_commit) || { echo -e "${RED}无法获取 main 当前 commit SHA，已中止更新（无法安全固定版本）。${NC}" >&2; exit 1; }
 # 函数内的 unset 写在 $() 子 shell 里永远无效，只能在父 shell 真正清掉 pin。
 unset SBSHELL_PINNED_COMMIT 2>/dev/null || true
