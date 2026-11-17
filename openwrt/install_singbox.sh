@@ -37,11 +37,94 @@ pkg_install() {
 }
 
 # ---------- 上游最新稳定版（按当前 CPU 架构取官方 OpenWrt .apk） ----------
-# 发行版 feed 的 sing-box 会落后上游（真机：feed 1.12.25 vs 上游 1.14.1）。上游为每个
-# OpenWrt 架构都发布了官方 apk，资产名与 `apk --print-arch` 输出一一对应（无需映射表）。
+# 发行版 feed 的 sing-box 会落后上游（真机：feed 1.12.25 vs 上游 1.14.x）。上游为每个
+# OpenWrt 架构都发布了官方包（apk 与 ipk 都有），资产名见下面的 singbox_asset_url()。
 # 本段只负责「尝试装上游最新」；失败一律回退到下面的发行版包安装，不影响可用性。
 SINGBOX_SOURCE=${SBSHELL_SINGBOX_SOURCE:-latest}   # latest | feed
+# 版本解析优先走 github.com 的 302（releases/latest → /releases/tag/vX.Y.Z），
+# 不消耗 api.github.com 的「60 次/小时/IP」配额；API 只用来取 digest/size（可选）。
 SINGBOX_RELEASE_API=https://api.github.com/repos/SagerNet/sing-box/releases/latest
+SINGBOX_RELEASES_LATEST=https://github.com/SagerNet/sing-box/releases/latest
+# 固定版本（1.14.4 或 v1.14.4）：跳过全部版本解析，直接按版本拼地址，便于可复现部署。
+SBSHELL_SINGBOX_VERSION=${SBSHELL_SINGBOX_VERSION:-}
+
+# 架构名必须与上游资产名一致，所以优先用 /etc/os-release 里的 OPENWRT_ARCH（上游安装脚本同款），
+# 拿不到时再退回 apk 自己的输出。
+detect_openwrt_arch() {
+    local a=''
+    if [ -r /etc/os-release ]; then
+        a=$(. /etc/os-release 2>/dev/null; printf '%s' "${OPENWRT_ARCH:-}")
+    fi
+    [ -n "$a" ] || a=$(apk --print-arch 2>/dev/null || true)
+    [ -n "$a" ] || a=$(cat /etc/apk/arch 2>/dev/null || true)
+    printf '%s\n' "$a"
+}
+
+# 固定版本的规范化：接受 1.14.4 / v1.14.4 / 1.14.4-beta.2；非法值返回空（走自动解析）。
+normalize_singbox_pin() {
+    local v=${SBSHELL_SINGBOX_VERSION#v}
+    case "$v" in
+        [0-9]*[0-9]) ;;
+        *) printf '\n'; return 0 ;;
+    esac
+    case "$v" in
+        *[!0-9A-Za-z.-]*) printf '\n'; return 0 ;;
+    esac
+    printf 'v%s\n' "$v"
+}
+
+# 不消耗 API 配额地解析最新版本：跟随 releases/latest 的 302，从最终 URL 里取 tag。
+resolve_latest_tag_by_redirect() {
+    local effective='' tail=''
+    effective=$(curl --silent --show-error --location --proto '=https' --tlsv1.2 \
+        --connect-timeout 8 --max-time 20 -o /dev/null -w '%{url_effective}' \
+        "$SINGBOX_RELEASES_LATEST" 2>/dev/null || true)
+    case "$effective" in
+        */releases/tag/v[0-9]*) tail=${effective##*/releases/tag/} ;;
+        *) printf '\n'; return 0 ;;
+    esac
+    # 去掉可能跟在 tag 后面的 ?query / #fragment，再确认形状是 v<数字>…
+    tail=${tail%%[?#]*}
+    case "$tail" in
+        v[0-9]*) printf '%s\n' "$tail" ;;
+        *) printf '\n' ;;
+    esac
+}
+
+# GitHub token 只从环境变量读，不写进任何配置文件。
+github_api_token() {
+    printf '%s\n' "${SBSHELL_GITHUB_TOKEN:-${GITHUB_TOKEN:-}}"
+}
+
+# 取 release JSON（digest/size 的来源）。带 token 时配额是 5000 次/小时；token 写进 0600 的
+# 临时 curl 配置文件、不放命令行参数，避免出现在 ps 的 argv 里。
+fetch_release_json() {
+    local out="$1" tok cfg rc=0
+    tok=$(github_api_token)
+    if [ -z "$tok" ]; then
+        curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+            --connect-timeout 10 --max-time 60 \
+            -H 'Accept: application/vnd.github+json' \
+            "$SINGBOX_RELEASE_API" -o "$out" 2>/dev/null
+        return $?
+    fi
+    cfg=$(mktemp /tmp/sbshell-api.XXXXXX) || return 1
+    printf 'header = "Authorization: Bearer %s"\n' "$tok" > "$cfg" || rc=1
+    if [ "$rc" -eq 0 ]; then
+        curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+            --connect-timeout 10 --max-time 60 --config "$cfg" \
+            -H 'Accept: application/vnd.github+json' \
+            "$SINGBOX_RELEASE_API" -o "$out" 2>/dev/null || rc=$?
+    fi
+    rm -f "$cfg"
+    return "$rc"
+}
+
+# 上游官方 OpenWrt 包地址（资产名由上游发布流程固定：sing-box_<版本>_openwrt_<架构>.apk）。
+singbox_asset_url() {
+    printf 'https://github.com/SagerNet/sing-box/releases/download/%s/sing-box_%s_openwrt_%s.apk\n' \
+        "$1" "${1#v}" "$2"
+}
 
 # 已安装版本的基础版本号（去掉 OpenWrt 的 -rN 修订后缀；未安装则输出空）
 installed_base_version() {
@@ -77,10 +160,11 @@ rollback_to_feed() {
 
 # 返回 0 表示「上游最新版已就位，不用再装 feed 包」；返回 1 表示让调用方回退 feed。
 install_latest_singbox() {
-    local arch json tag url digest size_kb free_kb actual apkfile
+    # set -eu 下 `local x` 只是「声明」，读取 $x 会报 unbound：这里全部显式初始化。
+    local arch='' json='' tag='' pin='' url='' digest='' size='' size_kb='' free_kb='' actual='' apkfile=''
     [ "$SINGBOX_SOURCE" = latest ] || return 1
-    [ "$PKG_MGR" = apk ] || return 1   # opkg 固件：上游没有 .ipk，保持原样
-    arch=$(apk --print-arch 2>/dev/null || cat /etc/apk/arch 2>/dev/null || true)
+    [ "$PKG_MGR" = apk ] || return 1   # opkg 固件：上游 .ipk 已发布但未在真机验证，保持发行版包
+    arch=$(detect_openwrt_arch)
     [ -n "$arch" ] || { echo '无法确定当前 CPU 架构，改用发行版软件包。' >&2; return 1; }
     # 30 MB 级下载不能放 /tmp（tmpfs 即内存），放 sing-box 目录（overlay）并检查空间。
     workdir=$(mktemp -d /etc/sing-box/.pkg.XXXXXX 2>/dev/null || true)
@@ -89,18 +173,45 @@ install_latest_singbox() {
     trap 'rm -rf "$workdir"' EXIT
     trap 'rm -rf "$workdir"; exit 130' INT TERM
     json="$workdir/release.json"
-    if ! curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
-            --connect-timeout 10 --max-time 120 "$SINGBOX_RELEASE_API" -o "$json"; then
-        echo '查询上游最新版本失败（网络或 API 配额），改用发行版软件包。' >&2; return 1
+
+    # 版本解析顺序：显式固定版本 → github.com 重定向（不耗 API 配额）→ API latest。
+    pin=$(normalize_singbox_pin)
+    if [ -n "$pin" ]; then
+        tag="$pin"
+        echo "按 SBSHELL_SINGBOX_VERSION 安装固定版本 ${tag#v}（$arch）。"
+    else
+        tag=$(resolve_latest_tag_by_redirect)
+        if [ -n "$tag" ]; then
+            echo "已从 GitHub 发布页解析上游最新版本 ${tag#v}（未消耗 API 配额）。"
+        fi
     fi
-    tag=$(sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' "$json" | head -n1 || true)
-    [ -n "$tag" ] || { echo '上游版本信息不可解析，改用发行版软件包。' >&2; return 1; }
-    url=$(pick_asset "$json" "$arch" | sed -n '1p')
-    digest=$(pick_asset "$json" "$arch" | sed -n '2p')
-    size=$(pick_asset "$json" "$arch" | sed -n '3p')
-    [ -n "$url" ] || { echo "上游没有适配 $arch 的 OpenWrt 包，改用发行版软件包。" >&2; return 1; }
+    # digest/size 只能从 API 拿：尽力而为，限流/超时只跳过校验，不影响安装。
+    if fetch_release_json "$json"; then
+        [ -n "$tag" ] || tag=$(sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' "$json" | head -n1 || true)
+        if [ -z "$pin" ]; then
+            url=$(pick_asset "$json" "$arch" | sed -n '1p')
+            digest=$(pick_asset "$json" "$arch" | sed -n '2p')
+            size=$(pick_asset "$json" "$arch" | sed -n '3p')
+        fi
+    else
+        rm -f "$json"
+        echo '提示：拿不到 GitHub API 的版本信息（多为未认证限流），跳过 sha256 校验继续安装。' >&2
+    fi
+    [ -n "$tag" ] || { echo '无法确定上游 sing-box 版本（网络或 API 配额），改用发行版软件包。' >&2; return 1; }
+    # 固定版本时 API 返回的 digest/size 属于 latest，与目标版本无关：一律按版本直接拼地址。
+    if [ -n "$pin" ] || [ -z "$url" ]; then
+        url=$(singbox_asset_url "$tag" "$arch")
+    fi
+    if [ -n "$pin" ]; then
+        digest=''
+        size=''
+    fi
     if [ "$(installed_base_version)" = "${tag#v}" ]; then
-        echo "sing-box 已是上游最新稳定版 ${tag#v}（$arch）。"
+        if [ -n "$pin" ]; then
+            echo "sing-box 已是固定版本 ${tag#v}（$arch）。"
+        else
+            echo "sing-box 已是上游最新稳定版 ${tag#v}（$arch）。"
+        fi
         return 0
     fi
     if [ -n "$size" ]; then

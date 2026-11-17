@@ -26,6 +26,11 @@ Sbshell 是一款针对 官方sing-box 的辅助运行脚本，旨在让官方si
 - 防火墙仅支持 nftables，不支持 iptables；TUN 模式需要内核提供 `/dev/net/tun`。菜单里的「环境检查」会直接报出 `sing-box` 版本、`nft` 是否可用以及 `/dev/net/tun` 是否存在。
 - **TProxy 模式目前只代理 IPv4**：`configure_tproxy.sh` 在两条链首行显式 `meta nfproto ipv6 return`，IPv6 流量既不代理也不被拦截（避免落到没人监听的 tproxy 端口）。需要代理 v6 请用 TUN 模式。
 - **内核版本与模板要匹配**：ImmortalWrt 25.12 的 feed 包是 sing-box 1.12.25，而仓库默认模板要求 1.14+（`services[].type=api`、`http_clients`）。安装脚本会在检测到内核低于 1.14 时告警；请改用 1.12 兼容模板，或保证能连 GitHub 安装上游最新版。
+- **装内核的版本解析不依赖 API 配额**：安装上游 sing-box 时先跟随 `github.com/.../releases/latest` 的 302 解析
+  最新版本（**不消耗** `api.github.com` 的 60 次/小时/IP），API 只用于可选的 sha256(digest) 校验；被限流时
+  仍能装最新版（仅跳过 digest 校验，已用 HTTPS）。两个可选开关：`SBSHELL_SINGBOX_VERSION=1.14.4`
+  （固定版本：跳过全部解析、直接按版本拼地址，适合可复现部署）、`SBSHELL_GITHUB_TOKEN=...`
+  （API 配额提升到 5000 次/小时；token 只从环境变量读，经 0600 临时配置文件传给 curl，不进命令行/不落盘）。
 - 已在 ImmortalWrt 25.12.2 上实际使用；真机上踩到的问题（busybox 没有 `install`、HTTP 500 被误报成下载超时等）与修法都记在 `openwrt/` 内的注释里。
 - 自定义固件请确认已包含 nftables 与 tun 相关内核模块（`kmod-nft-tproxy`、`kmod-tun` 等）。
 

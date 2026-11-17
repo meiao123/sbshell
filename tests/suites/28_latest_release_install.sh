@@ -90,4 +90,154 @@ printf '{"assets":[{"name":"index.html","url":"https://api.github.com/x/1","size
 assert_not_rc "$?" 0 "没有合适资产时返回非 0（调用方回退固定地址）"
 rm -f "$res_src" "$FIX/latest"
 
+suite_begin "A-29b：版本解析不依赖 API 配额 + 固定版本 + digest 可选"
+
+K="$SRC/openwrt/install_singbox.sh"
+assert_grep 'SINGBOX_RELEASES_LATEST=' "$K" "声明 github.com 重定向端点（零 API 配额）"
+assert_grep '^resolve_latest_tag_by_redirect() {' "$K" "用 releases/latest 的 302 解析最新版本"
+assert_grep '^detect_openwrt_arch() {' "$K" "架构识别独立成函数"
+assert_grep 'OPENWRT_ARCH' "$K" "优先采用 /etc/os-release 的 OPENWRT_ARCH"
+assert_grep '^normalize_singbox_pin() {' "$K" "支持 SBSHELL_SINGBOX_VERSION 固定版本"
+assert_grep '^singbox_asset_url() {' "$K" "资产地址按上游命名规则拼装"
+assert_grep 'SBSHELL_GITHUB_TOKEN' "$K" "支持 SBSHELL_GITHUB_TOKEN（5000 次/小时）"
+assert_grep 'header = "Authorization: Bearer' "$K" "token 经 curl 配置文件传入（不进 argv）"
+assert_grep '跳过 sha256 校验继续安装' "$K" "API 不可用时跳过 digest 校验，而不是放弃安装"
+
+# 把安装逻辑抽成可驱动的片段：run_opkg + detect_openwrt_arch … install_latest_singbox
+fn_head=$(mktemp)
+fn_body=$(mktemp)
+driver=$(mktemp)
+awk '/^run_opkg\(\)/{p=1} p{print} p&&/^}$/{exit}' "$K" > "$fn_head"
+awk '/^detect_openwrt_arch\(\)/{p=1} p&&/^}$/&&infunc{print; exit} p{print; if(/^install_latest_singbox\(\)/)infunc=1}' "$K" > "$fn_body"
+{
+    printf '%s\n' 'set -uo pipefail' 'SINGBOX_SOURCE=latest' 'PKG_MGR=apk' \
+        'SBSHELL_SINGBOX_VERSION="${SBSHELL_SINGBOX_VERSION:-}"' \
+        'SINGBOX_RELEASE_API=https://api.github.com/repos/SagerNet/sing-box/releases/latest' \
+        'SINGBOX_RELEASES_LATEST=https://github.com/SagerNet/sing-box/releases/latest'
+    cat "$fn_head" "$fn_body"
+} > "$driver"
+assert_grep '^install_latest_singbox() {' "$driver" "成功抽出安装逻辑（含 run_opkg）"
+
+stub=$(mktemp -d)
+state=$(mktemp -d)
+PATH_SAVED=$PATH
+export PATH="$stub:$PATH"
+export STUB_LOG="$state/curl.log"
+export STUB_VER_FILE="$state/ver"
+export STUB_ARCH=x86_64
+printf '1.0.0\n' > "$STUB_VER_FILE"
+
+# mktemp 桩：把 workdir 挪出 /etc（测试不需要真实目录），必须调 /usr/bin/mktemp 否则递归
+cat > "$stub/mktemp" <<'S'
+#!/bin/bash
+if [ "$1" = "-d" ]; then /usr/bin/mktemp -d /tmp/w.XXXXXX; else /usr/bin/mktemp /tmp/f.XXXXXX; fi
+S
+# curl 桩：url_effective 请求回显 STUB_EFFECTIVE；api.github.com 按 STUB_API_OK 回 403 或 JSON；
+# 其余发布包地址写一个固定内容
+cat > "$stub/curl" <<'S'
+#!/bin/bash
+argv="$*"
+printf 'ARGV: %s\n' "$argv" >> "$STUB_LOG"
+out=''
+url=''
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -o) out="$2"; shift 2 ;;
+        https://*) url="$1"; shift ;;
+        *) shift ;;
+    esac
+done
+case "$argv" in
+    *url_effective*) printf '%s\n' "${STUB_EFFECTIVE:-}"; exit 0 ;;
+esac
+case "$url" in
+    *api.github.com*) [ "${STUB_API_OK:-0}" = 1 ] || exit 22
+                      cp "${STUB_JSON:-/dev/null}" "$out"; exit 0 ;;
+    *) printf 'APK-CONTENT' > "$out"; exit 0 ;;
+esac
+S
+cat > "$stub/apk" <<'S'
+#!/bin/bash
+case "$1" in
+    --print-arch) echo "$STUB_ARCH" ;;
+    fetch) exit 0 ;;
+    add) for a in "$@"; do
+             case "$a" in
+                 *sing-box_*) v=$(printf '%s' "$a" | sed -n 's/.*sing-box_\([0-9][^_]*\)_.*/\1/p')
+                              [ -n "$v" ] && printf '%s\n' "$v" > "$STUB_VER_FILE" ;;
+             esac
+         done
+         exit 0 ;;
+    *) exit 0 ;;
+esac
+S
+cat > "$stub/sing-box" <<'S'
+#!/bin/bash
+if [ "${1:-}" = version ]; then
+    printf 'sing-box version %s\n' "$(cat "$STUB_VER_FILE" 2>/dev/null || echo 0.0.0)"
+    exit 0
+fi
+exit 0
+S
+chmod 0755 "$stub/mktemp" "$stub/curl" "$stub/apk" "$stub/sing-box"
+
+run_install() { bash -c '. "$1"; install_latest_singbox' _ "$driver"; }
+reset_case() { : > "$STUB_LOG"; printf '1.0.0\n' > "$STUB_VER_FILE"; }
+
+# 纯函数行为
+assert_eq "$(SBSHELL_SINGBOX_VERSION=1.14.4 bash -c '. "$1"; normalize_singbox_pin' _ "$driver")" \
+    "v1.14.4" "固定版本规范化：1.14.4 → v1.14.4"
+assert_eq "$(SBSHELL_SINGBOX_VERSION=v1.14.4 bash -c '. "$1"; normalize_singbox_pin' _ "$driver")" \
+    "v1.14.4" "固定版本规范化：v1.14.4 → v1.14.4"
+assert_eq "$(SBSHELL_SINGBOX_VERSION=1.14.4-beta.2 bash -c '. "$1"; normalize_singbox_pin' _ "$driver")" \
+    "v1.14.4-beta.2" "固定版本规范化：接受预发布后缀"
+assert_eq "$(SBSHELL_SINGBOX_VERSION=../../etc/passwd bash -c '. "$1"; normalize_singbox_pin' _ "$driver")" \
+    "" "固定版本规范化：拒绝含路径分隔符的非法值"
+assert_eq "$(bash -c '. "$1"; singbox_asset_url v1.14.4 x86_64' _ "$driver")" \
+    "https://github.com/SagerNet/sing-box/releases/download/v1.14.4/sing-box_1.14.4_openwrt_x86_64.apk" \
+    "资产地址符合上游命名"
+assert_eq "$(bash -c '. "$1"; detect_openwrt_arch' _ "$driver")" "x86_64" "架构识别走 OPENWRT_ARCH/apk"
+
+# 重定向解析：正常 tag、带 query、非 tag
+for eff in "https://github.com/SagerNet/sing-box/releases/tag/v1.14.4" \
+           "https://github.com/SagerNet/sing-box/releases/tag/v1.14.4?x=1"; do
+    assert_eq "$(STUB_EFFECTIVE="$eff" bash -c '. "$1"; resolve_latest_tag_by_redirect' _ "$driver")" \
+        "v1.14.4" "重定向解析：$eff"
+done
+assert_eq "$(STUB_EFFECTIVE="https://github.com/login" bash -c '. "$1"; resolve_latest_tag_by_redirect' _ "$driver")" \
+    "" "重定向解析：非 tag 跳转返回空"
+
+# 场景 A：API 403 + 重定向可用 → 仍装上游最新版
+reset_case
+out=$(STUB_EFFECTIVE="https://github.com/SagerNet/sing-box/releases/tag/v9.9.9" run_install 2>&1); rc=$?
+assert_rc "$rc" 0 "API 403 时靠重定向仍能安装上游最新版"
+assert_contains "$out" "已从 GitHub 发布页解析上游最新版本 9.9.9" "打印零配额解析结果"
+assert_grep 'v9.9.9/sing-box_9.9.9_openwrt_x86_64.apk' "$STUB_LOG" "下载地址按上游命名拼出"
+assert_eq "$(cat "$STUB_VER_FILE")" "9.9.9" "安装后版本一致"
+
+# 场景 B：固定版本 → 不做版本解析、直接按版本拼地址
+reset_case
+out=$(SBSHELL_SINGBOX_VERSION=1.14.4 STUB_EFFECTIVE="https://example.test/nowhere" run_install 2>&1); rc=$?
+assert_rc "$rc" 0 "固定版本安装成功"
+assert_no_grep 'url_effective' "$STUB_LOG" "固定版本不发起版本解析请求"
+assert_grep 'v1.14.4/sing-box_1.14.4_openwrt_x86_64.apk' "$STUB_LOG" "固定版本直接拼资产地址"
+
+# 场景 C：解析与 API 都失败 → 交给调用方回退 feed
+reset_case
+STUB_EFFECTIVE="https://github.com/login" run_install >/dev/null 2>&1
+assert_not_rc "$?" 0 "所有来源都失败时返回非 0（调用方回退 feed）"
+
+# 场景 D：digest 不匹配 → 中止（不装坏包）
+reset_case
+digest_bad=$(mktemp)
+printf '{"tag_name":"v9.9.9","assets":[{"name":"sing-box_9.9.9_openwrt_x86_64.apk","size":11,"digest":"sha256:deadbeef","browser_download_url":"https://example.test/download/v9.9.9/sing-box_9.9.9_openwrt_x86_64.apk"}]}\n' > "$digest_bad"
+STUB_API_OK=1 STUB_JSON="$digest_bad" STUB_EFFECTIVE="https://github.com/SagerNet/sing-box/releases/tag/v9.9.9" \
+    run_install >/dev/null 2>&1
+assert_not_rc "$?" 0 "sha256 不符时中止安装"
+rm -f "$digest_bad"
+
+export PATH="$PATH_SAVED"
+unset STUB_LOG STUB_VER_FILE STUB_ARCH
+rm -rf "$stub" "$state" "$driver" "$fn_head" "$fn_body"
+
 suite_end
