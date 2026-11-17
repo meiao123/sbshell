@@ -44,7 +44,7 @@ assert_grep 'mktemp /etc/sing-box/\.defaults\.conf\.' "$O/set_defaults.sh" "defa
 
 suite_begin "P2：默认值显式空值语义（纯模板模式可用）"
 
-assert_grep '"\$1=" "\$DEFAULTS_FILE"' "$O/lib.sh" "按键是否存在判断，而不是按键值非空（lib.sh）"
+assert_grep '\$1=" "\$DEFAULTS_FILE"' "$O/lib.sh" "按键是否存在判断，而不是按键值非空（lib.sh）"
 assert_grep 'resolve_default BACKEND_URL BACKEND_URL 1' "$O/manual_update.sh" "后端/订阅允许显式空值"
 assert_grep 'resolve_default TPROXY_TEMPLATE_URL TEMPLATE_URL 0' "$O/manual_update.sh" "模板地址空值仍回退（空模板非法）"
 assert_grep 'resolve_default' "$O/manual_input.sh" "初始化路径共用同一套默认值语义"
