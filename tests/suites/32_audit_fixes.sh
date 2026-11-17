@@ -15,7 +15,7 @@ suite_begin "P1-1：菜单里子脚本失败只提示并回到菜单"
 assert_grep '^run_action() {' "$O/menu.sh" "menu.sh 定义 run_action"
 assert_grep '^run() { bash "\$SCRIPT_DIR/\$1"; }$' "$O/menu.sh" "run() 保持严格（initialize 依赖失败传播）"
 assert_grep 'esac || true' "$O/menu.sh" "菜单 case 失败不会带走整个交互菜单"
-assert_eq "$(grep -c 'run_action ' "$O/menu.sh")" "10" "九个单步入口 + 选项 1 的三段串联"
+assert_eq "$(grep -c 'run_action ' "$O/menu.sh")" "11" "十个单步入口 + 选项 1 的三段串联"
 
 suite_begin "P1-2：configure_tun 首次安装失败也要回收自己建的表"
 
@@ -45,7 +45,8 @@ assert_grep 'mktemp /etc/sing-box/\.defaults\.conf\.' "$O/set_defaults.sh" "defa
 suite_begin "P2：默认值显式空值语义（纯模板模式可用）"
 
 assert_grep '\$1=" "\$DEFAULTS_FILE"' "$O/lib.sh" "按键是否存在判断，而不是按键值非空（lib.sh）"
-assert_grep 'resolve_default BACKEND_URL BACKEND_URL 1' "$O/manual_update.sh" "后端/订阅允许显式空值"
+assert_grep 'default_or_factory BACKEND_URL' "$O/manual_update.sh" "后端/订阅允许显式空值（统一解析）"
+assert_grep '^default_or_factory() {' "$O/lib.sh" "显式空值语义单点实现在 lib.sh"
 assert_grep 'resolve_default TPROXY_TEMPLATE_URL TEMPLATE_URL 0' "$O/manual_update.sh" "模板地址空值仍回退（空模板非法）"
 assert_grep 'resolve_default' "$O/manual_input.sh" "初始化路径共用同一套默认值语义"
 assert_grep 'if ! valid_url "\$TEMPLATE_URL"' "$O/manual_input.sh" "初始化路径也拒绝空模板（不再拼出 &file=）"
