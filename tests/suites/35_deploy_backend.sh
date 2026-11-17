@@ -123,6 +123,8 @@ chmod 0755 "$stub_dir/sing-box"
 
 def_file=$(mktemp)
 man_file=$(mktemp)
+mode_file=$(mktemp)
+printf 'MODE=TUN\n' > "$mode_file"
 printf 'BACKEND_URL=http://127.0.0.1:5000/\nSUBSCRIPTION_URL=http://127.0.0.1:3001/sub/download/collection/proxy?target=sing-box\nTUN_TEMPLATE_URL=https://example.test/config.json\n' > "$def_file"
 
 deploy() { # deploy <额外env字符串> [脚本参数]...
@@ -133,13 +135,13 @@ deploy() { # deploy <额外env字符串> [脚本参数]...
         env PATH="$stub_dir:$PATH" SBSHELL_STUB_STATE="$state" \
             SBSHELL_BACKEND_BUILD_ROOT="$build_root" SBSHELL_BACKEND_WAIT_SECS=2 \
             SBSHELL_TEST_SRC_PARENT="$src_parent" SBSHELL_DEFAULTS_FILE="$def_file" \
-            SBSHELL_MANUAL_FILE="$man_file" $st \
+            SBSHELL_MANUAL_FILE="$man_file" SBSHELL_MODE_FILE="$mode_file" $st \
             bash "$O/deploy_backend.sh" "$@" 2>&1
     else
         env PATH="$stub_dir:$PATH" SBSHELL_STUB_STATE="$state" \
             SBSHELL_BACKEND_BUILD_ROOT="$build_root" SBSHELL_BACKEND_WAIT_SECS=2 \
             SBSHELL_TEST_SRC_PARENT="$src_parent" SBSHELL_DEFAULTS_FILE="$def_file" \
-            SBSHELL_MANUAL_FILE="$man_file" \
+            SBSHELL_MANUAL_FILE="$man_file" SBSHELL_MODE_FILE="$mode_file" \
             bash "$O/deploy_backend.sh" "$@" 2>&1
     fi
 }
@@ -222,5 +224,5 @@ assert_not_rc "$rc" 0 "端到端连不上后端时返回非 0"
 assert_grep '^docker rm -f sbshell-backend' "$state/docker.log" "失败后清理新容器"
 assert_grep 'sbshell-backend:previous' "$state/docker.log" "失败后回滚到 :previous"
 
-rm -rf "$stub_dir" "$state" "$(dirname "$build_root")" "$src_parent" "$def_file" "$man_file"
+rm -rf "$stub_dir" "$state" "$(dirname "$build_root")" "$src_parent" "$def_file" "$man_file" "$mode_file"
 suite_end
