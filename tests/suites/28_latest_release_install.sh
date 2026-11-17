@@ -102,6 +102,7 @@ assert_grep '^singbox_asset_url() {' "$K" "资产地址按上游命名规则拼�
 assert_grep 'SBSHELL_GITHUB_TOKEN' "$K" "支持 SBSHELL_GITHUB_TOKEN（5000 次/小时）"
 assert_grep 'header = "Authorization: Bearer' "$K" "token 经 curl 配置文件传入（不进 argv）"
 assert_grep '跳过 sha256 校验继续安装' "$K" "API 不可用时跳过 digest 校验，而不是放弃安装"
+assert_grep 'os-release 2>/dev/null || true' "$K" "加载 os-release 带失败保护（ash 下 . 失败会带崩脚本）"
 
 # 把安装逻辑抽成可驱动的片段：run_opkg + detect_openwrt_arch … install_latest_singbox
 fn_head=$(mktemp)
@@ -220,7 +221,18 @@ reset_case
 out=$(SBSHELL_SINGBOX_VERSION=1.14.4 STUB_EFFECTIVE="https://example.test/nowhere" run_install 2>&1); rc=$?
 assert_rc "$rc" 0 "固定版本安装成功"
 assert_no_grep 'url_effective' "$STUB_LOG" "固定版本不发起版本解析请求"
+assert_no_grep 'api.github.com' "$STUB_LOG" "固定版本也不访问 API 配额（可离线复现）"
 assert_grep 'v1.14.4/sing-box_1.14.4_openwrt_x86_64.apk' "$STUB_LOG" "固定版本直接拼资产地址"
+
+# 场景 B2：解析到的版本与 API 的 tag 不一致时，不得拿 A 的 digest 去校验 B 的包
+reset_case
+mismatch_json=$(mktemp)
+printf '{"tag_name":"v9.9.8","assets":[{"name":"sing-box_9.9.8_openwrt_x86_64.apk","size":11,"digest":"sha256:deadbeef","browser_download_url":"https://example.test/download/v9.9.8/sing-box_9.9.8_openwrt_x86_64.apk"}]}\n' > "$mismatch_json"
+out=$(STUB_API_OK=1 STUB_JSON="$mismatch_json" STUB_EFFECTIVE="https://github.com/SagerNet/sing-box/releases/tag/v9.9.9" run_install 2>&1); rc=$?
+assert_rc "$rc" 0 "tag 不一致时仍按解析到的版本安装"
+assert_grep 'v9.9.9/sing-box_9.9.9_openwrt_x86_64.apk' "$STUB_LOG" "下载地址采用解析到的版本"
+assert_not_contains "$out" "已校验上游包 sha256" "不采信其它版本的 digest"
+rm -f "$mismatch_json"
 
 # 场景 C：解析与 API 都失败 → 交给调用方回退 feed
 reset_case

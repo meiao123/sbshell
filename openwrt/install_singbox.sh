@@ -53,7 +53,9 @@ SBSHELL_SINGBOX_VERSION=${SBSHELL_SINGBOX_VERSION:-}
 detect_openwrt_arch() {
     local a=''
     if [ -r /etc/os-release ]; then
-        a=$(. /etc/os-release 2>/dev/null; printf '%s' "${OPENWRT_ARCH:-}")
+        # `|| true`：. 是 POSIX 特殊内建，加载失败在部分 shell 里会带崩 subshell
+        # （真机 busybox ash 实测 rc=2 直接退出整份脚本）；[ -r ] 已挡住「文件不存在」。
+        a=$(. /etc/os-release 2>/dev/null || true; printf '%s' "${OPENWRT_ARCH:-}")
     fi
     [ -n "$a" ] || a=$(apk --print-arch 2>/dev/null || true)
     [ -n "$a" ] || a=$(cat /etc/apk/arch 2>/dev/null || true)
@@ -83,8 +85,9 @@ resolve_latest_tag_by_redirect() {
         */releases/tag/v[0-9]*) tail=${effective##*/releases/tag/} ;;
         *) printf '\n'; return 0 ;;
     esac
-    # 去掉可能跟在 tag 后面的 ?query / #fragment，再确认形状是 v<数字>…
+    # 去掉可能跟在 tag 后面的 ?query / #fragment / 尾斜杠，再确认形状是 v<数字>…
     tail=${tail%%[?#]*}
+    tail=${tail%%/*}
     case "$tail" in
         v[0-9]*) printf '%s\n' "$tail" ;;
         *) printf '\n' ;;
@@ -92,8 +95,13 @@ resolve_latest_tag_by_redirect() {
 }
 
 # GitHub token 只从环境变量读，不写进任何配置文件。
+# 只接受 token 的常见字符集：值来自环境变量，若含 `"` 会把 curl 配置文件注入成额外参数。
 github_api_token() {
-    printf '%s\n' "${SBSHELL_GITHUB_TOKEN:-${GITHUB_TOKEN:-}}"
+    local t=${SBSHELL_GITHUB_TOKEN:-${GITHUB_TOKEN:-}}
+    case "$t" in
+        ''|*[!0-9A-Za-z_.-]*) printf '\n' ;;
+        *) printf '%s\n' "$t" ;;
+    esac
 }
 
 # 取 release JSON（digest/size 的来源）。带 token 时配额是 5000 次/小时；token 写进 0600 的
@@ -161,7 +169,7 @@ rollback_to_feed() {
 # 返回 0 表示「上游最新版已就位，不用再装 feed 包」；返回 1 表示让调用方回退 feed。
 install_latest_singbox() {
     # set -eu 下 `local x` 只是「声明」，读取 $x 会报 unbound：这里全部显式初始化。
-    local arch='' json='' tag='' pin='' url='' digest='' size='' size_kb='' free_kb='' actual='' apkfile=''
+    local arch='' json='' tag='' pin='' api_tag='' url='' digest='' size='' size_kb='' free_kb='' actual='' apkfile=''
     [ "$SINGBOX_SOURCE" = latest ] || return 1
     [ "$PKG_MGR" = apk ] || return 1   # opkg 固件：上游 .ipk 已发布但未在真机验证，保持发行版包
     arch=$(detect_openwrt_arch)
@@ -184,28 +192,25 @@ install_latest_singbox() {
         if [ -n "$tag" ]; then
             echo "已从 GitHub 发布页解析上游最新版本 ${tag#v}（未消耗 API 配额）。"
         fi
-    fi
-    # digest/size 只能从 API 拿：尽力而为，限流/超时只跳过校验，不影响安装。
-    if fetch_release_json "$json"; then
-        [ -n "$tag" ] || tag=$(sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' "$json" | head -n1 || true)
-        if [ -z "$pin" ]; then
-            url=$(pick_asset "$json" "$arch" | sed -n '1p')
-            digest=$(pick_asset "$json" "$arch" | sed -n '2p')
-            size=$(pick_asset "$json" "$arch" | sed -n '3p')
+        # digest/size 只能从 API 拿：尽力而为，限流/超时只跳过校验，不影响安装。
+        # 固定版本时不查 API：url 按版本拼、digest 也用不上，少一个失败点，也便于离线复现。
+        if fetch_release_json "$json"; then
+            api_tag=$(sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' "$json" | head -n1 || true)
+            [ -n "$tag" ] || tag="$api_tag"
+            # 只有 API 的 tag 与解析结果一致时才采信 url/digest/size：
+            # 否则可能拿 A 版本的哈希去校验 B 版本的包（必然失败并白白回滚）。
+            if [ -n "$api_tag" ] && [ "$api_tag" = "$tag" ]; then
+                url=$(pick_asset "$json" "$arch" | sed -n '1p')
+                digest=$(pick_asset "$json" "$arch" | sed -n '2p')
+                size=$(pick_asset "$json" "$arch" | sed -n '3p')
+            fi
+        else
+            rm -f "$json"
+            echo '提示：拿不到 GitHub API 的版本信息（多为未认证限流），跳过 sha256 校验继续安装。' >&2
         fi
-    else
-        rm -f "$json"
-        echo '提示：拿不到 GitHub API 的版本信息（多为未认证限流），跳过 sha256 校验继续安装。' >&2
     fi
     [ -n "$tag" ] || { echo '无法确定上游 sing-box 版本（网络或 API 配额），改用发行版软件包。' >&2; return 1; }
-    # 固定版本时 API 返回的 digest/size 属于 latest，与目标版本无关：一律按版本直接拼地址。
-    if [ -n "$pin" ] || [ -z "$url" ]; then
-        url=$(singbox_asset_url "$tag" "$arch")
-    fi
-    if [ -n "$pin" ]; then
-        digest=''
-        size=''
-    fi
+    [ -n "$url" ] || url=$(singbox_asset_url "$tag" "$arch")
     if [ "$(installed_base_version)" = "${tag#v}" ]; then
         if [ -n "$pin" ]; then
             echo "sing-box 已是固定版本 ${tag#v}（$arch）。"
