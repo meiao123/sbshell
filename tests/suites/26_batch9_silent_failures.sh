@@ -46,7 +46,7 @@ assert_eq "$(count_in 'cron restart >/dev/null 2>&1 \|\| true' "$SRC/openwrt/upd
 assert_eq "$(count_in 'cron restart >/dev/null 2>&1 \|\| true' "$SRC/openwrt/auto_update.sh")" "0" \
     "auto_update.sh 不再有被 || true 吞掉的 cron restart"
 
-assert_grep '下载失败或为空' "$SRC/openwrt/update_scripts.sh" \
+assert_grep '完整性校验失败：\$prefix/\$name 未下载成功' "$SRC/openwrt/update_scripts.sh" \
     "脚本下载校验失败会说明是哪个文件"
 
 suite_begin "批次9 A-26：状态文件不再先删后建"

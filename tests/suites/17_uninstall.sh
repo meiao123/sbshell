@@ -142,9 +142,15 @@ for f in "$SBSHELL_SRC"/openwrt/*.sh "$SBSHELL_SRC"/sbshall.sh; do
     [ -n "$calls" ] || continue
     name=$(basename "$f")
     shim=$(grep -n 'command -v install' "$f" | head -n1 | cut -d: -f1 || true)
+    lib_line=$(grep -n '_sbshell_lib_dir/lib\.sh' "$f" | head -n1 | cut -d: -f1 || true)
     first=$(printf '%s\n' "$calls" | head -n1 | cut -d: -f1)
     if [ -z "$shim" ]; then
-        fail "$name 使用 install 但没有内联兜底"
+        # 实现已收敛到 lib.sh：脚本只需在第一次 install 调用之前 source 库（库自己定义兜底）。
+        if [ -n "$lib_line" ] && [ "$lib_line" -lt "$first" ]; then
+            pass "$name 在第一次 install 调用前加载 lib.sh（库提供兜底）"
+        else
+            fail "$name 使用 install 但没有内联兜底"
+        fi
     elif [ "$shim" -lt "$first" ]; then
         pass "$name 的兜底在第一次 install 调用之前（$shim < $first）"
     else
