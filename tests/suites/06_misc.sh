@@ -199,12 +199,14 @@ for f in sbshall.sh openwrt/menu.sh openwrt/update_scripts.sh; do
     fi
 done
 
-# 行为断言：桩 curl 会记录所有请求过的 URL。更新脚本必须从 main 下载，
-# 而不是从任何写死的提交 SHA 下载（那正是维护者移除的“一跳回退”保护）。
+# 行为断言：桩 curl 会记录所有请求过的 URL。现行实现是「先解析 main 当前 commit，
+# 再把整批下载固定到该 commit」——所以下载 URL 必须带 40 位 SHA，而不是 main。
 reset_stub_state
 reset_singbox_dir
 install_repo_scripts openwrt
 for f in "$SBSHELL_SRC"/openwrt/*.sh; do cp "$f" "$SBSHELL_FIXTURES/"; done
+pin=0123456789abcdef0123456789abcdef01234567
+fixture_write main "{\"sha\":\"$pin\"}"
 run_with_timeout bash "$SCRIPTS/update_scripts.sh" > /tmp/main-only.out 2>&1
 rc=$?
 if [ "$rc" -ne 0 ]; then
@@ -217,11 +219,12 @@ if [ "$rc" -ne 0 ]; then
 else
     pass "更新脚本按 main 更新源执行完成"
 fi
-assert_grep 'main/openwrt/' "$SBSHELL_STUB_STATE/curl.log" "更新按 main 分支下载脚本"
-if grep -qE 'raw\.githubusercontent\.com/[^/]+/sbshell/[0-9a-f]{40}/' "$SBSHELL_STUB_STATE/curl.log"; then
-    fail "仍按写死的提交 SHA 下载（RELEASE 固定引用残留）"
+assert_grep 'repos/meiao123/sbshell/commits/main' "$SBSHELL_STUB_STATE/curl.log" "更新前先解析 main 的当前 commit"
+assert_grep "$pin/openwrt/" "$SBSHELL_STUB_STATE/curl.log" "整批下载固定到解析出的 commit"
+if grep -qE 'raw\.githubusercontent\.com/[^/]+/sbshell/(main|refs/heads/main)/' "$SBSHELL_STUB_STATE/curl.log"; then
+    fail "仍把 main 当作下载版本（没有固定 commit）"
 else
-    pass "未按写死的提交 SHA 下载，main 是唯一更新源"
+    pass "不再把 main 当作下载版本，main 只用于解析 SHA"
 fi
 
 suite_end

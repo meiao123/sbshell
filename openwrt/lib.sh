@@ -160,20 +160,15 @@ acquire_lock() {
         created=$(stat -c %Y "$dir" 2>/dev/null || echo 0)
         age=0
         [ "$created" -gt 0 ] && age=$((now - created))
-        if [ "$age" -ge "$timeout" ]; then
-            # 过期即接管：不能只凭 owner 是否存活判断（pid 复用或伪造 pid 会让过期分支永远到不了）
-            rm -rf "$dir" 2>/dev/null || true
-            sleep 1
-            continue
-        fi
         if [ -z "$owner" ] || ! kill -0 "$owner" 2>/dev/null; then
-            # 属主已死：给 5 秒宽限（避开 mkdir 与写 pid 之间的正常窗口）后直接接管。
+            # 属主已死/pid 缺失：给 5 秒宽限后直接接管（一次 kill -9/掉电不该卡 15 分钟）。
             if [ "$age" -ge 5 ]; then
                 rm -rf "$dir" 2>/dev/null || true
                 sleep 1
                 continue
             fi
         else
+            # 属主还活着：等满超时报错退出；绝不抢占活锁（两个写入方交错最危险）。
             waited=$((waited + 1))
             if [ "$waited" -ge "$timeout" ]; then
                 echo '等待配置锁超时（另一个进程持锁）。' >&2

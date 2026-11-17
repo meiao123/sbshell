@@ -12,7 +12,8 @@ for f in sbshall.sh openwrt/menu.sh openwrt/update_scripts.sh; do
     else
         fail "$f 缺少 GitHub Contents API 回退下载"
     fi
-    assert_grep 'api\.github\.com/repos/meiao123/sbshell/contents/' "$SBSHELL_SRC/$f" "$f 使用 GitHub Contents API"
+    # Contents API 的地址由 GITHUB_API_BASE 拼出来（不再是写死的整条 URL），按现行写法断言。
+    assert_grep 'GITHUB_API_BASE/contents/\$path' "$SBSHELL_SRC/$f" "$f 使用 GitHub Contents API"
     assert_grep 'Accept: application/vnd.github.raw+json' "$SBSHELL_SRC/$f" "$f 使用 Contents API raw media type"
     if grep -q 'command -v base64' "$SBSHELL_SRC/$f"; then
         fail "$f 的 API 回退仍依赖 base64 命令"
