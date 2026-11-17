@@ -319,7 +319,8 @@ e2e_check() {
             echo "--- 后端返回的响应体（前 400 字节，通常写明原因）---" >&2
             head -c 400 "$body" >&2 || true; echo >&2
             rm -f "$body" "$err"
-            die "后端返回 HTTP $code：请检查上游订阅（$sub 的主机）与模板地址是否可达。"
+            # 订阅地址含 token：与本项目其它入口一致，输出一律脱敏（只留 scheme://host/***）。
+            die "后端返回 HTTP $code：请检查上游订阅（$(redact_url "$sub")）与模板地址是否可达。"
             ;;
         *) echo "--- 响应体（前 300 字节）---" >&2; head -c 300 "$body" >&2 || true; echo >&2
            rm -f "$body" "$err"

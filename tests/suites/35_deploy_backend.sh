@@ -33,6 +33,7 @@ assert_grep 'BUILD_TIMEOUT' "$O/deploy_backend.sh" "脚本级构建超时"
 assert_grep '构建进行中' "$O/deploy_backend.sh" "构建期间打印心跳"
 assert_grep 'registry-1\.docker\.io' "$O/deploy_backend.sh" "预检探测 Docker registry"
 assert_grep 'timeout "\$BUILD_TIMEOUT" docker build' "$O/deploy_backend.sh" "用 timeout 兜住 docker build"
+assert_grep 'redact_url "\$sub"' "$O/deploy_backend.sh" "5xx 报错里的订阅地址脱敏（不回显 token）"
 assert_no_grep '\beval\b' "$O/deploy_backend.sh" "不使用 eval"
 
 # ---------- 桩环境 ----------
@@ -208,6 +209,11 @@ assert_contains "$out" '端到端校验通过' "输出端到端通过"
 out=$(deploy 'SBSHELL_TEST_HTTP=500 SBSHELL_TEST_CONTAINER_EXISTS=1'); rc=$?
 assert_not_rc "$rc" 0 "后端 500 时返回非 0"
 assert_contains "$out" 'HTTP 500' "报告后端 500"
+assert_contains "$out" '127.0.0.1:3001/***' "5xx 报错里的订阅地址已脱敏"
+case "$out" in
+    *'/sub/download'*) fail '5xx 报错回显了订阅 token' ;;
+    *) pass '5xx 报错没有回显订阅 token' ;;
+esac
 
 suite_begin "deploy_backend：端到端校验按模式选模板，且只探测刚部署的本机后端"
 
