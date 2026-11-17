@@ -33,6 +33,14 @@ CONTAINER_NAME='sbshell-backend'
 BACKEND_PORT=5000
 WAIT_SECS=${SBSHELL_BACKEND_WAIT_SECS:-60}
 case "$WAIT_SECS" in ''|*[!0-9]*) WAIT_SECS=60 ;; esac
+# Docker 自身没有「构建超时」：这里由脚本兜底（默认 30 分钟），并每 30 秒打一次心跳，
+# 避免把长时间无输出误当成卡死。
+BUILD_TIMEOUT=${SBSHELL_BACKEND_BUILD_TIMEOUT:-1800}
+case "$BUILD_TIMEOUT" in ''|*[!0-9]*) BUILD_TIMEOUT=1800 ;; esac
+BUILD_HEARTBEAT=${SBSHELL_BACKEND_BUILD_HEARTBEAT:-30}
+case "$BUILD_HEARTBEAT" in ''|*[!0-9]*) BUILD_HEARTBEAT=30 ;; esac
+# 预检会把这里改成空串：registry 不可达时不再强制 --pull（否则本地有缓存也构建失败）。
+PULL_MODE='--pull'
 BUILD_ROOT=${SBSHELL_BACKEND_BUILD_ROOT:-/root/sbshell-backend-build}
 MIN_FREE_KB=2097152   # 2 GiB：基础镜像 + pip 依赖 + 构建缓存的安全线
 DEFAULTS_FILE=${SBSHELL_DEFAULTS_FILE:-/etc/sing-box/defaults.conf}
@@ -103,6 +111,15 @@ preflight() {
         -o /dev/null "https://github.com/$BACKEND_REPO" 2>/dev/null; then
         die "无法访问 github.com：构建需要先拉取源码（$BACKEND_REPO）。"
     fi
+    # registry 不可达时别强制 --pull：否则「本地已有基础镜像」也会因为拉取失败而构建不了。
+    local reg_code
+    reg_code=$(curl --silent --location --proto '=https' --tlsv1.2 --connect-timeout 5 --max-time 10 \
+        -o /dev/null -w '%{http_code}' "https://registry-1.docker.io/v2/" 2>/dev/null || echo 000)
+    case "$reg_code" in
+        200|401) PULL_MODE='--pull' ;;
+        *) PULL_MODE=''
+           warn 'Docker registry 不可达：本次构建改用本地缓存的基础镜像（不强制 --pull）。若本地没有 python:3.11-slim，构建会失败；国内可在 /etc/docker/daemon.json 配置 registry-mirrors 后重启 dockerd。' ;;
+    esac
     ok "docker 可用，根分区可用 $((free_kb / 1024)) MiB"
 }
 
@@ -137,12 +154,45 @@ build_image() {
     log 3/6 "docker build（约 3~10 分钟，取决于网速与机器）"
     IMAGE_TAG=$(image_tag)
     IMAGE_FULL="$IMAGE_REPO:$IMAGE_TAG"
-    local logfile="$WORK_DIR/build.log"
-    # --pull：基础镜像取最新补丁；--network host：pip 需要出网（BuildKit 也认这个参数）。
-    if ! docker build --pull --network host -t "$IMAGE_FULL" "$SRC_DIR" 2>&1 | tee "$logfile"; then
+    local logfile="$WORK_DIR/build.log" rcfile="$WORK_DIR/build.rc" pid elapsed=0 rc=0
+    rm -f "$rcfile"
+    # 后台跑构建、写状态文件：既能在前台打心跳（不再"静默几分钟"），又能用 timeout 兜住
+    # Docker 自身没有的「构建超时」。--pull 只在 registry 可达时带上（见 preflight）。
+    # shellcheck disable=SC2086  # $PULL_MODE 需要按单词拆分（空串=不传）
+    # 注意：子 shell 继承 set -e，构建失败时若直接 `cmd; printf` 会在写状态文件之前退出，
+    # 前台永远等不到 build.rc（真机上表现为"构建进度一直转、永不结束"）。必须用 || rc=$? 兜住。
+    if command -v timeout >/dev/null 2>&1; then
+        ( build_rc=0
+          timeout "$BUILD_TIMEOUT" docker build $PULL_MODE --network host -t "$IMAGE_FULL" "$SRC_DIR" \
+              >"$logfile" 2>&1 || build_rc=$?
+          printf '%s\n' "$build_rc" > "$rcfile" ) &
+    else
+        warn "本机没有 timeout：构建不会被自动中止（Docker 自身没有构建超时），可 Ctrl-C 手工中断。"
+        ( build_rc=0
+          docker build $PULL_MODE --network host -t "$IMAGE_FULL" "$SRC_DIR" \
+              >"$logfile" 2>&1 || build_rc=$?
+          printf '%s\n' "$build_rc" > "$rcfile" ) &
+    fi
+    pid=$!
+    # 每 1 秒看一次状态（构建结束时立刻返回，不必等满一个心跳间隔），
+    # 每 BUILD_HEARTBEAT 秒才打一行心跳，避免刷屏。
+    while [ ! -s "$rcfile" ]; do
+        sleep 1
+        if [ -s "$rcfile" ]; then break; fi
+        elapsed=$((elapsed + 1))
+        if [ $((elapsed % BUILD_HEARTBEAT)) -eq 0 ]; then
+            echo "  构建进行中… 已等待 ${elapsed}s（日志：$logfile）"
+        fi
+    done
+    wait "$pid" 2>/dev/null || true
+    rc=$(cat "$rcfile" 2>/dev/null || echo 1)
+    if [ "$rc" -ne 0 ]; then
         KEEP_WORK=1
         echo '--- 构建日志尾部 ---' >&2
         tail -n 30 "$logfile" >&2 || true
+        if [ "$rc" -eq 124 ]; then
+            die "镜像构建超时（${BUILD_TIMEOUT}s，已中止）。Docker 自身没有构建超时，这里由脚本兜底；可用 SBSHELL_BACKEND_BUILD_TIMEOUT 调大后重试。现有容器未受影响。"
+        fi
         die "镜像构建失败（日志：$logfile）。现有容器未受影响。"
     fi
     docker image inspect "$IMAGE_FULL" >/dev/null 2>&1 || die "构建完成但镜像不存在：$IMAGE_FULL"

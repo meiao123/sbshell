@@ -76,6 +76,11 @@ GET /config/<订阅URL>&file=<模板URL>
 
 - 只构建不动容器：`deploy_backend.sh --build-only`；跳过端到端校验：`--skip-e2e`；
   跟随上游最新：`--ref main`（默认固定 commit，可复现）。
+- 构建期间每 30 秒打印一次心跳（`SBSHELL_BACKEND_BUILD_HEARTBEAT`），并默认在
+  **1800 秒**后中止（`SBSHELL_BACKEND_BUILD_TIMEOUT`）——Docker 自身没有构建超时。
+- 预检会探测 `registry-1.docker.io`：不可达时**不强制 `--pull`**（用本地缓存的基础镜像），
+  避免"本地已有镜像却因拉取失败而构建不了"；国内建议在 `/etc/docker/daemon.json` 配
+  `registry-mirrors` 后重启 dockerd。
 - 官方没有发布镜像，社区镜像年久失修（旧版解析 base64 订阅会直接 500），因此默认走本地构建。
 - 后端是单线程 Flask：订阅很大时生成可能超过选项 2 的 30 秒下载超时，届时先手动 `curl` 验证后端。
 - **模板版本**：本项目要求 sing-box **1.14+**。出厂模板为

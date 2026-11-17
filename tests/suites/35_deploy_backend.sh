@@ -28,6 +28,11 @@ assert_grep '^e2e_check() {' "$O/deploy_backend.sh" "实现端到端校验"
 assert_grep '--build-only' "$O/deploy_backend.sh" "支持只构建模式"
 assert_grep 'case "$WAIT_SECS" in' "$O/deploy_backend.sh" "健康检查等待时长做数值校验"
 assert_grep '^MODE_FILE=' "$O/deploy_backend.sh" "支持模式文件（按模式选模板）"
+assert_grep 'PULL_MODE' "$O/deploy_backend.sh" "registry 不可达时退出强制 --pull"
+assert_grep 'BUILD_TIMEOUT' "$O/deploy_backend.sh" "脚本级构建超时"
+assert_grep '构建进行中' "$O/deploy_backend.sh" "构建期间打印心跳"
+assert_grep 'registry-1\.docker\.io' "$O/deploy_backend.sh" "预检探测 Docker registry"
+assert_grep 'timeout "\$BUILD_TIMEOUT" docker build' "$O/deploy_backend.sh" "用 timeout 兜住 docker build"
 assert_no_grep '\beval\b' "$O/deploy_backend.sh" "不使用 eval"
 
 # ---------- 桩环境 ----------
@@ -47,7 +52,9 @@ printf 'docker %s\n' "$*" >> "$S/docker.log"
 cmd="${1:-}"; [ $# -gt 0 ] && shift
 case "$cmd" in
     info) [ "${SBSHELL_TEST_INFO_FAIL:-0}" = 1 ] && exit 1; exit 0 ;;
-    build) [ "${SBSHELL_TEST_BUILD_FAIL:-0}" = 1 ] && exit 1; exit 0 ;;
+    build) [ "${SBSHELL_TEST_BUILD_FAIL:-0}" = 1 ] && { sleep "${SBSHELL_TEST_BUILD_SLEEP:-0}"; exit 1; }
+           [ -n "${SBSHELL_TEST_BUILD_SLEEP:-}" ] && sleep "$SBSHELL_TEST_BUILD_SLEEP"
+           exit 0 ;;
     image) exit 0 ;;
     inspect)
         if [ "${1:-}" = "--format" ]; then
@@ -223,6 +230,31 @@ out=$(deploy 'SBSHELL_TEST_CONTAINER_EXISTS=1 SBSHELL_TEST_E2E_FAIL=1'); rc=$?
 assert_not_rc "$rc" 0 "端到端连不上后端时返回非 0"
 assert_grep '^docker rm -f sbshell-backend' "$state/docker.log" "失败后清理新容器"
 assert_grep 'sbshell-backend:previous' "$state/docker.log" "失败后回滚到 :previous"
+
+suite_begin "deploy_backend：构建有超时、有心跳，registry 不可达时不强制 --pull"
+
+out=$(deploy 'SBSHELL_TEST_CONTAINER_EXISTS=1 SBSHELL_TEST_BUILD_SLEEP=4 SBSHELL_BACKEND_BUILD_TIMEOUT=2 SBSHELL_BACKEND_BUILD_HEARTBEAT=1' --skip-e2e); rc=$?
+assert_not_rc "$rc" 0 "构建超时返回非 0"
+assert_contains "$out" '构建超时' "超时给出明确原因"
+if grep -q '^docker run' "$state/docker.log" 2>/dev/null; then
+    fail '构建超时却仍然启动了容器'
+else
+    pass '构建超时时不会重建容器'
+fi
+
+out=$(deploy 'SBSHELL_TEST_CONTAINER_EXISTS=1 SBSHELL_TEST_BUILD_SLEEP=2 SBSHELL_BACKEND_BUILD_HEARTBEAT=1' --skip-e2e); rc=$?
+assert_rc "$rc" 0 "长构建（非超时）最终成功"
+assert_contains "$out" '构建进行中…' "构建期间打印心跳而不是静默"
+
+out=$(deploy 'SBSHELL_TEST_CONTAINER_EXISTS=1 SBSHELL_TEST_HTTP=000' --skip-e2e); rc=$?
+assert_rc "$rc" 0 "registry 不可达时仍能构建（用本地缓存的基础镜像）"
+assert_contains "$out" 'registry 不可达' "明确告知不强制 --pull 的原因"
+if grep -q '^docker build --pull' "$state/docker.log" 2>/dev/null; then
+    fail 'registry 不可达却仍然强制 --pull'
+else
+    pass 'registry 不可达时没有传 --pull'
+fi
+assert_grep '^docker build --network host -t sbshell-backend:' "$state/docker.log" "构建参数其余不变"
 
 rm -rf "$stub_dir" "$state" "$(dirname "$build_root")" "$src_parent" "$def_file" "$man_file" "$mode_file"
 suite_end
