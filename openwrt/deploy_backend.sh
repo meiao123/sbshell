@@ -33,12 +33,15 @@ CONTAINER_NAME='sbshell-backend'
 BACKEND_PORT=5000
 WAIT_SECS=${SBSHELL_BACKEND_WAIT_SECS:-60}
 case "$WAIT_SECS" in ''|*[!0-9]*) WAIT_SECS=60 ;; esac
+[ "$WAIT_SECS" -gt 0 ] || WAIT_SECS=60   # 0 会让健康检查一轮都不跑，把好后端误判成坏的回滚掉
 # Docker 自身没有「构建超时」：这里由脚本兜底（默认 30 分钟），并每 30 秒打一次心跳，
 # 避免把长时间无输出误当成卡死。
 BUILD_TIMEOUT=${SBSHELL_BACKEND_BUILD_TIMEOUT:-1800}
 case "$BUILD_TIMEOUT" in ''|*[!0-9]*) BUILD_TIMEOUT=1800 ;; esac
+[ "$BUILD_TIMEOUT" -gt 0 ] || BUILD_TIMEOUT=1800
 BUILD_HEARTBEAT=${SBSHELL_BACKEND_BUILD_HEARTBEAT:-30}
 case "$BUILD_HEARTBEAT" in ''|*[!0-9]*) BUILD_HEARTBEAT=30 ;; esac
+[ "$BUILD_HEARTBEAT" -gt 0 ] || BUILD_HEARTBEAT=30   # 0 会让 $((elapsed % 0)) 报 division by 0
 # 预检会把这里改成空串：registry 不可达时不再强制 --pull（否则本地有缓存也构建失败）。
 PULL_MODE='--pull'
 BUILD_ROOT=${SBSHELL_BACKEND_BUILD_ROOT:-/root/sbshell-backend-build}

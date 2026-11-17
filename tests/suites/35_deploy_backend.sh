@@ -256,5 +256,27 @@ else
 fi
 assert_grep '^docker build --network host -t sbshell-backend:' "$state/docker.log" "构建参数其余不变"
 
+suite_begin "deploy_backend：数值环境变量的 0 值不会把事情弄坏"
+
+assert_grep '\[ "\$WAIT_SECS" -gt 0 \] || WAIT_SECS=60' "$O/deploy_backend.sh" "WAIT_SECS=0 回退默认（否则健康检查一轮不跑就误回滚）"
+assert_grep '\[ "\$BUILD_TIMEOUT" -gt 0 \] || BUILD_TIMEOUT=1800' "$O/deploy_backend.sh" "BUILD_TIMEOUT=0 回退默认"
+assert_grep '\[ "\$BUILD_HEARTBEAT" -gt 0 \] || BUILD_HEARTBEAT=30' "$O/deploy_backend.sh" "BUILD_HEARTBEAT=0 回退默认（否则取模除零）"
+
+out=$(deploy 'SBSHELL_TEST_CONTAINER_EXISTS=1 SBSHELL_BACKEND_WAIT_SECS=0' --skip-e2e); rc=$?
+assert_rc "$rc" 0 "WAIT_SECS=0 时仍能通过健康检查"
+# 成功路径本身也会 `docker tag ... :previous`（备份用），只有「rollback 的 docker run」才算误回滚。
+if grep -q '^docker run .*:previous' "$state/docker.log" 2>/dev/null; then
+    fail 'WAIT_SECS=0 把健康的后端回滚了'
+else
+    pass 'WAIT_SECS=0 不会误回滚'
+fi
+
+out=$(deploy 'SBSHELL_TEST_CONTAINER_EXISTS=1 SBSHELL_TEST_BUILD_SLEEP=2 SBSHELL_BACKEND_BUILD_HEARTBEAT=0' --skip-e2e); rc=$?
+assert_rc "$rc" 0 "BUILD_HEARTBEAT=0 时构建仍然成功"
+case "$out" in
+    *'division by 0'*) fail '出现除零错误' ;;
+    *) pass '没有除零错误' ;;
+esac
+
 rm -rf "$stub_dir" "$state" "$(dirname "$build_root")" "$src_parent" "$def_file" "$man_file" "$mode_file"
 suite_end
