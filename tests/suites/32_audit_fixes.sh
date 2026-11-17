@@ -134,4 +134,37 @@ assert_rc "$?" 0 "按 config.json 的端口下发规则成功"
 assert_grep 'tproxy to :1080' "$SBSHELL_STUB_STATE/nft/inet__sing-box" "规则使用 config.json 里的 1080"
 assert_no_grep 'tproxy to :7895' "$SBSHELL_STUB_STATE/nft/inet__sing-box" "不再写死 7895"
 
+suite_begin "P2：服务没起来时给可诊断信息，且不把用户挡在菜单外"
+
+IS="$O/install_singbox.sh"
+assert_grep 'while \[ "\$waited" -lt 5 \]' "$IS" "慢盘不误判：轮询最多 5 秒"
+assert_grep 'logread -e sing-box' "$IS" "失败时打印系统日志尾部"
+assert_grep '前台复现真实报错' "$IS" "失败时提示前台运行 sing-box 看真实报错"
+assert_grep '初始化继续' "$IS" "服务未起来也不中止初始化（否则每次 sb 都卡在同一处、进不了菜单）"
+assert_no_grep 'sing-box 服务未运行（restart 返回 0 但进程不存在），请检查 /etc/config/sing-box 与日志。' \
+    "$IS" "旧「只报错就退出」的写法已移除"
+
+suite_begin "P2：Raw 传输失败要给出真实原因"
+
+for f in menu.sh update_scripts.sh; do
+    assert_grep 'SBSHELL_RAW_ERR' "$O/$f" "$f 记录 Raw 失败原因"
+    assert_grep 'raw_err_file' "$O/$f" "$f 捕获 curl 的 stderr"
+    assert_grep 'Raw 下载失败或完整性校验失败\${SBSHELL_RAW_ERR:+' "$O/$f" "$f 切换提示里带上原因"
+done
+
+# 行为：桩 curl 返回 403 时，原因必须被记录并可展示
+stub=$(mktemp -d)
+printf '%s\n' '#!/bin/bash' 'echo "curl: (22) The requested URL returned error: 403" >&2' 'exit 22' > "$stub/curl"
+chmod 0755 "$stub/curl"
+drf=$(mktemp)
+awk '/^download_repo_file\(\)/{p=1} p{print} p&&/^}$/{exit}' "$O/menu.sh" > "$drf"
+raw_probe=$( ( REPO_RAW="https://raw.example/repo"; PATH="$stub:$PATH"; export PATH
+    . "$drf"
+    download_repo_file openwrt/menu.sh deadbeef /tmp/a32-raw.out raw
+    echo "rc=$?"
+    echo "err=$SBSHELL_RAW_ERR" ) 2>/dev/null )
+assert_contains "$raw_probe" "rc=1" "Raw 失败时返回非 0"
+assert_contains "$raw_probe" "err=curl: (22) The requested URL returned error: 403" "失败原因被记录下来"
+rm -rf "$stub" "$drf" /tmp/a32-raw.out
+
 suite_end

@@ -32,6 +32,8 @@ if ! command -v install >/dev/null 2>&1; then
 fi
 # 固定更新版本：先解析 main 当前 commit，再让本次更新全部绑定到该 commit。
 export REPO_RAW="${REPO_RAW:-https://raw.githubusercontent.com/meiao123/sbshell}"
+# Raw 传输失败时记录第一行原因（curl 的 stderr），供切换传输层时打印，不再静默。
+SBSHELL_RAW_ERR=''
 MAIN_REF="main"
 GITHUB_API_BASE="https://api.github.com/repos/meiao123/sbshell"
 # 兜底端点走 github.com 本体：不受未认证 API「60 次/小时/IP」配额影响。
@@ -161,13 +163,21 @@ github_archive_download() {
     [ -s "$output" ] || { rm -f "$output"; return 1; }
 }
 download_repo_file() {
-    local path="$1" ref="$2" output="$3" transport="$4"
+    local path="$1" ref="$2" output="$3" transport="$4" raw_err_file
     case "$transport" in
         raw)
+            # 失败原因必须可见：旧写法把 curl 的 stderr 丢进 /dev/null，用户只看到
+            #「Raw 下载失败」，无法判断是限流、DNS 还是 404。只留第一行，避免 19 个文件刷屏。
+            raw_err_file=$(mktemp /tmp/sbshell-raw-err.XXXXXX 2>/dev/null || echo "/tmp/sbshell-raw-err.$$")
             if curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 60 \
-                "$REPO_RAW/$ref/$path" -o "$output" 2>/dev/null; then
-                if [ -s "$output" ]; then return 0; fi
-            fi ;;
+                "$REPO_RAW/$ref/$path" -o "$output" 2>"$raw_err_file"; then
+                if [ -s "$output" ]; then rm -f "$raw_err_file"; SBSHELL_RAW_ERR=''; return 0; fi
+                SBSHELL_RAW_ERR='下载内容为空'
+            else
+                SBSHELL_RAW_ERR=$(sed -n '1p' "$raw_err_file" 2>/dev/null | cut -c1-160)
+                [ -n "$SBSHELL_RAW_ERR" ] || SBSHELL_RAW_ERR='curl 请求失败'
+            fi
+            rm -f "$raw_err_file" ;;
         api) github_api_download "$path" "$ref" "$output"; return $? ;;
         archive) github_archive_download "$path" "$ref" "$output"; return $? ;;
         *) return 2 ;;
@@ -287,7 +297,7 @@ for transport in raw api archive; do
     rm -rf "$TMP_DIR"; mkdir -p "$TMP_DIR" || exit 1
     if download_script_batch "$commit" "$transport" "$TMP_DIR"; then verified=1; break; fi
     case "$transport" in
-        raw) echo -e "${YELLOW}Raw 下载失败或完整性校验失败，切换 GitHub Contents API。${NC}" >&2 ;;
+        raw) echo -e "${YELLOW}Raw 下载失败或完整性校验失败${SBSHELL_RAW_ERR:+（$SBSHELL_RAW_ERR）}，切换 GitHub Contents API。${NC}" >&2 ;;
         api) echo -e "${YELLOW}GitHub Contents API 下载失败或完整性校验失败，切换 commit archive。${NC}" >&2 ;;
         archive) echo -e "${RED}GitHub commit archive 下载或完整性校验仍然失败。${NC}" >&2 ;;
     esac

@@ -257,9 +257,25 @@ if [ "$SKIP_RESTART" != 1 ]; then
     rm -f "$restart_err"
     [ "$rc" -eq 0 ] || exit "$rc"
     # restart 的 rc 只代表「调用成功」；进程可能根本没起来（UCI 门控、配置被拒等）。
-    sleep 1
-    pidof sing-box >/dev/null 2>&1 || {
-        echo 'sing-box 服务未运行（restart 返回 0 但进程不存在），请检查 /etc/config/sing-box 与日志。' >&2
-        exit 1
-    }
+    # 慢盘/procd 调度下 1 秒不够：轮询最多 5 秒再判定，避免把「起得慢」误报成「起不来」。
+    waited=0
+    while [ "$waited" -lt 5 ] && ! pidof sing-box >/dev/null 2>&1; do
+        sleep 1
+        waited=$((waited + 1))
+    done
+    if ! pidof sing-box >/dev/null 2>&1; then
+        echo '警告：sing-box 服务未运行（restart 返回 0 但进程不存在）。' >&2
+        echo '  下面这些信息能定位原因（procd 把启动失败写进系统日志，脚本这边看不到）：' >&2
+        if command -v uci >/dev/null 2>&1; then
+            echo "  uci show sing-box: $(uci -q show sing-box 2>/dev/null | tr '\n' ' ' | cut -c1-200)" >&2
+        fi
+        if command -v logread >/dev/null 2>&1; then
+            echo '  logread -e sing-box（最后 10 行）:' >&2
+            logread -e sing-box 2>/dev/null | tail -n 10 | sed 's/^/    /' >&2
+        fi
+        echo '  前台复现真实报错：/usr/bin/sing-box run -c /etc/sing-box/config.json' >&2
+        # 不中止初始化：服务起不来多半是配置/模式问题，需要在菜单里修（选项 2/4/8）。
+        # 若在这里 exit 1，用户每次 sb 都会卡在同一处、永远进不了菜单。
+        echo '提示：安装已完成但服务未启动；初始化继续，稍后可在菜单 4 手动启动或菜单 2 重新配置。' >&2
+    fi
 fi
