@@ -252,4 +252,43 @@ export PATH="$PATH_SAVED"
 unset STUB_LOG STUB_VER_FILE STUB_ARCH
 rm -rf "$stub" "$state" "$driver" "$fn_head" "$fn_body"
 
+suite_begin "A-29c：上游包下载必须可见且有界（不再静默等 5 分钟）"
+
+assert_grep '^download_upstream_asset() {' "$K" "抽出带进度的下载函数"
+assert_grep '\-\-speed-limit 10240' "$K" "低速连接快速失败（speed-limit）"
+assert_grep '\-\-speed-time 30' "$K" "speed-time 与 speed-limit 配套"
+assert_grep 'while kill -0 "\$pid"' "$K" "后台下载 + 前台轮询进度"
+assert_grep '已下载 %s KiB' "$K" "打印已下载大小"
+assert_grep 'download_upstream_asset "\$url" "\$apkfile"' "$K" "调用点改用新下载函数"
+assert_no_grep 'max-time 300 "\$url" -o "\$apkfile"' "$K" "旧的静默下载调用已移除"
+assert_grep '查询发布页资产信息' "$K" "查询发布页资产前给出提示"
+assert_grep '正在预取发行版包' "$K" "预取发行版包前给出提示"
+
+# 行为：用桩 curl 驱动抽出的函数（成功 → 打印进度与完成；失败 → 非 0 并说明原因）
+fn=$(mktemp)
+awk '/^download_upstream_asset\(\)/{p=1} p{print} p&&/^}$/{exit}' "$K" > "$fn"
+stub=$(mktemp -d)
+cat > "$stub/curl" <<'EOS'
+#!/bin/bash
+out=''
+while [ $# -gt 0 ]; do case "$1" in -o) out="$2"; shift 2 ;; *) shift ;; esac; done
+if [ "${STUB_FAIL:-0}" = 1 ]; then
+    echo 'curl: (22) The requested URL returned error: 404' >&2
+    exit 22
+fi
+printf '%2048s' '' > "$out"
+exit 0
+EOS
+chmod 0755 "$stub/curl"
+dst=$(mktemp)
+out=$( (export PATH="$stub:$PATH" STUB_FAIL=0; . "$fn"; download_upstream_asset "https://example.test/x.apk" "$dst" 2048) 2>&1 ); rc=$?
+assert_rc "$rc" 0 "下载成功时返回 0"
+assert_contains "$out" '正在下载上游 sing-box 包' "下载前打印开始提示"
+assert_contains "$out" '下载完成' "下载结束打印完成"
+out=$( (export PATH="$stub:$PATH" STUB_FAIL=1; . "$fn"; download_upstream_asset "https://example.test/x.apk" "$dst" 2048) 2>&1 ); rc=$?
+assert_not_rc "$rc" 0 "下载失败时返回非 0"
+assert_contains "$out" '下载失败或超时' "失败时给出明确原因"
+assert_contains "$out" 'curl: (22)' "把 curl 的错误一并打印"
+rm -rf "$stub" "$fn" "$dst"
+
 suite_end

@@ -128,6 +128,51 @@ fetch_release_json() {
     return "$rc"
 }
 
+
+# 下载上游 .apk：静默 curl 下最多 300 秒零输出，慢速/被限速时看起来就是「卡死」。
+# 这里放到后台，前台每 2 秒打印已下载大小；并用 --speed-limit/--speed-time 让
+# 「完全没有速度」的连接快速失败、回退到发行版包，而不是干等满 5 分钟。
+download_upstream_asset() { # $1=url $2=目标文件 $3=期望字节数（可空）
+    local url="$1" dst="$2" want="${3:-}" err pid rc got
+    err=$(mktemp /tmp/sbshell-apk-err.XXXXXX 2>/dev/null || echo "/tmp/sbshell-apk-err.$$")
+    rm -f "$dst"
+    : > "$dst"   # 先建空文件：轮询里 wc 读它时不会因「文件不存在」往 stderr 刷错误
+    if [ -n "$want" ]; then
+        printf '正在下载上游 sing-box 包（约 %s MiB，最多 300 秒）…\n' "$((want / 1048576))"
+    else
+        printf '正在下载上游 sing-box 包（最多 300 秒）…\n'
+    fi
+    curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+        --connect-timeout 10 --max-time 300 --speed-limit 10240 --speed-time 30 \
+        "$url" -o "$dst" 2>"$err" &
+    pid=$!
+    while kill -0 "$pid" 2>/dev/null; do
+        got=$(wc -c < "$dst" 2>/dev/null || echo 0)
+        case "$want" in
+            ''|*[!0-9]*) printf '\r  已下载 %s KiB' "$((got / 1024))" ;;
+            *) if [ "$want" -gt 0 ]; then
+                   printf '\r  已下载 %s KiB / %s KiB' "$((got / 1024))" "$((want / 1024))"
+               else
+                   printf '\r  已下载 %s KiB' "$((got / 1024))"
+               fi ;;
+        esac
+        sleep 2
+    done
+    wait "$pid"; rc=$?
+    printf '\n'
+    if [ "$rc" -ne 0 ]; then
+        echo '下载失败或超时。' >&2
+        if [ -s "$err" ]; then
+            head -n 2 "$err" | sed 's/^/  /' >&2
+        fi
+        rm -f "$dst" "$err"
+        return 1
+    fi
+    got=$(wc -c < "$dst" 2>/dev/null || echo 0)
+    printf '下载完成：%s KiB\n' "$((got / 1024))"
+    rm -f "$err"
+    return 0
+}
 # 上游官方 OpenWrt 包地址（资产名由上游发布流程固定：sing-box_<版本>_openwrt_<架构>.apk）。
 singbox_asset_url() {
     printf 'https://github.com/SagerNet/sing-box/releases/download/%s/sing-box_%s_openwrt_%s.apk\n' \
@@ -194,6 +239,7 @@ install_latest_singbox() {
         fi
         # digest/size 只能从 API 拿：尽力而为，限流/超时只跳过校验，不影响安装。
         # 固定版本时不查 API：url 按版本拼、digest 也用不上，少一个失败点，也便于离线复现。
+        echo '查询发布页资产信息（最多 60 秒；失败则跳过 sha256 校验）…'
         if fetch_release_json "$json"; then
             api_tag=$(sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' "$json" | head -n1 || true)
             [ -n "$tag" ] || tag="$api_tag"
@@ -227,8 +273,7 @@ install_latest_singbox() {
         fi
     fi
     apkfile="$workdir/${url##*/}"
-    if ! curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
-            --connect-timeout 10 --max-time 300 "$url" -o "$apkfile"; then
+    if ! download_upstream_asset "$url" "$apkfile" "${size:-}"; then
         echo '下载上游 sing-box 包失败，改用发行版软件包。' >&2; return 1
     fi
     if [ -n "$digest" ]; then
@@ -245,6 +290,7 @@ install_latest_singbox() {
         echo '提示：上游未在 API 中提供 sha256，跳过完整性校验（下载走 HTTPS）。' >&2
     fi
     # 先取一份发行版包，出问题能装回去。
+    echo '正在预取发行版包（回滚用，失败可忽略）…'
     apk fetch -o "$workdir" sing-box >/dev/null 2>&1 || true
     if ! run_opkg add --allow-untrusted "$apkfile"; then
         echo '安装上游 sing-box 包失败。' >&2
