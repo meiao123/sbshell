@@ -83,7 +83,9 @@ GET /config/<订阅URL>&file=<模板URL>
   `registry-mirrors` 后重启 dockerd。
 - 官方没有发布镜像，社区镜像年久失修（旧版解析 base64 订阅会直接 500），因此默认走本地构建。
 - 后端是单线程 Flask：订阅很大时生成可能超过选项 2 的 30 秒下载超时，届时先手动 `curl` 验证后端。
-- **模板版本**：本项目要求 sing-box **1.14+**。出厂模板为
+- **模板版本**：本项目要求 sing-box **1.14+**。出厂模板地址经 `https://gh-proxy.com/` 代理
+  （`raw.githubusercontent.com` 在国内常被 TLS 干扰，表现为 `unexpected eof while reading`）；若该代理
+  不可用，可在菜单 6 换回 raw 地址或改用 `https://ghproxy.net/` 前缀。出厂模板为
   `singbox/configuration/1.14.x/config_sb_Tun_fakeip.json`；上游文件名带 `1.2.x` 的是历史命名，
   内容早已按 1.14 适配，仓库中保留旧路径仅为兼容旧引用。
 
