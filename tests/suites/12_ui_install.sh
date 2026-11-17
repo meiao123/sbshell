@@ -60,6 +60,9 @@ exit 0'
             fixture_write "$s" "$STUB_BODY"
         fi
     done
+    # 自更新第一步是「解析 main 当前 commit」（0d7acee 起的固定版本流程）：桩 curl 需要一份
+    # 可用的 Commits API 响应，否则 initialize 在装任何东西之前就中止。
+    fixture_write main '{"sha":"0123456789abcdef0123456789abcdef01234567"}'
 }
 
 order_file() { ORDER_FILE=$(mktemp /tmp/sbshell-order.XXXXXX); : > "$ORDER_FILE"; }

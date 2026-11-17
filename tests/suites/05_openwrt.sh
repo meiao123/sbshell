@@ -32,6 +32,9 @@ reset_openwrt_dirs
 reset_fixtures
 install_repo_scripts openwrt
 for f in "$SBSHELL_SRC"/openwrt/*.sh; do cp "$f" "$SBSHELL_FIXTURES/"; done
+# 自更新第一步会解析 main 当前 commit：给桩 curl 一份 Commits API 响应，
+# 这样本用例失败的是「opkg 安装」而不是「拿不到 commit」。
+fixture_write main '{"sha":"0123456789abcdef0123456789abcdef01234567"}'
 output=$(printf '\n' | SBSHELL_OPKG_FAIL=1 run_with_timeout bash "$SCRIPTS/menu.sh" 2>&1)
 rc=$?
 assert_not_rc "$rc" 0 "安装失败时初始化以非 0 结束"
