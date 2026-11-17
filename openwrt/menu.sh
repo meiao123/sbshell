@@ -36,6 +36,7 @@ CYAN='\033[0;36m'; GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[1;33m'; NC
 
 SCRIPT_DIR=/etc/sing-box/scripts
 INITIALIZED_FILE="$SCRIPT_DIR/.initialized"
+DEFAULTS_FILE="${SBSHELL_DEFAULTS_FILE:-/etc/sing-box/defaults.conf}"
 
 # 固定更新版本：先解析 main 当前 commit，再让本次更新全部绑定到该 commit。
 export REPO_RAW="${REPO_RAW:-https://raw.githubusercontent.com/meiao123/sbshell}"
@@ -490,6 +491,38 @@ install_default_ui() {
     return 1
 }
 
+# 初始化阶段：本机后端没在运行时自动做一次 Docker 本地构建（UI 装完、选模式之前）。
+# 失败只告警、不阻断初始化：构建要 3~10 分钟且依赖 docker/网络，把它当硬失败会让整套
+# 初始化永远进不了菜单（真机踩坑）。
+ensure_backend_deployed() {
+    if [ "${SBSHELL_SKIP_BACKEND_BUILD:-0}" = 1 ]; then
+        echo -e "${YELLOW}[后端] 已通过 SBSHELL_SKIP_BACKEND_BUILD=1 跳过自动构建。${NC}"
+        return 0
+    fi
+    local backend
+    backend=$(awk -F= '$1 == "BACKEND_URL" {sub(/^[^=]*=/, ""); print; exit}' "$DEFAULTS_FILE" 2>/dev/null || true)
+    case "$backend" in
+        ''|http://127.0.0.1[:/]*|http://localhost[:/]*|http://\[::1\][:/]*) ;;
+        *)
+            echo -e "${YELLOW}[后端] 默认后端是 $backend（非本机），跳过本地构建。${NC}"
+            return 0 ;;
+    esac
+    if curl --fail --silent --max-time 2 -o /dev/null "http://127.0.0.1:5000/" 2>/dev/null; then
+        echo -e "${GREEN}[后端] 本机后端已在运行（127.0.0.1:5000），跳过构建。${NC}"
+        return 0
+    fi
+    if ! command -v docker >/dev/null 2>&1; then
+        echo -e "${YELLOW}[后端] 未找到 docker：跳过后端本地构建（可先装 docker，再用菜单 12 部署）。${NC}" >&2
+        return 0
+    fi
+    echo -e "${CYAN}[后端] 本机后端未运行，开始 Docker 本地构建（约 3~10 分钟；Ctrl-C 中断后可稍后用菜单 12 重试）…${NC}"
+    if bash "$SCRIPT_DIR/deploy_backend.sh"; then
+        echo -e "${GREEN}[后端] 后端已就绪。${NC}"
+    else
+        echo -e "${YELLOW}[后端] 构建/部署失败（初始化继续）；可稍后用菜单 12 重试。${NC}" >&2
+    fi
+    return 0
+}
 initialize() {
     update_scripts_locked || { echo -e "${RED}脚本更新失败，现有安装保持不变。${NC}" >&2; return 1; }
     run check_environment.sh || return 1
@@ -497,6 +530,8 @@ initialize() {
     # 装完 sing-box 立刻装好默认 UI 并给出通知，之后才让用户选择模式、再走配置输入。
     # 失败不阻断初始化（否则 UI 一失败就会挡住后面所有步骤——真机踩坑）。
     install_default_ui || true
+    # UI 装完立刻把本机后端准备好：没有后端时，后面的配置下载必然失败（真机踩坑）。
+    ensure_backend_deployed || true
     run switch_mode.sh || return 1
     # 管理脚本、sing-box 和网络模式已经完成基础初始化；之后即使配置下载失败，
     # 再次执行 sb 也应直接进入菜单，而不是重复执行完整初始化。
@@ -525,7 +560,7 @@ install_default_ui || true
 # 远程后端不该被这个检查打扰，所以先看地址前缀。
 backend_hint() {
     local backend
-    backend=$(awk -F= '$1 == "BACKEND_URL" {sub(/^[^=]*=/, ""); print; exit}' /etc/sing-box/defaults.conf 2>/dev/null || true)
+    backend=$(awk -F= '$1 == "BACKEND_URL" {sub(/^[^=]*=/, ""); print; exit}' "$DEFAULTS_FILE" 2>/dev/null || true)
     case "$backend" in
         http://127.0.0.1[:/]*|http://localhost[:/]*|http://\[::1\][:/]*) ;;
         *) return 0 ;;

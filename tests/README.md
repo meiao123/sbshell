@@ -24,7 +24,7 @@ tests/run.sh --local    # 在本地 Linux 主机以 root 直接运行
 | `fakebin/` | `nft` `ip` `systemctl` `sing-box` `curl` `sysctl` `ss` `pidof` `opkg` `apk` `uci` `logread` `ufw` `sshd` 等 stub |
 | `fakebin-busybox/` | 模拟 busybox `grep`（不支持 `-P`），用于 OpenWrt 兼容性测试 |
 | `rc.common` / `initd/` | 极简 `/etc/rc.common` 与 OpenWrt 风格 init 脚本（`sing-box` 极简桩、`sing-box-package` 复刻包里的 UCI 门控桩） |
-| `suites/` | 34 个行为测试套件 |
+| `suites/` | 35 个行为测试套件 |
 | `../openwrt/lib.sh` | 被测的公共库（install 兜底、URL 校验、默认值、锁、原子提交、防火墙常量），随脚本一起安装 |
 
 状态都保存在 `$SBSHELL_STUB_STATE`（默认 `/tmp/sbshell-stub-state`），断言直接检查
@@ -70,6 +70,7 @@ nft 表、ip rule/route、state 文件、锁目录、cron 文件等可观测结�
 | `33_structural.sh` | 结构性重构回归：公共实现只在 `lib.sh` 一份（bootstrap/ash/cron 三处例外）、各入口缺库时明确报错、`commit_file` 原子提交行为、目录级原子部署（`scripts.new` → rename、保留 `.initialized`）、自更新归档缓存（同一 commit 只下一次 `tar.gz`）、防火墙两阶段提交（`*.pending` 也算 Sbshell 所有，三份 `fw_owned` 逐字一致）、防火墙常量集中到 `lib.sh` |
 | `34_factory_defaults.sh` | 出厂默认地址：`SBSHELL_FACTORY_*` 只在 `lib.sh` 一份、菜单 6 提示回显默认值且全回车即落盘、再次执行可覆盖、显式留空不回退（`default_or_factory`）、选项 2 不再隐藏订阅地址、菜单 12 已接线 |
 | `35_deploy_backend.sh` | 菜单 12 本地构建后端（Docker 桩）：预检失败不动容器、构建失败不重建（保护现有后端）、成功路径的 build/run 参数（`--network host`、`--restart unless-stopped`）、健康检查失败回滚到 `:previous`、`--build-only` 只构建、端到端 `/config/` 校验（按模式选模板、只探测刚部署的本机后端）与 HTTP 500 报错；连不上时回滚 |
+| `36_init_backend_build.sh` | 初始化自动构建后端：顺序必须是 `install_default_ui → ensure_backend_deployed → switch_mode`；后端已健康 / 默认后端非本机 / 无 docker / `SBSHELL_SKIP_BACKEND_BUILD=1` 时跳过；构建失败只告警、初始化继续 |
 
 ## 本地开发
 

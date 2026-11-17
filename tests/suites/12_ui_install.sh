@@ -70,7 +70,7 @@ order_list() { tr '\n' ' ' < "$ORDER_FILE"; }
 
 # 跑一次 menu.sh：$1 = 喂给 stdin 的内容
 run_menu() {
-    MENU_OUT=$(printf '%b' "$1" | run_with_timeout env "STUB_ORDER=$ORDER_FILE" bash "$MENU_RUN_DIR/menu.sh" 2>&1)
+    MENU_OUT=$(printf '%b' "$1" | run_with_timeout env "STUB_ORDER=$ORDER_FILE" SBSHELL_SKIP_BACKEND_BUILD=1 bash "$MENU_RUN_DIR/menu.sh" 2>&1)
     MENU_RC=$?
 }
 
@@ -98,7 +98,7 @@ reset_singbox_dir
 reset_openwrt_dirs
 install_stub_fixtures
 order_file
-MENU_OUT=$(printf '\n0\n' | run_with_timeout env "STUB_ORDER=$ORDER_FILE" STUB_RC_UPDATE_UI=1 bash "$MENU_RUN_DIR/menu.sh" 2>&1)
+MENU_OUT=$(printf '\n0\n' | run_with_timeout env "STUB_ORDER=$ORDER_FILE" SBSHELL_SKIP_BACKEND_BUILD=1 STUB_RC_UPDATE_UI=1 bash "$MENU_RUN_DIR/menu.sh" 2>&1)
 MENU_RC=$?
 
 assert_rc "$MENU_RC" 0 "UI 安装失败不影响初始化结果"
