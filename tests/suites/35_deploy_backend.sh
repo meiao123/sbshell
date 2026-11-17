@@ -26,6 +26,8 @@ assert_grep '^rollback_container() {' "$O/deploy_backend.sh" "实现回滚"
 assert_grep '^wait_healthy() {' "$O/deploy_backend.sh" "实现健康检查"
 assert_grep '^e2e_check() {' "$O/deploy_backend.sh" "实现端到端校验"
 assert_grep '--build-only' "$O/deploy_backend.sh" "支持只构建模式"
+assert_grep 'case "$WAIT_SECS" in' "$O/deploy_backend.sh" "健康检查等待时长做数值校验"
+assert_grep '^MODE_FILE=' "$O/deploy_backend.sh" "支持模式文件（按模式选模板）"
 assert_no_grep '\beval\b' "$O/deploy_backend.sh" "不使用 eval"
 
 # ---------- 桩环境 ----------
@@ -88,6 +90,11 @@ case "$url" in
         tar -czf "$out" -C "${SBSHELL_TEST_SRC_PARENT}" sing-box-subscribe-test
         exit 0 ;;
     *github.com/Toperlock*) exit 0 ;;
+    */config/*)
+        [ "${SBSHELL_TEST_E2E_FAIL:-0}" = 1 ] && exit 7
+        if [ -n "$out" ] && [ "$out" != /dev/null ]; then printf '{}\n' > "$out"; fi
+        [ -n "$wfmt" ] && printf '%s' "${SBSHELL_TEST_HTTP:-200}"
+        exit 0 ;;
     *:5000/*)
         [ "${SBSHELL_TEST_HEALTH_FAIL:-0}" = 1 ] && exit 7
         if [ -n "$out" ] && [ "$out" != /dev/null ]; then printf '{}\n' > "$out"; fi
@@ -192,6 +199,28 @@ assert_contains "$out" '端到端校验通过' "输出端到端通过"
 out=$(deploy 'SBSHELL_TEST_HTTP=500 SBSHELL_TEST_CONTAINER_EXISTS=1'); rc=$?
 assert_not_rc "$rc" 0 "后端 500 时返回非 0"
 assert_contains "$out" 'HTTP 500' "报告后端 500"
+
+suite_begin "deploy_backend：端到端校验按模式选模板，且只探测刚部署的本机后端"
+
+def2=$(mktemp)
+mode2=$(mktemp)
+printf 'BACKEND_URL=http://10.0.0.9:5000/\nSUBSCRIPTION_URL=http://10.0.0.9:3001/sub?target=sing-box\nTPROXY_TEMPLATE_URL=https://example.test/tproxy.json\n' > "$def2"
+printf 'MODE=TProxy\n' > "$mode2"
+out=$(deploy "SBSHELL_TEST_CONTAINER_EXISTS=1 SBSHELL_DEFAULTS_FILE=$def2 SBSHELL_MODE_FILE=$mode2"); rc=$?
+assert_rc "$rc" 0 "TProxy 模式端到端校验成功"
+assert_grep '127\.0\.0\.1:5000/config/' "$state/curl.log" "校验的是刚部署的本机后端"
+assert_grep 'tproxy\.json' "$state/curl.log" "按 TProxy 模式选用 TPROXY 模板"
+if grep -q '10\.0\.0\.9:5000/' "$state/curl.log" 2>/dev/null; then
+    fail '把校验请求打到了默认（远端）后端'
+else
+    pass '没有请求默认后端，只校验本机部署'
+fi
+rm -f "$def2" "$mode2"
+
+out=$(deploy 'SBSHELL_TEST_CONTAINER_EXISTS=1 SBSHELL_TEST_E2E_FAIL=1'); rc=$?
+assert_not_rc "$rc" 0 "端到端连不上后端时返回非 0"
+assert_grep '^docker rm -f sbshell-backend' "$state/docker.log" "失败后清理新容器"
+assert_grep 'sbshell-backend:previous' "$state/docker.log" "失败后回滚到 :previous"
 
 rm -rf "$stub_dir" "$state" "$(dirname "$build_root")" "$src_parent" "$def_file" "$man_file"
 suite_end

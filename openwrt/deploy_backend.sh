@@ -32,10 +32,12 @@ IMAGE_REPO='sbshell-backend'
 CONTAINER_NAME='sbshell-backend'
 BACKEND_PORT=5000
 WAIT_SECS=${SBSHELL_BACKEND_WAIT_SECS:-60}
+case "$WAIT_SECS" in ''|*[!0-9]*) WAIT_SECS=60 ;; esac
 BUILD_ROOT=${SBSHELL_BACKEND_BUILD_ROOT:-/root/sbshell-backend-build}
 MIN_FREE_KB=2097152   # 2 GiB：基础镜像 + pip 依赖 + 构建缓存的安全线
 DEFAULTS_FILE=${SBSHELL_DEFAULTS_FILE:-/etc/sing-box/defaults.conf}
 MANUAL_FILE=${SBSHELL_MANUAL_FILE:-/etc/sing-box/manual.conf}
+MODE_FILE=${SBSHELL_MODE_FILE:-/etc/sing-box/mode.conf}
 
 REF="$BACKEND_PIN"
 BUILD_ONLY=0
@@ -211,13 +213,27 @@ wait_healthy() {
 # ---------- 6. 端到端校验 ----------
 e2e_check() {
     log 6/6 '端到端校验（用已保存的订阅 + 模板生成一次配置并 sing-box check）'
-    local backend sub tpl code body err
-    backend=$(default_or_factory BACKEND_URL)
+    local backend sub tpl code body err mode def_backend
     sub=$(default_or_factory SUBSCRIPTION_URL)
-    tpl=$(resolve_default TUN_TEMPLATE_URL TEMPLATE_URL 0)
-    tpl=${tpl:-$(factory_default TUN_TEMPLATE_URL)}
-    if [ -z "$backend" ] || [ -z "$sub" ]; then
-        warn '还没配置后端/订阅（菜单 6），跳过端到端校验；可用菜单 2 配置后再验证。'
+    if [ -z "$sub" ]; then
+        warn '还没配置订阅（菜单 6），跳过端到端校验；可用菜单 2 配置后再验证。'
+        return 0
+    fi
+    # 校验对象是「刚部署的本机后端」；defaults 里的 BACKEND_URL 可能指向别处，只用来提醒。
+    backend="http://127.0.0.1:$BACKEND_PORT"
+    def_backend=$(default_or_factory BACKEND_URL)
+    case "$def_backend" in
+        ''|"$backend"|"$backend/"|http://localhost[:/]*) ;;
+        *) warn "注意：菜单 6 里的后端是 $def_backend，不是本机 $backend；本次部署的后端不会被使用。" ;;
+    esac
+    # 模板按当前模式选：TProxy 用 TPROXY_TEMPLATE_URL，否则用 TUN 模板（空时回退出厂值）。
+    mode=$( { sed -n 's/^MODE=//p' "$MODE_FILE" 2>/dev/null || true; } | head -n1)
+    case "$mode" in
+        TProxy) tpl=$(resolve_default TPROXY_TEMPLATE_URL TEMPLATE_URL 0) ;;
+        *) tpl=$(resolve_default TUN_TEMPLATE_URL TEMPLATE_URL 0); tpl=${tpl:-$(factory_default TUN_TEMPLATE_URL)} ;;
+    esac
+    if [ -z "$tpl" ]; then
+        warn "当前模式（${mode:-未知}）没有配置模板地址，跳过端到端校验。"
         return 0
     fi
     if ! command -v sing-box >/dev/null 2>&1; then
@@ -234,13 +250,17 @@ e2e_check() {
     case "$code" in
         200) : ;;
         000)
+            # 连不上刚部署的后端：容器可能崩溃/端口被抢。先抓现场日志，再回滚，别留下一个起不来的后端。
+            echo '--- docker logs（尾部，回滚前的最后现场）---' >&2
+            docker logs --tail 20 "$CONTAINER_NAME" 2>&1 >&2 || true
+            rollback_container
             if grep -qi 'refused\|Could not connect' "$err" 2>/dev/null; then
                 rm -f "$body" "$err"
-                die "后端未响应（连接被拒绝）：容器可能刚崩溃，查看 docker logs $CONTAINER_NAME。"
+                die "后端未响应（连接被拒绝），已尝试回滚；查看 docker logs $CONTAINER_NAME。"
             fi
             echo "--- curl 错误 ---" >&2; head -c 300 "$err" >&2 || true; echo >&2
             rm -f "$body" "$err"
-            die '无法连接后端（网络错误）。'
+            die '无法连接刚部署的后端（网络错误），已尝试回滚。'
             ;;
         5??)
             echo "--- 后端返回的响应体（前 400 字节，通常写明原因）---" >&2

@@ -64,7 +64,7 @@ GET /config/<订阅URL>&file=<模板URL>
 
 菜单 **12「部署/重建后端（Docker 本地构建）」** 会：校验 docker 与磁盘 → 拉取固定 commit 的源码 →
 `docker build` → 以 `--network host` 启动 `sbshell-backend` 容器 → 健康检查 `127.0.0.1:5000/` →
-用已保存的订阅+模板实际生成一次配置并 `sing-box check`。构建/启动失败会**保留或回滚旧容器**，不会把
+按当前模式选模板、用已保存的订阅实际生成一次配置并 `sing-box check`（只探测刚部署的本机后端）。构建/启动失败会**保留或回滚旧容器**，不会把
 能用的后端换成一个起不来的。
 
 - 只构建不动容器：`deploy_backend.sh --build-only`；跳过端到端校验：`--skip-e2e`；
