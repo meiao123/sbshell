@@ -160,21 +160,24 @@ acquire_lock() {
         created=$(stat -c %Y "$dir" 2>/dev/null || echo 0)
         age=0
         [ "$created" -gt 0 ] && age=$((now - created))
+        waited=$((waited + 1))
         if [ -z "$owner" ] || ! kill -0 "$owner" 2>/dev/null; then
             # 属主已死/pid 缺失：给 5 秒宽限后直接接管（一次 kill -9/掉电不该卡 15 分钟）。
-            if [ "$age" -ge 5 ]; then
+            # stat 不可用时 created=0、age 永远是 0，必须用 waited 兜底，否则无限静默挂起。
+            if [ "$age" -ge 5 ] || { [ "$created" -eq 0 ] && [ "$waited" -ge 5 ]; }; then
                 rm -rf "$dir" 2>/dev/null || true
                 sleep 1
                 continue
             fi
-        else
-            # 属主还活着：等满超时报错退出；绝不抢占活锁（两个写入方交错最危险）。
-            waited=$((waited + 1))
-            if [ "$waited" -ge "$timeout" ]; then
-                echo '等待配置锁超时（另一个进程持锁）。' >&2
-                return 1
-            fi
         fi
+        # 硬上限：不论属主死活，等满超时就报错返回；中途每 5 秒报一次进度。
+        if [ "$waited" -ge "$timeout" ]; then
+            echo '等待配置锁超时（另一个进程持锁）。' >&2
+            return 1
+        fi
+        case $((waited % 5)) in
+            0) echo "等待配置锁（持有者 pid ${owner:-未知}，已等待 ${waited}s）…" >&2 ;;
+        esac
         sleep 1
     done
     printf '%s\n' "$$" > "$dir/pid"

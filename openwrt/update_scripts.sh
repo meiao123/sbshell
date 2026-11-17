@@ -204,23 +204,25 @@ acquire_scripts_lock() {
         created=$(stat -c %Y "$SCRIPTS_LOCK_DIR" 2>/dev/null || echo 0)
         age=0
         [ "$created" -gt 0 ] && age=$((now - created))
+        waited=$((waited + 1))
         if [ -z "$owner" ] || ! kill -0 "$owner" 2>/dev/null; then
             # 属主已死/pid 缺失（kill -9、掉电、断线都常见）：给 5 秒宽限后直接接管。
-            # 旧写法在这里只能等满 900 秒，用户看到的是「菜单卡死 15 分钟」。
-            if [ "$age" -ge 5 ]; then
+            # stat 不可用时 created=0、age 永远是 0，必须用 waited 兜底，否则就是无限静默挂起。
+            if [ "$age" -ge 5 ] || { [ "$created" -eq 0 ] && [ "$waited" -ge 5 ]; }; then
                 rm -rf "$SCRIPTS_LOCK_DIR" 2>/dev/null || true
                 sleep 1
                 continue
             fi
-        else
-            # 属主还活着：等满超时就报错退出，绝不抢占另一个正在写入的入口
-            #（因此不再用「mtime 过期」去抢活锁：两个更新进程交错写才是最坏的情况）。
-            waited=$((waited + 1))
-            if [ "$waited" -ge "$SCRIPTS_LOCK_TIMEOUT" ]; then
-                echo '等待脚本更新锁超时（另一个进程正在更新脚本）。' >&2
-                return 1
-            fi
         fi
+        # 硬上限：不论属主死活，等满超时就报错返回（旧实现某些路径会永不返回）。
+        if [ "$waited" -ge "$SCRIPTS_LOCK_TIMEOUT" ]; then
+            echo '等待脚本更新锁超时（另一个进程正在更新脚本）。' >&2
+            return 1
+        fi
+        # 每 5 秒报一次进度：否则用户看到的是「按回车后毫无反应」。
+        case $((waited % 5)) in
+            0) echo "等待脚本更新锁（持有者 pid ${owner:-未知}，已等待 ${waited}s）…" >&2 ;;
+        esac
         sleep 1
     done
     printf '%s\n' "$$" > "$SCRIPTS_LOCK_DIR/pid"

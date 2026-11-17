@@ -167,4 +167,39 @@ assert_contains "$raw_probe" "rc=1" "Raw 失败时返回非 0"
 assert_contains "$raw_probe" "err=curl: (22) The requested URL returned error: 403" "失败原因被记录下来"
 rm -rf "$stub" "$drf" /tmp/a32-raw.out
 
+suite_begin "A-15b：等锁有界且可观测（stat 不可用也不能无限挂起）"
+
+for f in menu.sh update_scripts.sh; do
+    assert_grep 'waited=\$((waited + 1))' "$O/$f" "$f 每轮都计数（硬上限的前提）"
+    assert_grep 'created" -eq 0 \] && \[ "\$waited" -ge 5' "$O/$f" "$f stat 失败时用 waited 兜底"
+    assert_grep 'case \$((waited % 5))' "$O/$f" "$f 每 5 秒打印等待进度"
+done
+assert_grep 'created" -eq 0 \] && \[ "\$waited" -ge 5' "$O/lib.sh" "lib.sh 的配置锁同样有界"
+
+# 行为：stat 不可用（created=0）且属主已死时，旧实现在 age 永远为 0 的情况下会无限静默挂起；
+# 现在必须靠 waited 兜底在 ~5 秒内接管。
+lock_src=$(mktemp)
+awk '/^SCRIPTS_LOCK_DIR=/{p=1} p{print} p&&/^}$/{n++; if(n==2) exit}' "$O/menu.sh" > "$lock_src"
+stat_stub=$(mktemp -d)
+printf '%s\n' '#!/bin/bash' 'exit 1' > "$stat_stub/stat"
+chmod 0755 "$stat_stub/stat"
+driver=$(mktemp)
+{
+    cat "$lock_src"
+    cat <<'EOS'
+SCRIPTS_LOCK_TIMEOUT=60
+rm -rf "$SCRIPTS_LOCK_DIR"; mkdir -p "$SCRIPTS_LOCK_DIR"; printf 'not-a-pid\n' > "$SCRIPTS_LOCK_DIR/pid"
+if acquire_scripts_lock; then echo statfail-taken-over; else echo statfail-not-taken; fi
+release_scripts_lock
+EOS
+} > "$driver"
+t0=$(date +%s)
+lock_out=$(PATH="$stat_stub:$PATH" run_with_timeout bash "$driver" 2>&1)
+lock_rc=$?
+t1=$(date +%s)
+assert_rc "$lock_rc" 0 "stat 不可用时取锁仍能在有界时间内完成"
+assert_contains "$lock_out" "statfail-taken-over" "接管了死属主留下的锁"
+if [ $((t1 - t0)) -le 15 ]; then pass "耗时 $((t1 - t0))s（有界）"; else fail "耗时 $((t1 - t0))s 过长"; fi
+rm -rf "$stat_stub" "$driver" "$lock_src"
+
 suite_end
