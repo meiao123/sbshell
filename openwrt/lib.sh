@@ -236,7 +236,7 @@ SBSHELL_BYPASS_V4=${SBSHELL_BYPASS_V4:-'{ 192.168.0.0/16, 10.0.0.0/8 }'}
 # 单一事实来源：菜单 6 尚未写入 defaults.conf 时，菜单 1/2/6 都回退到这里的出厂值。
 # 允许用环境变量覆盖（便于在别的设备上试跑，不影响文件内容）。
 SBSHELL_FACTORY_BACKEND_URL=${SBSHELL_FACTORY_BACKEND_URL:-'http://127.0.0.1:5000/'}
-SBSHELL_FACTORY_SUBSCRIPTION_URL=${SBSHELL_FACTORY_SUBSCRIPTION_URL:-'http://127.0.0.1:3001/CKg2abstVnOeRpm1aB4G/download/collection/proxy?target=sing-box'}
+SBSHELL_FACTORY_SUBSCRIPTION_URL=${SBSHELL_FACTORY_SUBSCRIPTION_URL:-'http://127.0.0.1:3001/meiao/download/collection/proxy?target=sing-box'}
 SBSHELL_FACTORY_TUN_TEMPLATE_URL=${SBSHELL_FACTORY_TUN_TEMPLATE_URL:-'https://raw.githubusercontent.com/meiao123/public/refs/heads/main/singbox/configuration/1.14.x/config_sb_Tun_fakeip.json'}
 
 # 取某个键的出厂值；TProxy 没有出厂地址，返回空字符串。
