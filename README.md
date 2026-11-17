@@ -36,7 +36,15 @@ Sbshell 是一款针对 官方sing-box 的辅助运行脚本，旨在让官方si
 
 ## 一键脚本：(请自行安装curl和bash，如果缺少的话)
 ```
-bash <(curl -sL https://raw.githubusercontent.com/meiao123/sbshell/refs/heads/main/sbshall.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/meiao123/sbshell/refs/heads/main/sbshall.sh)
+```
+- 用 `-fsSL`（`-f`）而不是 `-sL`：拉取失败会**当场报错**。若用 `-sL`，`raw.githubusercontent.com`
+  被重置/限流时会返回空内容，`bash` 读到 EOF 就**静默退出**（看起来像"没反应"）。
+- 若 raw 反复失败（`curl: (35) SSL/TLS handshake`、超时、`403`），改用 `github.com` 本体下载完整包：
+```
+cd /tmp && rm -rf sbshell-main sb.tgz
+curl -fL -o sb.tgz https://github.com/meiao123/sbshell/archive/refs/heads/main.tar.gz
+tar -xzf sb.tgz && cd sbshell-main && sha256sum -c SHA256SUMS && bash sbshall.sh
 ```
 - 初始化运行结束，输入“**sb**”进入菜单
 - 目前支持系统为 OpenWrt / ImmortalWrt。
@@ -65,7 +73,7 @@ bash <(curl -sL https://raw.githubusercontent.com/meiao123/sbshell/refs/heads/ma
   **60 次/小时/IP**，出口 IP 被 CGNAT 或其它工具打满会返回 **403**。此时自动改用 `github.com` 本体
   （`commits/main.atom` → `commit/main.patch` 首行）取同一个 SHA，两者都不可用才中止（仍然 fail-closed，
   绝不从可移动的 `main` 分支下载）。也可以手动指定：
-  `SBSHELL_PINNED_COMMIT=<40 位 commit> bash <(curl -sL .../sbshall.sh)`；在任意有 git 的机器上用
+  `SBSHELL_PINNED_COMMIT=<40 位 commit> bash <(curl -fsSL .../sbshall.sh)`；在任意有 git 的机器上用
   `git ls-remote https://github.com/meiao123/sbshell.git refs/heads/main` 可查到最新 SHA。
 - **公共实现集中在 `openwrt/lib.sh`**：busybox `install` 兜底、URL/订阅校验、明文 HTTP 提示、默认值解析、
   互斥锁、原子提交（`commit_file`）都只有一份实现，由各入口 `source`。`sbshall.sh`/`menu.sh` 因运行早于
