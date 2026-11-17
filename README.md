@@ -70,7 +70,8 @@ GET /config/<订阅URL>&file=<模板URL>
 
 初始化流程（`sb` 首次运行）也会在**装完 UI 之后、选择模式之前**自动执行一次这个构建，
 避免"后端没起就去拉配置"必然失败。以下情况会自动跳过：本机后端已在运行、默认后端不是
-本机（`127.0.0.1`/`localhost`）、没装 docker；设置 `SBSHELL_SKIP_BACKEND_BUILD=1` 可强制跳过。
+本机（`127.0.0.1`/`localhost`）、后端地址被显式留空（纯模板直连）、没装 docker；设置
+`SBSHELL_SKIP_BACKEND_BUILD=1` 可强制跳过。
 构建失败只告警，初始化继续（之后可用菜单 12 重试）。
 
 - 只构建不动容器：`deploy_backend.sh --build-only`；跳过端到端校验：`--skip-e2e`；

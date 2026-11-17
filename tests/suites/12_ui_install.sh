@@ -113,7 +113,7 @@ reset_singbox_dir
 reset_openwrt_dirs
 install_stub_fixtures
 order_file
-MENU_OUT=$(printf '\n0\n' | run_with_timeout env "STUB_ORDER=$ORDER_FILE" STUB_RC_MANUAL_INPUT=1 bash "$MENU_RUN_DIR/menu.sh" 2>&1)
+MENU_OUT=$(printf '\n0\n' | run_with_timeout env "STUB_ORDER=$ORDER_FILE" SBSHELL_SKIP_BACKEND_BUILD=1 STUB_RC_MANUAL_INPUT=1 bash "$MENU_RUN_DIR/menu.sh" 2>&1)
 MENU_RC=$?
 
 assert_not_rc "$MENU_RC" 0 "配置下载失败仍按原语义中止初始化"

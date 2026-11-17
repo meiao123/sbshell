@@ -37,6 +37,7 @@ CYAN='\033[0;36m'; GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[1;33m'; NC
 SCRIPT_DIR=/etc/sing-box/scripts
 INITIALIZED_FILE="$SCRIPT_DIR/.initialized"
 DEFAULTS_FILE="${SBSHELL_DEFAULTS_FILE:-/etc/sing-box/defaults.conf}"
+MANUAL_FILE="${SBSHELL_MANUAL_FILE:-/etc/sing-box/manual.conf}"
 
 # 固定更新版本：先解析 main 当前 commit，再让本次更新全部绑定到该 commit。
 export REPO_RAW="${REPO_RAW:-https://raw.githubusercontent.com/meiao123/sbshell}"
@@ -499,8 +500,20 @@ ensure_backend_deployed() {
         echo -e "${YELLOW}[后端] 已通过 SBSHELL_SKIP_BACKEND_BUILD=1 跳过自动构建。${NC}"
         return 0
     fi
-    local backend
-    backend=$(awk -F= '$1 == "BACKEND_URL" {sub(/^[^=]*=/, ""); print; exit}' "$DEFAULTS_FILE" 2>/dev/null || true)
+    # 与 lib.sh 的 default_or_factory 同语义：defaults.conf 优先，其次 manual.conf（选项 2 写的）；
+    # 「键存在但值显式为空」= 用户选择纯模板直连，不能再自作主张去构建本机后端。
+    local backend='' have=0 f
+    for f in "$DEFAULTS_FILE" "${MANUAL_FILE:-/etc/sing-box/manual.conf}"; do
+        [ -f "$f" ] || continue
+        grep -q '^BACKEND_URL=' "$f" 2>/dev/null || continue
+        backend=$(awk -F= '$1 == "BACKEND_URL" {sub(/^[^=]*=/, ""); print; exit}' "$f" 2>/dev/null || true)
+        have=1
+        break
+    done
+    if [ "$have" = 1 ] && [ -z "$backend" ]; then
+        echo -e "${YELLOW}[后端] 后端地址被显式留空（纯模板直连），跳过本地构建。${NC}"
+        return 0
+    fi
     case "$backend" in
         ''|http://127.0.0.1[:/]*|http://localhost[:/]*|http://\[::1\][:/]*) ;;
         *)
@@ -559,8 +572,15 @@ install_default_ui || true
 # 本机后端体检（P4）：只在默认后端指向回环地址时探测，最多等 2 秒；不可达就给一句可操作提示。
 # 远程后端不该被这个检查打扰，所以先看地址前缀。
 backend_hint() {
-    local backend
-    backend=$(awk -F= '$1 == "BACKEND_URL" {sub(/^[^=]*=/, ""); print; exit}' "$DEFAULTS_FILE" 2>/dev/null || true)
+    # 与 lib.sh 的 default_or_factory 同语义：defaults.conf 优先，其次 manual.conf（选项 2 写的）。
+    # 这里只是「体检提示」：地址为空（含显式留空）或不是本机时都静默返回，不打扰用户。
+    local backend='' f
+    for f in "$DEFAULTS_FILE" "${MANUAL_FILE:-/etc/sing-box/manual.conf}"; do
+        [ -f "$f" ] || continue
+        grep -q '^BACKEND_URL=' "$f" 2>/dev/null || continue
+        backend=$(awk -F= '$1 == "BACKEND_URL" {sub(/^[^=]*=/, ""); print; exit}' "$f" 2>/dev/null || true)
+        break
+    done
     case "$backend" in
         http://127.0.0.1[:/]*|http://localhost[:/]*|http://\[::1\][:/]*) ;;
         *) return 0 ;;

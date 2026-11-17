@@ -21,6 +21,8 @@ assert_grep 'SBSHELL_SKIP_BACKEND_BUILD' "$MENU" "支持显式跳过（测试/�
 assert_grep 'command -v docker' "$MENU" "无 docker 时跳过而不是报错"
 assert_grep '本机后端已在运行' "$MENU" "后端已健康时跳过重复构建"
 assert_grep '非本机' "$MENU" "默认后端不是本机时跳过构建"
+assert_grep '显式留空（纯模板直连）' "$MENU" "后端地址显式留空（纯模板直连）时跳过构建"
+assert_grep '^MANUAL_FILE=' "$MENU" "支持从 manual.conf 解析后端（选项 2 写入）"
 assert_grep '构建/部署失败（初始化继续）' "$MENU" "失败时明确告知初始化继续"
 
 # 顺序断言：在 initialize() 函数体内，install_default_ui < ensure_backend_deployed < switch_mode
@@ -109,7 +111,29 @@ else
 fi
 
 : > "$mark"
-out=$(SBSHELL_SKIP_BACKEND_BUILD=1 && run_ensure '' PATH="$stub:$PATH")
+out=$(run_ensure 'BACKEND_URL=
+' PATH="$stub:$PATH")
+assert_contains "$out" '显式留空' "后端地址显式留空（纯模板直连）时跳过构建"
+if grep -q 'DEPLOY_RAN' "$mark" 2>/dev/null; then
+    fail '显式留空却仍然本地构建'
+else
+    pass '显式留空时没有本地构建'
+fi
+
+: > "$mark"
+mf=$(mktemp)
+printf 'BACKEND_URL=http://10.0.0.9:5000/\n' > "$mf"
+out=$(run_ensure '' MANUAL_FILE="$mf" PATH="$stub:$PATH")
+assert_contains "$out" '非本机' "只有 manual.conf 且后端非本机时也跳过"
+if grep -q 'DEPLOY_RAN' "$mark" 2>/dev/null; then
+    fail 'manual.conf 非本机后端却仍然本地构建'
+else
+    pass 'manual.conf 非本机后端时没有本地构建'
+fi
+rm -f "$mf"
+
+: > "$mark"
+out=$(run_ensure '' SBSHELL_SKIP_BACKEND_BUILD=1 PATH="$stub:$PATH")
 assert_contains "$out" '跳过自动构建' "SBSHELL_SKIP_BACKEND_BUILD=1 时跳过"
 
 : > "$mark"
