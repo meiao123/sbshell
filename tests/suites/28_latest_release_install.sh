@@ -291,4 +291,38 @@ assert_contains "$out" '下载失败或超时' "失败时给出明确原因"
 assert_contains "$out" 'curl: (22)' "把 curl 的错误一并打印"
 rm -rf "$stub" "$fn" "$dst"
 
+suite_begin "A-29d：API 不可用时用 HEAD 取总大小，且提示不误导"
+
+assert_grep '^probe_asset_size() {' "$K" "提供 HEAD 取总大小的兜底函数"
+assert_grep 'probe_asset_size "\$url"' "$K" "尺寸兜底接到下载流程"
+assert_grep '拿不到 GitHub API 的 sha256' "$K" "API 失败时提示成「拿不到 sha256」"
+assert_grep '该版本未在 API 中提供 sha256' "$K" "API 可用但无 digest 时提示准确"
+assert_no_grep '上游未在 API 中提供 sha256' "$K" "不再把 API 失败说成「上游未提供」"
+assert_grep '约 %s KiB' "$K" "小文件按 KiB 显示（不出现「约 0 MiB」）"
+
+# 行为：HEAD 有 Content-Length → 取到大小；没有 → 返回空
+fn2=$(mktemp)
+awk '/^probe_asset_size\(\)/{p=1} p{print} p&&/^}$/{exit}' "$K" > "$fn2"
+stub2=$(mktemp -d)
+cat > "$stub2/curl" <<'EOS'
+#!/bin/bash
+[ "${STUB_HEADER:-1}" = 1 ] && printf 'HTTP/1.1 200 OK\r\nContent-Length: 2048\r\n\r\n'
+exit 0
+EOS
+chmod 0755 "$stub2/curl"
+out=$( (export PATH="$stub2:$PATH" STUB_HEADER=1; . "$fn2"; probe_asset_size "https://example.test/x.apk") 2>&1 )
+assert_eq "$out" "2048" "从 Content-Length 取到总大小"
+out=$( (export PATH="$stub2:$PATH" STUB_HEADER=0; . "$fn2"; probe_asset_size "https://example.test/x.apk") 2>&1 )
+assert_eq "$out" "" "没有 Content-Length 时返回空（不打断下载）"
+
+# 行为：进度头按大小选单位
+fn3=$(mktemp)
+awk '/^download_upstream_asset\(\)/{p=1} p{print} p&&/^}$/{exit}' "$K" > "$fn3"
+dst2=$(mktemp)
+out=$( (export PATH="$stub2:$PATH"; . "$fn3"; download_upstream_asset "https://example.test/x.apk" "$dst2" 2048) 2>&1 )
+assert_contains "$out" '约 2 KiB' "2 KiB 上限按 KiB 显示"
+out=$( (export PATH="$stub2:$PATH"; . "$fn3"; download_upstream_asset "https://example.test/x.apk" "$dst2" 2097152) 2>&1 )
+assert_contains "$out" '约 2 MiB' "2 MiB 上限按 MiB 显示"
+rm -rf "$stub2" "$fn2" "$fn3" "$dst2"
+
 suite_end

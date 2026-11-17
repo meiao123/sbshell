@@ -129,6 +129,18 @@ fetch_release_json() {
 }
 
 
+# API 不可用时用 HEAD 的 Content-Length 兜底取「总大小」：只用于进度显示与空间检查，
+# 拿不到就退回"只显示已下载量"，绝不让它成为新的失败点。
+probe_asset_size() { # $1=url
+    local url="$1" len
+    len=$(curl --silent --location --proto '=https' --tlsv1.2 \
+        --connect-timeout 5 --max-time 15 -I "$url" 2>/dev/null \
+        | awk 'tolower($0) ~ /^content-length:/ { gsub("\r", "", $2); print $2; exit }')
+    case "$len" in
+        ''|*[!0-9]*) printf '\n' ;;
+        *) printf '%s\n' "$len" ;;
+    esac
+}
 # 下载上游 .apk：静默 curl 下最多 300 秒零输出，慢速/被限速时看起来就是「卡死」。
 # 这里放到后台，前台每 2 秒打印已下载大小；并用 --speed-limit/--speed-time 让
 # 「完全没有速度」的连接快速失败、回退到发行版包，而不是干等满 5 分钟。
@@ -137,8 +149,10 @@ download_upstream_asset() { # $1=url $2=目标文件 $3=期望字节数（可空
     err=$(mktemp /tmp/sbshell-apk-err.XXXXXX 2>/dev/null || echo "/tmp/sbshell-apk-err.$$")
     rm -f "$dst"
     : > "$dst"   # 先建空文件：轮询里 wc 读它时不会因「文件不存在」往 stderr 刷错误
-    if [ -n "$want" ]; then
+    if [ -n "$want" ] && [ "$want" -ge 1048576 ] 2>/dev/null; then
         printf '正在下载上游 sing-box 包（约 %s MiB，最多 300 秒）…\n' "$((want / 1048576))"
+    elif [ -n "$want" ]; then
+        printf '正在下载上游 sing-box 包（约 %s KiB，最多 300 秒）…\n' "$((want / 1024))"
     else
         printf '正在下载上游 sing-box 包（最多 300 秒）…\n'
     fi
@@ -214,7 +228,7 @@ rollback_to_feed() {
 # 返回 0 表示「上游最新版已就位，不用再装 feed 包」；返回 1 表示让调用方回退 feed。
 install_latest_singbox() {
     # set -eu 下 `local x` 只是「声明」，读取 $x 会报 unbound：这里全部显式初始化。
-    local arch='' json='' tag='' pin='' api_tag='' url='' digest='' size='' size_kb='' free_kb='' actual='' apkfile=''
+    local arch='' json='' tag='' pin='' api_tag='' url='' digest='' size='' size_kb='' free_kb='' actual='' apkfile='' api_ok=0 api_matched=0
     [ "$SINGBOX_SOURCE" = latest ] || return 1
     [ "$PKG_MGR" = apk ] || return 1   # opkg 固件：上游 .ipk 已发布但未在真机验证，保持发行版包
     arch=$(detect_openwrt_arch)
@@ -241,11 +255,13 @@ install_latest_singbox() {
         # 固定版本时不查 API：url 按版本拼、digest 也用不上，少一个失败点，也便于离线复现。
         echo '查询发布页资产信息（最多 60 秒；失败则跳过 sha256 校验）…'
         if fetch_release_json "$json"; then
+            api_ok=1
             api_tag=$(sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' "$json" | head -n1 || true)
             [ -n "$tag" ] || tag="$api_tag"
             # 只有 API 的 tag 与解析结果一致时才采信 url/digest/size：
             # 否则可能拿 A 版本的哈希去校验 B 版本的包（必然失败并白白回滚）。
             if [ -n "$api_tag" ] && [ "$api_tag" = "$tag" ]; then
+                api_matched=1
                 url=$(pick_asset "$json" "$arch" | sed -n '1p')
                 digest=$(pick_asset "$json" "$arch" | sed -n '2p')
                 size=$(pick_asset "$json" "$arch" | sed -n '3p')
@@ -264,6 +280,11 @@ install_latest_singbox() {
             echo "sing-box 已是上游最新稳定版 ${tag#v}（$arch）。"
         fi
         return 0
+    fi
+    # API 不可用（限流/被拦）时用 HEAD 的 Content-Length 兜底：进度仍能显示「已下载/总大小」，
+    # 顺便让磁盘空间检查也能生效。
+    if [ -z "$size" ]; then
+        size=$(probe_asset_size "$url" || true)
     fi
     if [ -n "$size" ]; then
         free_kb=$(df -k "$workdir" 2>/dev/null | awk 'NR==2 {print $4}')
@@ -287,7 +308,11 @@ install_latest_singbox() {
             echo '提示：本机没有 sha256sum，跳过完整性校验（下载走 HTTPS）。' >&2
         fi
     else
-        echo '提示：上游未在 API 中提供 sha256，跳过完整性校验（下载走 HTTPS）。' >&2
+        if [ "$api_ok" = 1 ] && [ "$api_matched" = 1 ]; then
+            echo '提示：该版本未在 API 中提供 sha256，跳过完整性校验（下载走 HTTPS）。' >&2
+        else
+            echo '提示：拿不到 GitHub API 的 sha256（限流或网络），跳过完整性校验（下载走 HTTPS）。' >&2
+        fi
     fi
     # 先取一份发行版包，出问题能装回去。
     echo '正在预取发行版包（回滚用，失败可忽略）…'
