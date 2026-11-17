@@ -101,6 +101,10 @@ parse_args() {
     case "$CONTAINER_NAME" in
         *[!A-Za-z0-9_.-]*) die "容器名只能包含字母、数字、下划线、点和短横线：$CONTAINER_NAME" ;;
     esac
+    # ref 会拼进下载 URL 与 docker tag：限制字符集，避免非法 URL/tag 和难懂的报错。
+    case "$REF" in
+        ''|*[!A-Za-z0-9._/-]*) die "ref 只能包含字母、数字、点、下划线、斜杠和短横线：$REF" ;;
+    esac
 }
 
 # 上游最新 main commit（atom feed；拿不到就返回空，绝不让它成为失败点）。
@@ -129,7 +133,11 @@ warn_ref_switch() {
     local prev=''
     [ -f "$REF_STATE_FILE" ] || return 0
     prev=$(sed -n '1p' "$REF_STATE_FILE" 2>/dev/null | tr -d '\r' || true)
-    case "$prev" in ''|*[!0-9a-fA-F]*) return 0 ;; esac
+    # ref 可能是分支名（如 main），不能只认 40 位十六进制；只在内容明显被写坏时忽略。
+    case "$prev" in
+        '') return 0 ;;
+        *[!A-Za-z0-9._/-]*) return 0 ;;
+    esac
     [ "$prev" = "$REF" ] && return 0
     echo -e "${YELLOW}注意：当前运行的后端是 ${prev:0:7}，本次将切换为 ${REF:0:7}（部署成功后生效）。${NC}" >&2
     return 0

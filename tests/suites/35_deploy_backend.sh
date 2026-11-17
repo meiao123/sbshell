@@ -314,6 +314,16 @@ out=$(deploy 'SBSHELL_TEST_UPSTREAM_SHA=25f9fd20d2c51420f8ef378e6d211f5937ad1caf
 assert_contains "$out" '将切换为' "上次 ref 与本次不同会提醒"
 assert_contains "$out" 'abcdef0' "提醒里带上当前运行的短 SHA"
 
+# 典型场景：先用 --ref main 部署、之后点菜单 12（默认 pin）。记录值是分支名，不是 40 位 SHA。
+printf 'main\n' > "$ref_file"
+out=$(deploy 'SBSHELL_TEST_UPSTREAM_SHA=25f9fd20d2c51420f8ef378e6d211f5937ad1caf' --build-only); rc=$?
+assert_contains "$out" '将切换为' "记录的是分支名时也能提醒切换"
+assert_contains "$out" '当前运行的后端是 main' "提醒里显示当前 ref 名"
+
+out=$(deploy '' --ref 'bad ref'); rc=$?
+assert_not_rc "$rc" 0 "非法 ref 直接拒绝"
+assert_contains "$out" 'ref 只能包含' "非法 ref 给出明确原因"
+
 : > "$ref_file"
 out=$(deploy 'SBSHELL_BACKEND_REF=main SBSHELL_TEST_CONTAINER_EXISTS=1' --skip-e2e); rc=$?
 assert_rc "$rc" 0 "SBSHELL_BACKEND_REF=main 构建部署成功"

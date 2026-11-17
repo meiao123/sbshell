@@ -76,7 +76,7 @@ GET /config/<订阅URL>&file=<模板URL>
 
 - 只构建不动容器：`deploy_backend.sh --build-only`；跳过端到端校验：`--skip-e2e`；
   跟随上游最新：`--ref main`（默认固定 commit，可复现）。也可以让菜单 12 跟随：
-  `SBSHELL_BACKEND_REF=main sb`（不设该变量时仍用固定 commit）。
+  `SBSHELL_BACKEND_REF=main sb`（不设该变量时仍用固定 commit；ref 只允许字母、数字、`.`、`_`、`/`、`-`）。
 - **版本可见**：每次构建前打印「固定版本 / 本次使用 / 上游最新（用 atom feed 取，不耗 API 配额）」，
   固定版本落后时会提示；部署成功后把实际 ref 记到 `/etc/sing-box/backend.ref`，下次切换版本
   （例如先用 `main` 试装、又点菜单 12）会明确提示"本次将切换为 …"，避免无声降级。
