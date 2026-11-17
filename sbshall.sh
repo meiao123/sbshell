@@ -35,6 +35,8 @@ fi
 export REPO_RAW="${REPO_RAW:-https://raw.githubusercontent.com/meiao123/sbshell}"
 MAIN_REF="main"
 GITHUB_API_BASE="https://api.github.com/repos/meiao123/sbshell"
+# 兜底端点走 github.com 本体：不受未认证 API「60 次/小时/IP」配额影响。
+GITHUB_WEB_BASE="https://github.com/meiao123/sbshell"
 resolve_main_commit() {
     local endpoint response_file err_file curl_args main_sha
 
@@ -87,9 +89,32 @@ resolve_main_commit() {
         fi
     done
 
-echo "获取 main commit SHA 失败：无法访问 GitHub API（api.github.com）。" >&2
+    # 第三优先：github.com 本体（不经 api.github.com）。未认证 API 只有 60 次/小时/IP，
+    # 出口被 CGNAT/其它工具打满时会 403；github.com 与 raw 不受该配额限制。
+    # atom feed 的 <id> 形如 Grit::Commit/<sha>；commit/main.patch 的首行是 `From <sha> …`。
+    for endpoint in "$GITHUB_WEB_BASE/commits/$MAIN_REF.atom" "$GITHUB_WEB_BASE/commit/$MAIN_REF.patch"; do
+        rm -f "$response_file" "$err_file"
+        if curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+            --connect-timeout 8 --max-time 20 "$endpoint" -o "$response_file" 2>"$err_file"; then
+            main_sha=$(grep -m1 -oE 'Grit::Commit/[0-9a-fA-F]{40}' "$response_file" 2>/dev/null | sed 's#.*/##')
+            [ -n "$main_sha" ] || main_sha=$(grep -m1 -oE '^From [0-9a-fA-F]{40}' "$response_file" 2>/dev/null | sed 's/^From //')
+            if [ -n "$main_sha" ] && [ "${#main_sha}" -eq 40 ]; then
+                rm -f "$response_file" "$err_file"
+                printf '%s\n' "$main_sha"
+                return 0
+            fi
+        fi
+    done
+
+echo "获取 main commit SHA 失败：API 与 github.com 兜底端点都拿不到当前 commit。" >&2
 if [ -s "$err_file" ]; then
-    echo "API 请求错误：$(tr '\n' ' ' < "$err_file" | sed 's/[[:space:]]\+/ /g' | cut -c1-240)" >&2
+    err_text=$(tr '\n' ' ' < "$err_file" | sed 's/[[:space:]]\+/ /g' | cut -c1-240)
+    echo "最后一次请求错误：$err_text" >&2
+    case "$err_text" in
+        *403*|*rate*limit*)
+            echo '提示：403 多为未认证 API 限流（60 次/小时/IP）。可等待配额重置，或用 SBSHELL_PINNED_COMMIT=<40 位 commit> 跳过解析。' >&2
+            ;;
+    esac
 fi
 rm -f "$response_file" "$err_file"
 return 1

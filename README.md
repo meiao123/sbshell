@@ -56,6 +56,12 @@ bash <(curl -sL https://raw.githubusercontent.com/meiao123/sbshell/refs/heads/ma
 - **脚本完整性校验**：仓库根的 `SHA256SUMS` 覆盖 `sbshall.sh`、`openwrt/*.sh` 与公共库 `openwrt/lib.sh`，自更新会在
   安装前逐文件核对；CI 也会比对清单与实际文件，防止清单漂移。它只能防传输损坏与中间层替换，
   **不等于仓库签名**；想更强保证请自行核对 commit（`git log -1`）。
+- **获取 main commit 的兜底**：解析当前 `main` 的 commit SHA 时先走 `api.github.com`；未认证 API 只有
+  **60 次/小时/IP**，出口 IP 被 CGNAT 或其它工具打满会返回 **403**。此时自动改用 `github.com` 本体
+  （`commits/main.atom` → `commit/main.patch` 首行）取同一个 SHA，两者都不可用才中止（仍然 fail-closed，
+  绝不从可移动的 `main` 分支下载）。也可以手动指定：
+  `SBSHELL_PINNED_COMMIT=<40 位 commit> bash <(curl -sL .../sbshall.sh)`；在任意有 git 的机器上用
+  `git ls-remote https://github.com/meiao123/sbshell.git refs/heads/main` 可查到最新 SHA。
 - **公共实现集中在 `openwrt/lib.sh`**：busybox `install` 兜底、URL/订阅校验、明文 HTTP 提示、默认值解析、
   互斥锁、原子提交（`commit_file`）都只有一份实现，由各入口 `source`。`sbshall.sh`/`menu.sh` 因运行早于
   该库落地、`install_singbox.sh` 因是 `#!/bin/sh`（busybox ash）、以及 cron 生成体因必须自包含，仍保留
